@@ -1,0 +1,3 @@
+User: john.doe@contoso.com
+Forwarding Email: manager@contoso.com
+Out of Office: John Doe is no longer with the company. Please contact support@contoso.com for assistance.
