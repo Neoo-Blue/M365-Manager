@@ -1,6 +1,8 @@
 # M365 Administration Tool
 
 A modular PowerShell TUI application for common Microsoft 365 admin tasks. Blue background, multi-color interface, confirmation prompts on every change, and browser-based OAuth authentication.
+<img width="786" height="437" alt="image" src="https://github.com/user-attachments/assets/a3ceb9f4-130b-4a0d-a7fd-221c541a45fa" />
+
 
 ## Prerequisites
 
