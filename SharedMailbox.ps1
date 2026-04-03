@@ -1,437 +1,121 @@
 # ============================================================
-#  SharedMailbox.ps1 - Shared Mailbox Management
+#  SharedMailbox.ps1 - Shared Mailbox Management (MS Graph + EXO)
 # ============================================================
 
 function Start-SharedMailboxManagement {
     Write-SectionHeader "Shared Mailbox Management"
-
-    if (-not (Connect-ForTask "SharedMailbox")) {
-        Write-ErrorMsg "Could not connect to required services."
-        Pause-ForUser; return
-    }
+    if (-not (Connect-ForTask "SharedMailbox")) { Pause-ForUser; return }
 
     $action = Show-Menu -Title "What would you like to do?" -Options @(
-        "Create a new shared mailbox",
-        "Add / remove user access",
-        "View / edit mailbox properties",
-        "Delete a shared mailbox"
+        "Create a new shared mailbox","Add / remove user access",
+        "View / edit mailbox properties","Delete a shared mailbox"
     ) -BackLabel "Back to Main Menu"
 
-    switch ($action) {
-        0 { New-SharedMailboxFlow }
-        1 { Edit-SharedMailboxAccess }
-        2 { Edit-SharedMailboxProperties }
-        3 { Remove-SharedMailboxFlow }
-        -1 { return }
-    }
+    switch ($action) { 0 { New-SharedMailboxFlow } 1 { Edit-SharedMailboxAccess } 2 { Edit-SharedMailboxProperties } 3 { Remove-SharedMailboxFlow } }
 }
 
-# ==================================================================
-#  Create
-# ==================================================================
 function New-SharedMailboxFlow {
     Write-SectionHeader "Create New Shared Mailbox"
-
-    $name  = Read-UserInput "Display name for the shared mailbox"
-    if ([string]::IsNullOrWhiteSpace($name)) { Write-ErrorMsg "Name is required."; Pause-ForUser; return }
-
-    $email = Read-UserInput "Email address (e.g. info@contoso.com)"
-    if ([string]::IsNullOrWhiteSpace($email)) { Write-ErrorMsg "Email is required."; Pause-ForUser; return }
-
-    $alias = Read-UserInput "Alias (or press Enter to auto-generate)"
-    if ([string]::IsNullOrWhiteSpace($alias)) { $alias = ($email -split '@')[0] }
-
-    $details = "Name  : $name`nEmail : $email`nAlias : $alias"
-    if (-not (Confirm-Action "Create this shared mailbox?" $details)) { Pause-ForUser; return }
-
-    try {
-        New-Mailbox -Name $name -DisplayName $name -Alias $alias `
-            -PrimarySmtpAddress $email -Shared -ErrorAction Stop | Out-Null
-        Write-Success "Shared mailbox '$name' ($email) created."
-
-        $addNow = Read-UserInput "Grant access to users now? (y/n)"
-        if ($addNow -match '^[Yy]') {
-            Add-SharedMailboxAccessLoop -MailboxIdentity $email -MailboxName $name
-        }
-    } catch {
-        Write-ErrorMsg "Failed to create shared mailbox: $_"
+    $name = Read-UserInput "Display name"; if ([string]::IsNullOrWhiteSpace($name)) { Pause-ForUser; return }
+    $email = Read-UserInput "Email address"; if ([string]::IsNullOrWhiteSpace($email)) { Pause-ForUser; return }
+    $alias = Read-UserInput "Alias (or Enter to auto)"; if ([string]::IsNullOrWhiteSpace($alias)) { $alias = ($email -split '@')[0] }
+    if (Confirm-Action "Create shared mailbox '$name' ($email)?") {
+        try {
+            New-Mailbox -Name $name -DisplayName $name -Alias $alias -PrimarySmtpAddress $email -Shared -ErrorAction Stop | Out-Null
+            Write-Success "Created."
+            $add = Read-UserInput "Grant access now? (y/n)"; if ($add -match '^[Yy]') { Add-SharedMailboxAccessLoop -Id $email -Name $name }
+        } catch { Write-ErrorMsg "Failed: $_" }
     }
     Pause-ForUser
 }
 
-# ==================================================================
-#  Access (add / remove)
-# ==================================================================
 function Edit-SharedMailboxAccess {
-    Write-SectionHeader "Manage Shared Mailbox Access"
-
-    $box = Find-SharedMailbox
-    if ($null -eq $box) { Pause-ForUser; return }
-
-    # Show current permissions
-    Show-MailboxPermissions -MailboxIdentity $box.PrimarySmtpAddress -MailboxName $box.DisplayName
-
-    $action = Show-Menu -Title "Action for '$($box.DisplayName)'" -Options @(
-        "Grant access to a user",
-        "Remove user access"
-    ) -BackLabel "Done"
-
-    if ($action -eq 0) {
-        Add-SharedMailboxAccessLoop -MailboxIdentity $box.PrimarySmtpAddress -MailboxName $box.DisplayName
-    }
+    $box = Find-SharedMailbox; if ($null -eq $box) { Pause-ForUser; return }
+    Show-MailboxPermissions -Id $box.PrimarySmtpAddress -Name $box.DisplayName
+    $action = Show-Menu -Title "Action" -Options @("Grant access","Remove access") -BackLabel "Done"
+    if ($action -eq 0) { Add-SharedMailboxAccessLoop -Id $box.PrimarySmtpAddress -Name $box.DisplayName }
     elseif ($action -eq 1) {
-        # ---- REMOVE ----
         try {
-            $perms = @(Get-MailboxPermission -Identity $box.PrimarySmtpAddress -ErrorAction Stop |
-                Where-Object { $_.User -notlike "NT AUTHORITY\*" -and $_.User -notlike "S-1-*" -and $_.IsInherited -eq $false })
-
-            if ($perms.Count -eq 0) {
-                Write-InfoMsg "No custom user permissions found."
-                Pause-ForUser; return
-            }
-
+            $perms = @(Get-MailboxPermission -Identity $box.PrimarySmtpAddress -ErrorAction Stop | Where-Object { $_.User -notlike "NT AUTHORITY\*" -and $_.User -notlike "S-1-*" -and -not $_.IsInherited })
+            if ($perms.Count -eq 0) { Write-InfoMsg "No custom permissions."; Pause-ForUser; return }
             $labels = $perms | ForEach-Object { "$($_.User)  ($($_.AccessRights -join ', '))" }
-            $selected = Show-MultiSelect -Title "Select permission(s) to remove" -Options $labels `
-                -Prompt "Enter number(s) (e.g. 1,3)"
-
-            foreach ($idx in $selected) {
-                $perm = $perms[$idx]
-                if (Confirm-Action "Remove all permissions for '$($perm.User)' on '$($box.DisplayName)'?") {
-                    try {
-                        Remove-MailboxPermission -Identity $box.PrimarySmtpAddress `
-                            -User $perm.User -AccessRights FullAccess `
-                            -InheritanceType All -Confirm:$false -ErrorAction Stop
-                        Write-Success "Full Access removed for '$($perm.User)'."
-                    } catch { Write-ErrorMsg "Failed to remove Full Access: $_" }
-
-                    try {
-                        Remove-RecipientPermission -Identity $box.PrimarySmtpAddress `
-                            -Trustee $perm.User -AccessRights SendAs `
-                            -Confirm:$false -ErrorAction SilentlyContinue
-                        Write-Success "Send As removed (if existed)."
-                    } catch {}
-
-                    try {
-                        Set-Mailbox -Identity $box.PrimarySmtpAddress `
-                            -GrantSendOnBehalfTo @{Remove = $perm.User} -ErrorAction SilentlyContinue
-                        Write-Success "Send on Behalf removed (if existed)."
-                    } catch {}
+            $sel = Show-MultiSelect -Title "Remove" -Options $labels
+            foreach ($idx in $sel) {
+                $p = $perms[$idx]
+                if (Confirm-Action "Remove all permissions for '$($p.User)'?") {
+                    try { Remove-MailboxPermission -Identity $box.PrimarySmtpAddress -User $p.User -AccessRights FullAccess -InheritanceType All -Confirm:$false -ErrorAction Stop; Write-Success "Full Access removed." } catch { Write-ErrorMsg "$_" }
+                    try { Remove-RecipientPermission -Identity $box.PrimarySmtpAddress -Trustee $p.User -AccessRights SendAs -Confirm:$false -ErrorAction SilentlyContinue; Write-Success "Send As removed." } catch {}
+                    try { Set-Mailbox -Identity $box.PrimarySmtpAddress -GrantSendOnBehalfTo @{Remove=$p.User} -ErrorAction SilentlyContinue; Write-Success "Send on Behalf removed." } catch {}
                 }
             }
-        } catch { Write-ErrorMsg "Error: $_" }
+        } catch { Write-ErrorMsg "$_" }
     }
     Pause-ForUser
 }
 
-# ==================================================================
-#  Properties
-# ==================================================================
 function Edit-SharedMailboxProperties {
-    Write-SectionHeader "View / Edit Shared Mailbox Properties"
-
-    $box = Find-SharedMailbox
-    if ($null -eq $box) { Pause-ForUser; return }
-
-    # Refresh
+    $box = Find-SharedMailbox; if ($null -eq $box) { Pause-ForUser; return }
     try { $box = Get-Mailbox -Identity $box.PrimarySmtpAddress -ErrorAction Stop } catch {}
+    Write-StatusLine "Name" $box.DisplayName "White"; Write-StatusLine "Email" $box.PrimarySmtpAddress "White"
+    Write-StatusLine "Alias" $box.Alias "White"; Write-StatusLine "Hidden" "$($box.HiddenFromAddressListsEnabled)" "White"
+    Write-StatusLine "Forwarding" $(if ($box.ForwardingSmtpAddress) { $box.ForwardingSmtpAddress } else { "(none)" }) "White"
 
-    Write-StatusLine "Display Name"     $box.DisplayName "White"
-    Write-StatusLine "Primary Email"    $box.PrimarySmtpAddress "White"
-    Write-StatusLine "Alias"            $box.Alias "White"
-    Write-StatusLine "Mailbox Type"     "$($box.RecipientTypeDetails)" "Cyan"
-    Write-StatusLine "Hidden from GAL"  "$($box.HiddenFromAddressListsEnabled)" "White"
-    Write-StatusLine "Forwarding"       $(if ($box.ForwardingSmtpAddress) { $box.ForwardingSmtpAddress } else { "(none)" }) "White"
-    Write-StatusLine "Deliver + Fwd"    "$($box.DeliverToMailboxAndForward)" "White"
-    Write-StatusLine "Archive Status"   "$($box.ArchiveStatus)" "White"
-
-    # Email aliases
-    $aliases = $box.EmailAddresses | Where-Object { $_ -like "smtp:*" -and $_ -ne "SMTP:$($box.PrimarySmtpAddress)" }
-    if ($aliases.Count -gt 0) {
-        Write-StatusLine "Aliases" ($aliases -join "; ") "White"
-    }
-
-    # Auto-reply
-    try {
-        $autoReply = Get-MailboxAutoReplyConfiguration -Identity $box.PrimarySmtpAddress -ErrorAction Stop
-        Write-StatusLine "Auto-Reply" "$($autoReply.AutoReplyState)" "White"
-    } catch {}
-
-    # Send on Behalf
-    if ($box.GrantSendOnBehalfTo.Count -gt 0) {
-        Write-StatusLine "Send on Behalf" ($box.GrantSendOnBehalfTo -join "; ") "White"
-    }
-    Write-Host ""
-
-    $editChoice = Show-Menu -Title "Edit Properties" -Options @(
-        "Change display name",
-        "Add an email alias",
-        "Remove an email alias",
-        "Set up email forwarding",
-        "Remove email forwarding",
-        "Toggle hidden from address book",
-        "Set auto-reply message"
-    ) -BackLabel "Done"
-
-    switch ($editChoice) {
-        0 {
-            $newVal = Read-UserInput "New display name"
-            if ($newVal -and (Confirm-Action "Rename to '$newVal'?")) {
-                try {
-                    Set-Mailbox -Identity $box.PrimarySmtpAddress -DisplayName $newVal -ErrorAction Stop
-                    Write-Success "Display name updated."
-                } catch { Write-ErrorMsg "Failed: $_" }
-            }
-        }
-        1 {
-            $newAlias = Read-UserInput "New email alias (full address, e.g. alt@contoso.com)"
-            if ($newAlias -and (Confirm-Action "Add alias '$newAlias'?")) {
-                try {
-                    Set-Mailbox -Identity $box.PrimarySmtpAddress `
-                        -EmailAddresses @{Add = "smtp:$newAlias"} -ErrorAction Stop
-                    Write-Success "Alias '$newAlias' added."
-                } catch { Write-ErrorMsg "Failed: $_" }
-            }
-        }
-        2 {
-            $currentAliases = @($box.EmailAddresses | Where-Object { $_ -like "smtp:*" })
-            if ($currentAliases.Count -eq 0) {
-                Write-InfoMsg "No aliases to remove."
-            } else {
-                $aliasLabels = $currentAliases | ForEach-Object { $_ -replace '^smtp:','' }
-                $sel = Show-MultiSelect -Title "Select alias(es) to remove" -Options $aliasLabels
-                foreach ($i in $sel) {
-                    $removeAddr = $currentAliases[$i]
-                    if (Confirm-Action "Remove alias '$($aliasLabels[$i])'?") {
-                        try {
-                            Set-Mailbox -Identity $box.PrimarySmtpAddress `
-                                -EmailAddresses @{Remove = $removeAddr} -ErrorAction Stop
-                            Write-Success "Alias removed."
-                        } catch { Write-ErrorMsg "Failed: $_" }
-                    }
-                }
-            }
-        }
-        3 {
-            $fwdAddr = Read-UserInput "Forward to email address"
-            $keepCopy = Show-Menu -Title "Keep a copy in the shared mailbox?" -Options @("Yes","No") -BackLabel "Cancel"
-            if ($keepCopy -ne -1 -and $fwdAddr) {
-                $deliver = ($keepCopy -eq 0)
-                if (Confirm-Action "Set forwarding to '$fwdAddr' (keep copy: $deliver)?") {
-                    try {
-                        Set-Mailbox -Identity $box.PrimarySmtpAddress `
-                            -ForwardingSmtpAddress "smtp:$fwdAddr" `
-                            -DeliverToMailboxAndForward $deliver -ErrorAction Stop
-                        Write-Success "Forwarding configured."
-                    } catch { Write-ErrorMsg "Failed: $_" }
-                }
-            }
-        }
-        4 {
-            if (Confirm-Action "Remove all forwarding from '$($box.DisplayName)'?") {
-                try {
-                    Set-Mailbox -Identity $box.PrimarySmtpAddress `
-                        -ForwardingSmtpAddress $null `
-                        -DeliverToMailboxAndForward $false -ErrorAction Stop
-                    Write-Success "Forwarding removed."
-                } catch { Write-ErrorMsg "Failed: $_" }
-            }
-        }
-        5 {
-            $current = $box.HiddenFromAddressListsEnabled
-            $newVal = -not $current
-            $label = if ($newVal) { "Hidden" } else { "Visible" }
-            if (Confirm-Action "Set address book visibility to: $label ?") {
-                try {
-                    Set-Mailbox -Identity $box.PrimarySmtpAddress `
-                        -HiddenFromAddressListsEnabled $newVal -ErrorAction Stop
-                    Write-Success "Visibility set to: $label"
-                } catch { Write-ErrorMsg "Failed: $_" }
-            }
-        }
-        6 {
-            $internalMsg = Read-UserInput "Internal auto-reply message"
-            $externalMsg = Read-UserInput "External auto-reply message (or press Enter to use same)"
-            if ([string]::IsNullOrWhiteSpace($externalMsg)) { $externalMsg = $internalMsg }
-            if ($internalMsg -and (Confirm-Action "Set auto-reply on '$($box.DisplayName)'?")) {
-                try {
-                    Set-MailboxAutoReplyConfiguration -Identity $box.PrimarySmtpAddress `
-                        -AutoReplyState Enabled `
-                        -InternalMessage $internalMsg `
-                        -ExternalMessage $externalMsg -ErrorAction Stop
-                    Write-Success "Auto-reply configured."
-                } catch { Write-ErrorMsg "Failed: $_" }
-            }
-        }
+    $ec = Show-Menu -Title "Edit" -Options @("Change name","Add email alias","Remove email alias","Set forwarding","Remove forwarding","Toggle hidden","Set auto-reply") -BackLabel "Done"
+    switch ($ec) {
+        0 { $v = Read-UserInput "New name"; if ($v -and (Confirm-Action "Rename?")) { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -DisplayName $v; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
+        1 { $v = Read-UserInput "New alias email"; if ($v -and (Confirm-Action "Add '$v'?")) { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -EmailAddresses @{Add="smtp:$v"}; Write-Success "Added." } catch { Write-ErrorMsg "$_" } } }
+        2 { $a = @($box.EmailAddresses | Where-Object { $_ -like "smtp:*" }); if ($a.Count -eq 0) { Write-InfoMsg "No aliases." } else { $al = $a | ForEach-Object { $_ -replace '^smtp:','' }; $s = Show-MultiSelect -Title "Remove" -Options $al; foreach ($i in $s) { if (Confirm-Action "Remove '$($al[$i])'?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -EmailAddresses @{Remove=$a[$i]}; Write-Success "Removed." } catch { Write-ErrorMsg "$_" } } } } }
+        3 { $v = Read-UserInput "Forward to"; $kc = Show-Menu -Title "Keep copy?" -Options @("Yes","No") -BackLabel "Cancel"; if ($kc -ne -1 -and $v) { if (Confirm-Action "Set forwarding?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -ForwardingSmtpAddress "smtp:$v" -DeliverToMailboxAndForward ($kc -eq 0); Write-Success "Done." } catch { Write-ErrorMsg "$_" } } } }
+        4 { if (Confirm-Action "Remove forwarding?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -ForwardingSmtpAddress $null -DeliverToMailboxAndForward $false; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
+        5 { $nv = -not $box.HiddenFromAddressListsEnabled; if (Confirm-Action "Set hidden to $nv?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -HiddenFromAddressListsEnabled $nv; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
+        6 { $im = Read-UserInput "Internal message"; $em = Read-UserInput "External (Enter for same)"; if ([string]::IsNullOrWhiteSpace($em)) { $em = $im }; if ($im -and (Confirm-Action "Set auto-reply?")) { try { Set-MailboxAutoReplyConfiguration -Identity $box.PrimarySmtpAddress -AutoReplyState Enabled -InternalMessage $im -ExternalMessage $em; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
     }
     Pause-ForUser
 }
 
-# ==================================================================
-#  Delete
-# ==================================================================
 function Remove-SharedMailboxFlow {
-    Write-SectionHeader "Delete Shared Mailbox"
-
-    $box = Find-SharedMailbox
-    if ($null -eq $box) { Pause-ForUser; return }
-
-    Write-StatusLine "Name"  $box.DisplayName "White"
-    Write-StatusLine "Email" $box.PrimarySmtpAddress "White"
-
-    # Show who has access
-    Show-MailboxPermissions -MailboxIdentity $box.PrimarySmtpAddress -MailboxName $box.DisplayName
-
-    Write-Host ""
-    Write-Warn "This will permanently delete the mailbox and ALL its contents!"
-
-    if (Confirm-Action "DELETE shared mailbox '$($box.DisplayName)'?") {
-        $doubleCheck = Read-UserInput "Type the mailbox email address to confirm deletion"
-        if ($doubleCheck -eq $box.PrimarySmtpAddress) {
-            try {
-                Remove-Mailbox -Identity $box.PrimarySmtpAddress -Confirm:$false -ErrorAction Stop
-                Write-Success "Shared mailbox '$($box.DisplayName)' deleted."
-            } catch { Write-ErrorMsg "Failed to delete: $_" }
-        } else {
-            Write-Warn "Email did not match. Deletion cancelled."
-        }
+    $box = Find-SharedMailbox; if ($null -eq $box) { Pause-ForUser; return }
+    Write-Warn "This permanently deletes the mailbox and ALL contents!"
+    if (Confirm-Action "DELETE '$($box.DisplayName)'?") {
+        $check = Read-UserInput "Type email to confirm"; if ($check -eq $box.PrimarySmtpAddress) { try { Remove-Mailbox -Identity $box.PrimarySmtpAddress -Confirm:$false; Write-Success "Deleted." } catch { Write-ErrorMsg "$_" } } else { Write-Warn "Mismatch." }
     }
     Pause-ForUser
 }
 
-# ==================================================================
-#  Shared helpers
-# ==================================================================
 function Find-SharedMailbox {
-    $searchMethod = Show-Menu -Title "Find shared mailbox by" -Options @(
-        "Search by name",
-        "Search by email address"
-    ) -BackLabel "Cancel"
-    if ($searchMethod -eq -1) { return $null }
-
-    $searchInput = Read-UserInput $(if ($searchMethod -eq 0) { "Enter mailbox name (partial match)" } else { "Enter mailbox email address" })
-    if ([string]::IsNullOrWhiteSpace($searchInput)) { return $null }
-
+    $sm = Show-Menu -Title "Find by" -Options @("Name","Email") -BackLabel "Cancel"; if ($sm -eq -1) { return $null }
+    $si = Read-UserInput $(if ($sm -eq 0) { "Mailbox name" } else { "Mailbox email" }); if ([string]::IsNullOrWhiteSpace($si)) { return $null }
     try {
-        if ($searchMethod -eq 0) {
-            $boxes = @(Get-Mailbox -RecipientTypeDetails SharedMailbox `
-                -Filter "DisplayName -like '*$searchInput*'" -ResultSize 50 -ErrorAction Stop)
-        } else {
-            $boxes = @(Get-Mailbox -RecipientTypeDetails SharedMailbox `
-                -Filter "PrimarySmtpAddress -like '*$searchInput*'" -ResultSize 50 -ErrorAction Stop)
-        }
-
-        if ($boxes.Count -eq 0) {
-            Write-ErrorMsg "No shared mailboxes found matching '$searchInput'."
-            return $null
-        }
-        if ($boxes.Count -eq 1) {
-            Write-Success "Found: $($boxes[0].DisplayName) ($($boxes[0].PrimarySmtpAddress))"
-            return $boxes[0]
-        }
-
-        $labels = $boxes | ForEach-Object { "$($_.DisplayName) ($($_.PrimarySmtpAddress))" }
-        $sel = Show-Menu -Title "Select Shared Mailbox" -Options $labels -BackLabel "Cancel"
-        if ($sel -eq -1) { return $null }
-        return $boxes[$sel]
-    } catch {
-        Write-ErrorMsg "Search error: $_"
-        return $null
-    }
+        $boxes = @(if ($sm -eq 0) { Get-Mailbox -RecipientTypeDetails SharedMailbox -Filter "DisplayName -like '*$si*'" -ResultSize 50 } else { Get-Mailbox -RecipientTypeDetails SharedMailbox -Filter "PrimarySmtpAddress -like '*$si*'" -ResultSize 50 })
+        if ($boxes.Count -eq 0) { Write-ErrorMsg "None found."; return $null }
+        if ($boxes.Count -eq 1) { return $boxes[0] }
+        $sel = Show-Menu -Title "Select" -Options ($boxes | ForEach-Object { "$($_.DisplayName) ($($_.PrimarySmtpAddress))" }) -BackLabel "Cancel"
+        if ($sel -eq -1) { return $null }; return $boxes[$sel]
+    } catch { Write-ErrorMsg "$_"; return $null }
 }
 
-function Show-MailboxPermissions {
-    param([string]$MailboxIdentity, [string]$MailboxName)
-
-    Write-InfoMsg "Current permissions on '$MailboxName':"
-    try {
-        $perms = Get-MailboxPermission -Identity $MailboxIdentity -ErrorAction Stop |
-            Where-Object { $_.User -notlike "NT AUTHORITY\*" -and $_.User -notlike "S-1-*" -and $_.IsInherited -eq $false }
-
-        if ($perms.Count -eq 0) {
-            Write-InfoMsg "  (no custom permissions)"
-        } else {
-            foreach ($p in $perms) {
-                Write-Host "    - $($p.User)  [$($p.AccessRights -join ', ')]" -ForegroundColor White
-            }
-        }
-
-        # Send As
-        $sendAs = Get-RecipientPermission -Identity $MailboxIdentity -ErrorAction SilentlyContinue |
-            Where-Object { $_.Trustee -notlike "NT AUTHORITY\*" -and $_.Trustee -ne "S-1-*" }
-        if ($sendAs.Count -gt 0) {
-            Write-InfoMsg "Send As permissions:"
-            foreach ($sa in $sendAs) {
-                Write-Host "    - $($sa.Trustee)  [SendAs]" -ForegroundColor White
-            }
-        }
-    } catch { Write-Warn "Could not read permissions: $_" }
-    Write-Host ""
+function Show-MailboxPermissions { param([string]$Id, [string]$Name)
+    Write-InfoMsg "Permissions on '$Name':"
+    try { $p = Get-MailboxPermission -Identity $Id -ErrorAction Stop | Where-Object { $_.User -notlike "NT AUTHORITY\*" -and $_.User -notlike "S-1-*" -and -not $_.IsInherited }
+        if ($p.Count -eq 0) { Write-InfoMsg "  (none)" } else { $p | ForEach-Object { Write-Host "    - $($_.User) [$($_.AccessRights -join ', ')]" -ForegroundColor White } }
+    } catch { Write-Warn "$_" }
 }
 
-function Add-SharedMailboxAccessLoop {
-    param([string]$MailboxIdentity, [string]$MailboxName)
-
-    $adding = $true
-    while ($adding) {
-        $userInput = Read-UserInput "Enter user name or email to grant access (or 'done')"
-        if ($userInput -match '^done$') { break }
-
+function Add-SharedMailboxAccessLoop { param([string]$Id, [string]$Name)
+    while ($true) {
+        $ui = Read-UserInput "User to grant access (or 'done')"; if ($ui -match '^done$') { break }
         try {
-            $targetUser = $null
-            if ($userInput -match '@') {
-                $targetUser = Get-AzureADUser -ObjectId $userInput -ErrorAction Stop
-            } else {
-                $found = Get-AzureADUser -SearchString $userInput -ErrorAction Stop
-                if ($found.Count -eq 0) { Write-ErrorMsg "No user found."; continue }
-                if ($found.Count -eq 1) { $targetUser = $found[0] }
-                else {
-                    $names = $found | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }
-                    $sel = Show-Menu -Title "Select User" -Options $names -BackLabel "Cancel"
-                    if ($sel -eq -1) { continue }
-                    $targetUser = $found[$sel]
-                }
+            $tu = if ($ui -match '@') { Get-MgUser -UserId $ui -ErrorAction Stop } else {
+                $f = @(Get-MgUser -Search "displayName:$ui" -ConsistencyLevel eventual -ErrorAction Stop)
+                if ($f.Count -eq 0) { Write-ErrorMsg "Not found."; continue }; if ($f.Count -eq 1) { $f[0] } else {
+                    $sel = Show-Menu -Title "Select" -Options ($f | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }) -BackLabel "Cancel"; if ($sel -eq -1) { continue }; $f[$sel] } }
+            $upn = $tu.UserPrincipalName
+            if (Confirm-Action "Grant Full Access to $($tu.DisplayName)?") { try { Add-MailboxPermission -Identity $Id -User $upn -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } }
+            $pc = Show-Menu -Title "Send permissions?" -Options @("Send As","Send on Behalf","Both","None") -BackLabel "Skip"
+            if ($pc -ne -1 -and $pc -ne 3) {
+                if ($pc -eq 0 -or $pc -eq 2) { if (Confirm-Action "Send As?") { try { Add-RecipientPermission -Identity $Id -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } } }
+                if ($pc -eq 1 -or $pc -eq 2) { if (Confirm-Action "Send on Behalf?") { try { Set-Mailbox -Identity $Id -GrantSendOnBehalfTo @{Add=$upn} -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } } }
             }
-
-            $upn = $targetUser.UserPrincipalName
-
-            # Full Access
-            if (Confirm-Action "Grant Full Access to '$($targetUser.DisplayName)' on '$MailboxName'?") {
-                try {
-                    Add-MailboxPermission -Identity $MailboxIdentity `
-                        -User $upn -AccessRights FullAccess `
-                        -InheritanceType All -AutoMapping $true -ErrorAction Stop
-                    Write-Success "Full Access granted."
-                } catch { Write-ErrorMsg "Full Access failed: $_" }
-            }
-
-            # Send permissions
-            $permChoice = Show-Menu -Title "Grant additional send permissions?" -Options @(
-                "Grant Send As",
-                "Grant Send on Behalf",
-                "Both Send As and Send on Behalf",
-                "No additional permissions"
-            ) -BackLabel "Skip"
-
-            if ($permChoice -ne -1 -and $permChoice -ne 3) {
-                if ($permChoice -eq 0 -or $permChoice -eq 2) {
-                    if (Confirm-Action "Grant Send As on '$MailboxName' to $upn?") {
-                        try {
-                            Add-RecipientPermission -Identity $MailboxIdentity `
-                                -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop
-                            Write-Success "Send As granted."
-                        } catch { Write-ErrorMsg "Send As failed: $_" }
-                    }
-                }
-                if ($permChoice -eq 1 -or $permChoice -eq 2) {
-                    if (Confirm-Action "Grant Send on Behalf on '$MailboxName' to $upn?") {
-                        try {
-                            Set-Mailbox -Identity $MailboxIdentity `
-                                -GrantSendOnBehalfTo @{Add = $upn} -ErrorAction Stop
-                            Write-Success "Send on Behalf granted."
-                        } catch { Write-ErrorMsg "Send on Behalf failed: $_" }
-                    }
-                }
-            }
-        } catch { Write-ErrorMsg "Error: $_" }
+        } catch { Write-ErrorMsg "$_" }
     }
 }

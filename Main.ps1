@@ -4,7 +4,6 @@
 #  Usage:  powershell -ExecutionPolicy Bypass -File Main.ps1
 # ============================================================
 
-# ---- Determine script root ----
 $ScriptRoot = $PSScriptRoot
 if (-not $ScriptRoot) { $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
@@ -36,6 +35,13 @@ function Start-M365Admin {
     Write-Success "All required PowerShell modules detected."
     Write-Host ""
 
+    # ---- Tenant selection (own org vs GDAP customer) ----
+    if (-not (Select-TenantMode)) {
+        Write-Host ""
+        Write-Host "  Goodbye!" -ForegroundColor $script:Colors.Title
+        return
+    }
+
     # ---- Main loop ----
     $running = $true
     while ($running) {
@@ -44,20 +50,41 @@ function Start-M365Admin {
 
         $b = $script:Box
 
-        # Show connection status bar
-        Write-Host ("  " + $b.TL + [string]::new($b.H, 1) + " Session Status " + [string]::new($b.H, 40) + $b.TR) -ForegroundColor $script:Colors.Accent
+        # ---- Tenant context bar ----
+        $tenantDisplay = Get-TenantDisplayString
+        Write-Host ("  " + $b.TL + [string]::new($b.H, 1) + " Tenant " + [string]::new($b.H, 49) + $b.TR) -ForegroundColor $script:Colors.Accent
+        Write-Host ("  " + $b.V + "  ") -ForegroundColor $script:Colors.Accent -NoNewline
 
-        $aadStatus  = if ($script:SessionState.AzureAD)        { "Connected" } else { "---" }
-        $exoStatus  = if ($script:SessionState.ExchangeOnline)  { "Connected" } else { "---" }
-        $msolStatus = if ($script:SessionState.MSOnline)        { "Connected" } else { "---" }
+        if ($script:SessionState.TenantMode -eq "Partner") {
+            Write-Host "GDAP " -NoNewline -ForegroundColor $script:Colors.Highlight
+            Write-Host $script:SessionState.TenantName -NoNewline -ForegroundColor White
+            if ($script:SessionState.TenantDomain) {
+                Write-Host " ($($script:SessionState.TenantDomain))" -NoNewline -ForegroundColor $script:Colors.Info
+            }
+        } else {
+            Write-Host "Direct (own organization)" -NoNewline -ForegroundColor White
+        }
 
-        Write-Host ("  " + $b.V + "  AzureAD: ") -ForegroundColor $script:Colors.Accent -NoNewline
-        Write-Host ("{0,-12}" -f $aadStatus) -ForegroundColor $(if ($script:SessionState.AzureAD) { "Green" } else { "Gray" }) -NoNewline
+        # Pad to fill the box
+        $cursorPos = $Host.UI.RawUI.CursorPosition.X
+        $remaining = 62 - $cursorPos
+        if ($remaining -gt 0) { Write-Host (" " * $remaining) -NoNewline }
+        Write-Host ($b.V) -ForegroundColor $script:Colors.Accent
+
+        # ---- Connection status bar ----
+        $graphStatus = if ($script:SessionState.MgGraph)         { "Connected" } else { "---" }
+        $exoStatus   = if ($script:SessionState.ExchangeOnline)  { "Connected" } else { "---" }
+
+        Write-Host ("  " + $b.V + "  Graph: ") -ForegroundColor $script:Colors.Accent -NoNewline
+        Write-Host ("{0,-13}" -f $graphStatus) -ForegroundColor $(if ($script:SessionState.MgGraph) { "Green" } else { "Gray" }) -NoNewline
         Write-Host " EXO: " -ForegroundColor $script:Colors.Accent -NoNewline
-        Write-Host ("{0,-12}" -f $exoStatus) -ForegroundColor $(if ($script:SessionState.ExchangeOnline) { "Green" } else { "Gray" }) -NoNewline
-        Write-Host " MSOL: " -ForegroundColor $script:Colors.Accent -NoNewline
-        Write-Host ("{0,-8}" -f $msolStatus) -ForegroundColor $(if ($script:SessionState.MSOnline) { "Green" } else { "Gray" }) -NoNewline
-        Write-Host (" " + $b.V) -ForegroundColor $script:Colors.Accent
+        Write-Host ("{0,-13}" -f $exoStatus) -ForegroundColor $(if ($script:SessionState.ExchangeOnline) { "Green" } else { "Gray" }) -NoNewline
+
+        # Pad to fill
+        $cursorPos = $Host.UI.RawUI.CursorPosition.X
+        $remaining = 62 - $cursorPos
+        if ($remaining -gt 0) { Write-Host (" " * $remaining) -NoNewline }
+        Write-Host ($b.V) -ForegroundColor $script:Colors.Accent
 
         Write-Host ("  " + $b.BL + [string]::new($b.H, 58) + $b.BR) -ForegroundColor $script:Colors.Accent
 
@@ -70,7 +97,8 @@ function Start-M365Admin {
             "Distribution List Management",
             "Shared Mailbox Management",
             "Calendar Access Management",
-            "User Profile Management"
+            "User Profile Management",
+            "Switch Tenant"
         ) -BackLabel "Quit and Disconnect"
 
         switch ($sel) {
@@ -83,6 +111,20 @@ function Start-M365Admin {
             6 { Start-SharedMailboxManagement }
             7 { Start-CalendarAccessManagement }
             8 { Start-UserProfileManagement }
+            9 {
+                # ---- Switch Tenant ----
+                Write-Host ""
+                if (Confirm-Action "Disconnect current sessions and switch tenant?") {
+                    Disconnect-AllSessions
+                    if (-not (Select-TenantMode)) {
+                        Write-Warn "Tenant selection cancelled. Returning to menu."
+                        # Restore to direct mode so the tool still works
+                        $script:SessionState.TenantMode = "Direct"
+                        $script:SessionState.TenantId   = $null
+                        $script:SessionState.TenantName  = "Own Tenant"
+                    }
+                }
+            }
             -1 {
                 Write-Host ""
                 if (Confirm-Action "Quit and disconnect all sessions?") {

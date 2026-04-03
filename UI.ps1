@@ -1,8 +1,8 @@
 # ============================================================
 #  UI.ps1 - Shared TUI helpers (colors, menus, confirmations)
+#  User lookup uses Microsoft Graph PowerShell SDK
 # ============================================================
 
-# ---- Color Palette ----
 $script:Colors = @{
     BG          = "DarkBlue"
     Title       = "Cyan"
@@ -16,7 +16,6 @@ $script:Colors = @{
     Accent      = "DarkCyan"
 }
 
-# ---- Box-drawing chars built at runtime so encoding never matters ----
 $script:Box = @{
     TL  = [char]0x250C
     TR  = [char]0x2510
@@ -41,7 +40,7 @@ function Initialize-UI {
 function Write-Banner {
     $b = $script:Box
     $w = 56
-    $title = "            M365 Administration Tool  v1.0"
+    $title = "            M365 Administration Tool  v2.0"
     $pad   = $w - $title.Length
     Write-Host ""
     Write-Host ("  " + $b.DTL + [string]::new($b.DH, $w) + $b.DTR) -ForegroundColor $script:Colors.Title
@@ -62,11 +61,7 @@ function Write-SectionHeader {
 }
 
 function Write-StatusLine {
-    param(
-        [string]$Label,
-        [string]$Value,
-        [string]$Color = "White"
-    )
+    param([string]$Label, [string]$Value, [string]$Color = "White")
     Write-Host "    $Label : " -ForegroundColor $script:Colors.Info -NoNewline
     Write-Host $Value -ForegroundColor $Color
 }
@@ -84,39 +79,23 @@ function Read-UserInput {
     return (Read-Host)
 }
 
-function Read-SecureInput {
-    param([string]$Prompt)
-    Write-Host ""
-    Write-Host "  $Prompt" -ForegroundColor $script:Colors.Prompt -NoNewline
-    Write-Host ": " -ForegroundColor $script:Colors.Prompt -NoNewline
-    return (Read-Host -AsSecureString)
-}
-
 function Confirm-Action {
-    param(
-        [string]$Message,
-        [string]$Details = ""
-    )
-
+    param([string]$Message, [string]$Details = "")
     $b = $script:Box
     $w = 58
-
     Write-Host ""
     $headerText = " CONFIRMATION REQUIRED "
     $hpad = $w - 2 - $headerText.Length
     if ($hpad -lt 1) { $hpad = 1 }
     Write-Host ("  " + $b.DTL + [string]::new($b.DH, 2) + $headerText + [string]::new($b.DH, $hpad) + $b.DTR) -ForegroundColor $script:Colors.Warning
     Write-Host ("  " + $b.DV + " " + $Message) -ForegroundColor White
-
     if ($Details) {
         foreach ($line in ($Details -split "`n")) {
             Write-Host ("  " + $b.DV + "   " + $line) -ForegroundColor $script:Colors.Info
         }
     }
-
     Write-Host ("  " + $b.DBL + [string]::new($b.DH, $w) + $b.DBR) -ForegroundColor $script:Colors.Warning
     Write-Host ""
-
     Write-Host "  Proceed? [Y/N]" -ForegroundColor $script:Colors.Highlight -NoNewline
     Write-Host ": " -NoNewline
     $answer = Read-Host
@@ -124,11 +103,7 @@ function Confirm-Action {
 }
 
 function Show-Menu {
-    param(
-        [string]$Title,
-        [string[]]$Options,
-        [string]$BackLabel = "Back to Main Menu"
-    )
+    param([string]$Title, [string[]]$Options, [string]$BackLabel = "Back to Main Menu")
     Write-SectionHeader $Title
     for ($i = 0; $i -lt $Options.Count; $i++) {
         Write-Host "    [" -NoNewline -ForegroundColor $script:Colors.Accent
@@ -142,14 +117,13 @@ function Show-Menu {
     Write-Host "] " -NoNewline -ForegroundColor $script:Colors.Accent
     Write-Host $BackLabel -ForegroundColor $script:Colors.Error
     Write-Host ""
-
     while ($true) {
         Write-Host "  Select option" -ForegroundColor $script:Colors.Prompt -NoNewline
         Write-Host ": " -NoNewline
         $sel = Read-Host
         if ($sel -match '^\d+$') {
             $num = [int]$sel
-            if ($num -eq 0)                   { return -1 }
+            if ($num -eq 0) { return -1 }
             if ($num -ge 1 -and $num -le $Options.Count) { return ($num - 1) }
         }
         Write-ErrorMsg "Invalid selection. Please try again."
@@ -157,11 +131,7 @@ function Show-Menu {
 }
 
 function Show-MultiSelect {
-    param(
-        [string]$Title,
-        [string[]]$Options,
-        [string]$Prompt = "Enter selection(s) (e.g. 1,3,5)"
-    )
+    param([string]$Title, [string[]]$Options, [string]$Prompt = "Enter selection(s) (e.g. 1,3,5)")
     Write-SectionHeader $Title
     for ($i = 0; $i -lt $Options.Count; $i++) {
         Write-Host "    [" -NoNewline -ForegroundColor $script:Colors.Accent
@@ -170,7 +140,6 @@ function Show-MultiSelect {
         Write-Host $Options[$i] -ForegroundColor $script:Colors.Menu
     }
     Write-Host ""
-
     while ($true) {
         $raw = Read-UserInput $Prompt
         $nums = $raw -split ',' | ForEach-Object { $_.Trim() }
@@ -179,9 +148,8 @@ function Show-MultiSelect {
         foreach ($n in $nums) {
             if ($n -match '^\d+$') {
                 $idx = [int]$n
-                if ($idx -ge 1 -and $idx -le $Options.Count) {
-                    $indices += ($idx - 1)
-                } else { $valid = $false; break }
+                if ($idx -ge 1 -and $idx -le $Options.Count) { $indices += ($idx - 1) }
+                else { $valid = $false; break }
             } else { $valid = $false; break }
         }
         if ($valid -and $indices.Count -gt 0) { return $indices }
@@ -190,11 +158,7 @@ function Show-MultiSelect {
 }
 
 function Show-UserDataTable {
-    param(
-        [hashtable]$Data,
-        [string[]]$FieldOrder
-    )
-
+    param([hashtable]$Data, [string[]]$FieldOrder)
     $b = $script:Box
     Write-Host ""
     Write-Host ("  " + $b.TL + [string]::new($b.H, 54) + $b.TR) -ForegroundColor $script:Colors.Accent
@@ -214,11 +178,7 @@ function Show-UserDataTable {
 }
 
 function Edit-UserDataTable {
-    param(
-        [hashtable]$Data,
-        [string[]]$FieldOrder
-    )
-
+    param([hashtable]$Data, [string[]]$FieldOrder)
     while ($true) {
         Show-UserDataTable -Data $Data -FieldOrder $FieldOrder
         $choice = Read-UserInput "Enter field # to edit, or 'ok' to confirm"
@@ -235,30 +195,41 @@ function Edit-UserDataTable {
 }
 
 function Resolve-UserIdentity {
+    <#
+    .SYNOPSIS
+        Asks for name or email, searches Microsoft Graph, confirms the right user.
+        Returns a user object or $null.
+    #>
     param([string]$PromptText = "Enter user name or email")
 
-    $userInput = Read-UserInput $PromptText
-    if ([string]::IsNullOrWhiteSpace($userInput)) { return $null }
+    $searchInput = Read-UserInput $PromptText
+    if ([string]::IsNullOrWhiteSpace($searchInput)) { return $null }
 
     Write-InfoMsg "Searching for user..."
 
     try {
-        if ($userInput -match '@') {
-            $user = Get-AzureADUser -ObjectId $userInput -ErrorAction Stop
+        if ($searchInput -match '@') {
+            $user = Get-MgUser -UserId $searchInput -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,CompanyName,OfficeLocation,StreetAddress,City,State,PostalCode,Country,UsageLocation,BusinessPhones,MobilePhone,Mail,MailNickname,AccountEnabled,UserType" -ErrorAction Stop
         } else {
-            $users = Get-AzureADUser -SearchString $userInput -ErrorAction Stop
+            # Use Search with ConsistencyLevel for partial matching
+            $users = @(Get-MgUser -Search "displayName:$searchInput" -ConsistencyLevel eventual -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" -ErrorAction Stop)
             if ($users.Count -eq 0) {
-                Write-ErrorMsg "No users found matching '$userInput'."
+                # Fallback: try filter with startsWith
+                $users = @(Get-MgUser -Filter "startsWith(displayName,'$searchInput')" -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" -ErrorAction Stop)
+            }
+            if ($users.Count -eq 0) {
+                Write-ErrorMsg "No users found matching '$searchInput'."
                 return $null
             }
             if ($users.Count -eq 1) {
-                $user = $users[0]
+                # Fetch full properties
+                $user = Get-MgUser -UserId $users[0].Id -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,CompanyName,OfficeLocation,StreetAddress,City,State,PostalCode,Country,UsageLocation,BusinessPhones,MobilePhone,Mail,MailNickname,AccountEnabled,UserType" -ErrorAction Stop
             } else {
                 Write-Warn "Multiple users found:"
                 $names = $users | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }
                 $sel = Show-Menu -Title "Select User" -Options $names -BackLabel "Cancel"
                 if ($sel -eq -1) { return $null }
-                $user = $users[$sel]
+                $user = Get-MgUser -UserId $users[$sel].Id -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,CompanyName,OfficeLocation,StreetAddress,City,State,PostalCode,Country,UsageLocation,BusinessPhones,MobilePhone,Mail,MailNickname,AccountEnabled,UserType" -ErrorAction Stop
             }
         }
 
@@ -282,4 +253,101 @@ function Pause-ForUser {
     Write-Host ""
     Write-Host "  Press any key to continue..." -ForegroundColor $script:Colors.Info
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
+
+# ---- License SKU friendly name mapping ----
+$script:SkuFriendlyNames = @{
+    "SPE_E3"                    = "Microsoft 365 E3"
+    "SPE_E5"                    = "Microsoft 365 E5"
+    "SPE_F1"                    = "Microsoft 365 F3"
+    "M365_F1"                   = "Microsoft 365 F1"
+    "ENTERPRISEPACK"            = "Office 365 E3"
+    "ENTERPRISEPREMIUM"         = "Office 365 E5"
+    "STANDARDPACK"              = "Office 365 E1"
+    "DESKLESSPACK"              = "Office 365 F3"
+    "O365_BUSINESS_PREMIUM"     = "Microsoft 365 Business Standard"
+    "O365_BUSINESS_ESSENTIALS"  = "Microsoft 365 Business Basic"
+    "SMB_BUSINESS"              = "Microsoft 365 Apps for Business"
+    "SMB_BUSINESS_PREMIUM"      = "Microsoft 365 Business Premium"
+    "OFFICESUBSCRIPTION"        = "Microsoft 365 Apps for Enterprise"
+    "EXCHANGESTANDARD"          = "Exchange Online (Plan 1)"
+    "EXCHANGEENTERPRISE"        = "Exchange Online (Plan 2)"
+    "EXCHANGEARCHIVE_ADDON"     = "Exchange Online Archiving"
+    "EXCHANGEARCHIVE"           = "Exchange Online Archiving"
+    "EMS_E3"                    = "Enterprise Mobility + Security E3"
+    "EMS_E5"                    = "Enterprise Mobility + Security E5"
+    "EMSPREMIUM"                = "Enterprise Mobility + Security E5"
+    "AAD_PREMIUM"               = "Azure AD Premium P1"
+    "AAD_PREMIUM_P2"            = "Azure AD Premium P2"
+    "INTUNE_A"                  = "Microsoft Intune Plan 1"
+    "INTUNE_P1"                 = "Microsoft Intune Plan 1"
+    "ATP_ENTERPRISE"            = "Microsoft Defender for Office 365 P1"
+    "THREAT_INTELLIGENCE"       = "Microsoft Defender for Office 365 P2"
+    "WIN_DEF_ATP"               = "Microsoft Defender for Endpoint P2"
+    "MDATP_XPLAT"               = "Microsoft Defender for Endpoint P2"
+    "IDENTITY_THREAT_PROTECTION"= "Microsoft 365 E5 Security"
+    "INFORMATION_PROTECTION_COMPLIANCE" = "Microsoft 365 E5 Compliance"
+    "POWER_BI_STANDARD"         = "Power BI (Free)"
+    "POWER_BI_PRO"              = "Power BI Pro"
+    "POWER_BI_PREMIUM_PER_USER" = "Power BI Premium Per User"
+    "FLOW_FREE"                 = "Power Automate (Free)"
+    "POWERAPPS_VIRAL"           = "Power Apps (Free)"
+    "POWERAPPS_PER_USER"        = "Power Apps Per User"
+    "TEAMS_EXPLORATORY"         = "Microsoft Teams Exploratory"
+    "TEAMS_FREE"                = "Microsoft Teams (Free)"
+    "PROJECTPROFESSIONAL"       = "Project Plan 3"
+    "PROJECTPREMIUM"            = "Project Plan 5"
+    "PROJECT_P1"                = "Project Plan 1"
+    "VISIOONLINE_PLAN1"         = "Visio Plan 1"
+    "VISIOCLIENT"               = "Visio Plan 2"
+    "MCOEV"                     = "Teams Phone Standard"
+    "MCOPSTN1"                  = "Domestic Calling Plan"
+    "MCOPSTN2"                  = "International Calling Plan"
+    "MCOCAP"                    = "Common Area Phone"
+    "PHONESYSTEM_VIRTUALUSER"   = "Teams Phone Resource Account"
+    "MEETING_ROOM"              = "Teams Rooms Standard"
+    "RIGHTSMANAGEMENT"          = "Azure Information Protection P1"
+    "STREAM"                    = "Microsoft Stream"
+    "DEVELOPERPACK"             = "Office 365 E3 Developer"
+    "WINDOWS_STORE"             = "Windows Store for Business"
+    "FORMS_PRO"                 = "Dynamics 365 Customer Voice"
+    "D365_SALES_ENT"            = "Dynamics 365 Sales Enterprise"
+    "CRMSTANDARD"               = "Dynamics 365 Professional"
+    "SHAREPOINTSTANDARD"        = "SharePoint Online (Plan 1)"
+    "SHAREPOINTENTERPRISE"      = "SharePoint Online (Plan 2)"
+    "PLANNERSTANDALONE"         = "Planner Plan 1"
+    "MICROSOFT_BUSINESS_CENTER" = "Microsoft Business Center"
+    "DYN365_ENTERPRISE_PLAN1"   = "Dynamics 365 Plan"
+    "SPB"                       = "Microsoft 365 Business Premium"
+    "ENTERPRISEWITHSCAL"        = "Office 365 E4"
+    "MIDSIZEPACK"               = "Office 365 Midsize Business"
+    "LITEPACK"                  = "Office 365 Small Business"
+    "WACONEDRIVESTANDARD"       = "OneDrive for Business (Plan 1)"
+    "WACONEDRIVEENTERPRISE"     = "OneDrive for Business (Plan 2)"
+    "CCIBOTS_PRIVPREV_VIRAL"    = "Power Virtual Agents Viral Trial"
+    "CDS_DB_CAPACITY"           = "Common Data Service DB Capacity"
+    "PBI_PREMIUM_EM1_ADDON"     = "Power BI Premium EM1"
+    "NONPROFIT_PORTAL"          = "Nonprofit Portal"
+}
+
+function Get-SkuFriendlyName {
+    param([string]$SkuPartNumber)
+    if ($script:SkuFriendlyNames.ContainsKey($SkuPartNumber)) {
+        return $script:SkuFriendlyNames[$SkuPartNumber]
+    }
+    # Try to make it more readable by replacing underscores and title-casing
+    return $SkuPartNumber
+}
+
+function Format-LicenseLabel {
+    <#
+    .SYNOPSIS
+        Returns "Friendly Name (SKU_PART_NUMBER)" for display
+    #>
+    param([string]$SkuPartNumber)
+    $friendly = Get-SkuFriendlyName $SkuPartNumber
+    if ($friendly -eq $SkuPartNumber) {
+        return $SkuPartNumber
+    }
+    return "$friendly ($SkuPartNumber)"
 }

@@ -1,274 +1,161 @@
 # ============================================================
-#  UserProfile.ps1 - View / Edit User Profile
+#  UserProfile.ps1 - View / Edit User Profile (Microsoft Graph)
 # ============================================================
 
 function Start-UserProfileManagement {
     Write-SectionHeader "User Profile Management"
+    if (-not (Connect-ForTask "UserProfile")) { Pause-ForUser; return }
 
-    if (-not (Connect-ForTask "UserProfile")) {
-        Write-ErrorMsg "Could not connect to required services."
-        Pause-ForUser; return
-    }
-
-    # ---- Identify user ----
-    $user = Resolve-UserIdentity -PromptText "Enter user name or email"
+    $user = Resolve-UserIdentity
     if ($null -eq $user) { Pause-ForUser; return }
 
-    # ---- Fetch full profile ----
-    try {
-        $profile = Get-AzureADUser -ObjectId $user.ObjectId -ErrorAction Stop
-    } catch {
-        Write-ErrorMsg "Could not retrieve user profile: $_"
-        Pause-ForUser; return
+    # Editable fields: label -> Graph property
+    $editableFields = [ordered]@{
+        "Display Name"    = "DisplayName"
+        "First Name"      = "GivenName"
+        "Last Name"       = "Surname"
+        "Job Title"       = "JobTitle"
+        "Department"      = "Department"
+        "Company Name"    = "CompanyName"
+        "Office Location" = "OfficeLocation"
+        "Street Address"  = "StreetAddress"
+        "City"            = "City"
+        "State"           = "State"
+        "Postal Code"     = "PostalCode"
+        "Country"         = "Country"
+        "Usage Location"  = "UsageLocation"
+        "Mobile Phone"    = "MobilePhone"
+        "Mail Nickname"   = "MailNickname"
     }
 
-    # ---- Define the editable field map ----
-    # Each entry: display label -> AzureAD property name
-    $fieldMap = [ordered]@{
-        "Display Name"          = "DisplayName"
-        "First Name"            = "GivenName"
-        "Last Name"             = "Surname"
-        "Job Title"             = "JobTitle"
-        "Department"            = "Department"
-        "Company Name"          = "CompanyName"
-        "Employee ID"           = "ExtensionProperty"
-        "Manager"               = "_Manager"
-        "Office Location"       = "PhysicalDeliveryOfficeName"
-        "Street Address"        = "StreetAddress"
-        "City"                  = "City"
-        "State"                 = "State"
-        "Postal Code"          = "PostalCode"
-        "Country"               = "Country"
-        "Usage Location"        = "UsageLocation"
-        "Business Phone"        = "TelephoneNumber"
-        "Mobile Phone"          = "Mobile"
-        "Fax Number"            = "FacsimileTelephoneNumber"
-        "Mail"                  = "Mail"
-        "UPN"                   = "UserPrincipalName"
-        "Mail Nickname"         = "MailNickName"
-        "Other Emails"          = "OtherMails"
-        "Proxy Addresses"       = "ProxyAddresses"
-        "Account Enabled"       = "AccountEnabled"
-        "User Type"             = "UserType"
-        "Creation Type"         = "CreationType"
-        "Object ID"             = "ObjectId"
-        "Last Dir Sync"         = "DirSyncEnabled"
+    # Read-only fields
+    $readOnlyFields = [ordered]@{
+        "UPN"             = "UserPrincipalName"
+        "Mail"            = "Mail"
+        "Business Phones" = "BusinessPhones"
+        "Account Enabled" = "AccountEnabled"
+        "User Type"       = "UserType"
+        "Object ID"       = "Id"
     }
 
-    # ---- Fields that can be edited with Set-AzureADUser ----
-    $editableFields = @(
-        "Display Name", "First Name", "Last Name", "Job Title",
-        "Department", "Company Name", "Office Location",
-        "Street Address", "City", "State", "Postal Code",
-        "Country", "Usage Location", "Business Phone",
-        "Mobile Phone", "Fax Number", "Mail Nickname"
-    )
+    $keepGoing = $true
+    while ($keepGoing) {
+        # Refresh profile
+        try {
+            $profile = Get-MgUser -UserId $user.Id -Property ($editableFields.Values + $readOnlyFields.Values + @("Id")) -ErrorAction Stop
+        } catch { Write-ErrorMsg "Could not load profile: $_"; Pause-ForUser; return }
 
-    # ---- Build display data ----
-    function Get-ProfileValue {
-        param($Profile, $PropertyName)
+        # Manager
+        $mgrDisplay = "(not set)"
+        try {
+            $mgr = Get-MgUserManager -UserId $user.Id -ErrorAction SilentlyContinue
+            if ($mgr) { $mgrDisplay = "$($mgr.AdditionalProperties['displayName']) ($($mgr.AdditionalProperties['userPrincipalName']))" }
+        } catch {}
 
-        if ($PropertyName -eq "_Manager") {
-            try {
-                $mgr = Get-AzureADUserManager -ObjectId $Profile.ObjectId -ErrorAction SilentlyContinue
-                if ($mgr) { return "$($mgr.DisplayName) ($($mgr.UserPrincipalName))" }
-                else      { return "(not set)" }
-            } catch { return "(not set)" }
-        }
-
-        $val = $Profile.$PropertyName
-        if ($null -eq $val)          { return "(not set)" }
-        if ($val -is [System.Collections.IEnumerable] -and $val -isnot [string]) {
-            $joined = ($val | ForEach-Object { "$_" }) -join "; "
-            if ([string]::IsNullOrWhiteSpace($joined)) { return "(not set)" }
-            return $joined
-        }
-        if ([string]::IsNullOrWhiteSpace("$val")) { return "(not set)" }
-        return "$val"
-    }
-
-    # ---- Show full profile ----
-    function Show-FullProfile {
-        param($Profile)
-
+        # Display
         $b = $script:Box
         Write-Host ""
-        Write-Host ("  " + $b.DTL + [string]::new($b.DH, 2) + " Profile: $($Profile.DisplayName) " + [string]::new($b.DH, 20) + $b.DTR) -ForegroundColor $script:Colors.Title
+        Write-Host ("  " + $b.DTL + [string]::new($b.DH, 2) + " Profile: $($profile.DisplayName) " + [string]::new($b.DH, 20) + $b.DTR) -ForegroundColor $script:Colors.Title
         Write-Host ""
 
         $idx = 1
-        foreach ($label in $fieldMap.Keys) {
-            $propName = $fieldMap[$label]
-            $value    = Get-ProfileValue -Profile $Profile -PropertyName $propName
-            $isEditable = $editableFields -contains $label
-            $numTag     = if ($isEditable) { ("{0,3}" -f $idx) } else { "   " }
-
-            Write-Host "  " -NoNewline
-            if ($isEditable) {
-                Write-Host "[" -NoNewline -ForegroundColor $script:Colors.Accent
-                Write-Host $numTag.Trim() -NoNewline -ForegroundColor $script:Colors.Highlight
-                Write-Host "]" -NoNewline -ForegroundColor $script:Colors.Accent
-            } else {
-                Write-Host "   " -NoNewline
-            }
-
-            $paddedLabel = " {0,-20}" -f $label
-            Write-Host $paddedLabel -NoNewline -ForegroundColor $script:Colors.Info
+        foreach ($label in $editableFields.Keys) {
+            $prop = $editableFields[$label]
+            $val = $profile.$prop
+            $valStr = if ($null -eq $val -or ([string]::IsNullOrWhiteSpace("$val"))) { "(not set)" } else { "$val" }
+            Write-Host "  [" -NoNewline -ForegroundColor $script:Colors.Accent
+            Write-Host ("{0,2}" -f $idx) -NoNewline -ForegroundColor $script:Colors.Highlight
+            Write-Host "]" -NoNewline -ForegroundColor $script:Colors.Accent
+            Write-Host (" {0,-18}" -f $label) -NoNewline -ForegroundColor $script:Colors.Info
             Write-Host ": " -NoNewline
+            Write-Host $valStr -ForegroundColor $(if ($valStr -eq "(not set)") { "DarkGray" } else { "White" })
+            $idx++
+        }
 
-            if ($value -eq "(not set)") {
-                Write-Host $value -ForegroundColor "DarkGray"
-            } else {
-                Write-Host $value -ForegroundColor White
-            }
+        # Manager row (editable via separate menu)
+        Write-Host "  [" -NoNewline -ForegroundColor $script:Colors.Accent
+        Write-Host " M" -NoNewline -ForegroundColor $script:Colors.Highlight
+        Write-Host "]" -NoNewline -ForegroundColor $script:Colors.Accent
+        Write-Host (" {0,-18}" -f "Manager") -NoNewline -ForegroundColor $script:Colors.Info
+        Write-Host ": " -NoNewline
+        Write-Host $mgrDisplay -ForegroundColor $(if ($mgrDisplay -eq "(not set)") { "DarkGray" } else { "White" })
 
-            if ($isEditable) { $idx++ }
+        Write-Host ""
+        # Read-only
+        foreach ($label in $readOnlyFields.Keys) {
+            $prop = $readOnlyFields[$label]
+            $val = $profile.$prop
+            if ($val -is [System.Collections.IEnumerable] -and $val -isnot [string]) { $valStr = ($val -join "; ") }
+            else { $valStr = if ($null -eq $val -or ([string]::IsNullOrWhiteSpace("$val"))) { "(not set)" } else { "$val" } }
+            Write-Host "     " -NoNewline
+            Write-Host (" {0,-18}" -f $label) -NoNewline -ForegroundColor $script:Colors.Info
+            Write-Host ": " -NoNewline
+            Write-Host $valStr -ForegroundColor "Gray"
         }
 
         Write-Host ""
         Write-Host ("  " + $b.DBL + [string]::new($b.DH, 60) + $b.DBR) -ForegroundColor $script:Colors.Title
-        Write-Host ""
-        Write-InfoMsg "Numbered fields are editable. Unnumbered fields are read-only."
-    }
+        Write-InfoMsg "Numbered fields are editable. Enter number, 'M' for manager, or 'done'."
 
-    # ---- Main profile loop ----
-    $keepGoing = $true
-    while ($keepGoing) {
+        $input = Read-UserInput "Action"
 
-        Show-FullProfile -Profile $profile
+        if ($input -match '^done$') { $keepGoing = $false; continue }
 
-        $action = Show-Menu -Title "Profile Actions" -Options @(
-            "Edit a field",
-            "Change manager",
-            "Refresh profile view"
-        ) -BackLabel "Done"
-
-        switch ($action) {
-            0 {
-                # ---- Edit a field ----
-                $fieldNum = Read-UserInput "Enter the field number to edit"
-
-                if ($fieldNum -match '^\d+$') {
-                    $fi = [int]$fieldNum
-                    if ($fi -ge 1 -and $fi -le $editableFields.Count) {
-                        $chosenLabel = $editableFields[$fi - 1]
-                        $propName    = $fieldMap[$chosenLabel]
-                        $currentVal  = Get-ProfileValue -Profile $profile -PropertyName $propName
-
-                        Write-Host ""
-                        Write-StatusLine "Field" $chosenLabel "Cyan"
-                        Write-StatusLine "Current value" $currentVal "White"
-
-                        $newVal = Read-UserInput "Enter new value (or 'clear' to blank it)"
-
-                        if ($newVal -eq 'clear') { $newVal = $null }
-
-                        $details = "Field: $chosenLabel`nOld: $currentVal`nNew: $(if ($null -eq $newVal) { '(cleared)' } else { $newVal })"
-                        if (Confirm-Action "Update this field?" $details) {
-                            try {
-                                $params = @{ ObjectId = $profile.ObjectId }
-                                if ($null -eq $newVal -or $newVal -eq '') {
-                                    # Set to empty/null
-                                    $params[$propName] = $null
-                                } else {
-                                    $params[$propName] = $newVal
-                                }
-                                Set-AzureADUser @params -ErrorAction Stop
-                                Write-Success "'$chosenLabel' updated."
-
-                                # Refresh local copy
-                                $profile = Get-AzureADUser -ObjectId $profile.ObjectId -ErrorAction Stop
-                            } catch {
-                                Write-ErrorMsg "Failed to update: $_"
+        if ($input -match '^[Mm]$') {
+            # Manager management
+            Write-StatusLine "Current Manager" $mgrDisplay "White"
+            $ma = Show-Menu -Title "Manager" -Options @("Set / change","Remove") -BackLabel "Cancel"
+            if ($ma -eq 0) {
+                $mi = Read-UserInput "New manager name or email"
+                if ($mi) {
+                    try {
+                        $nm = if ($mi -match '@') { Get-MgUser -UserId $mi -ErrorAction Stop } else {
+                            $f = @(Get-MgUser -Search "displayName:$mi" -ConsistencyLevel eventual -ErrorAction Stop)
+                            if ($f.Count -eq 0) { Write-ErrorMsg "Not found."; Pause-ForUser; continue }
+                            if ($f.Count -eq 1) { $f[0] } else {
+                                $sel = Show-Menu -Title "Select" -Options ($f | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }) -BackLabel "Cancel"
+                                if ($sel -eq -1) { Pause-ForUser; continue }; $f[$sel]
                             }
                         }
-                    } else {
-                        Write-ErrorMsg "Invalid field number. Must be 1-$($editableFields.Count)."
-                    }
-                } else {
-                    Write-ErrorMsg "Please enter a number."
-                }
-                Pause-ForUser
-            }
-            1 {
-                # ---- Change manager ----
-                Write-Host ""
-                try {
-                    $currentMgr = Get-AzureADUserManager -ObjectId $profile.ObjectId -ErrorAction SilentlyContinue
-                    if ($currentMgr) {
-                        Write-StatusLine "Current Manager" "$($currentMgr.DisplayName) ($($currentMgr.UserPrincipalName))" "White"
-                    } else {
-                        Write-StatusLine "Current Manager" "(not set)" "DarkGray"
-                    }
-                } catch {
-                    Write-StatusLine "Current Manager" "(not set)" "DarkGray"
-                }
-
-                $mgrAction = Show-Menu -Title "Manager Action" -Options @(
-                    "Set / change manager",
-                    "Remove manager"
-                ) -BackLabel "Cancel"
-
-                if ($mgrAction -eq 0) {
-                    $mgrInput = Read-UserInput "Enter new manager name or email"
-                    if (-not [string]::IsNullOrWhiteSpace($mgrInput)) {
-                        try {
-                            if ($mgrInput -match '@') {
-                                $newMgr = Get-AzureADUser -ObjectId $mgrInput -ErrorAction Stop
-                            } else {
-                                $found = Get-AzureADUser -SearchString $mgrInput -ErrorAction Stop
-                                if ($found.Count -eq 0) {
-                                    Write-ErrorMsg "No user found matching '$mgrInput'."
-                                    Pause-ForUser; continue
-                                }
-                                if ($found.Count -eq 1) {
-                                    $newMgr = $found[0]
-                                } else {
-                                    $names = $found | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }
-                                    $sel = Show-Menu -Title "Select Manager" -Options $names -BackLabel "Cancel"
-                                    if ($sel -eq -1) { Pause-ForUser; continue }
-                                    $newMgr = $found[$sel]
-                                }
-                            }
-
-                            Write-StatusLine "New Manager" "$($newMgr.DisplayName) ($($newMgr.UserPrincipalName))" "White"
-                            if (Confirm-Action "Set $($newMgr.DisplayName) as manager for $($profile.DisplayName)?") {
-                                Set-AzureADUserManager -ObjectId $profile.ObjectId `
-                                    -RefObjectId $newMgr.ObjectId -ErrorAction Stop
-                                Write-Success "Manager updated to $($newMgr.DisplayName)."
-                            }
-                        } catch {
-                            Write-ErrorMsg "Failed to set manager: $_"
+                        if (Confirm-Action "Set manager to $($nm.DisplayName)?") {
+                            Set-MgUserManagerByRef -UserId $user.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/users/$($nm.Id)" } -ErrorAction Stop
+                            Write-Success "Manager set."
                         }
-                    }
+                    } catch { Write-ErrorMsg "Failed: $_" }
                 }
-                elseif ($mgrAction -eq 1) {
-                    if (Confirm-Action "Remove manager from $($profile.DisplayName)?") {
-                        try {
-                            Remove-AzureADUserManager -ObjectId $profile.ObjectId -ErrorAction Stop
-                            Write-Success "Manager removed."
-                        } catch {
-                            Write-ErrorMsg "Failed to remove manager: $_"
-                        }
-                    }
+            } elseif ($ma -eq 1) {
+                if (Confirm-Action "Remove manager?") {
+                    try { Remove-MgUserManagerByRef -UserId $user.Id -ErrorAction Stop; Write-Success "Removed." }
+                    catch { Write-ErrorMsg "Failed: $_" }
                 }
-                Pause-ForUser
             }
-            2 {
-                # ---- Refresh ----
-                try {
-                    $profile = Get-AzureADUser -ObjectId $profile.ObjectId -ErrorAction Stop
-                    Write-Success "Profile refreshed."
-                } catch {
-                    Write-ErrorMsg "Could not refresh profile: $_"
-                }
-                Pause-ForUser
-            }
-            -1 {
-                $keepGoing = $false
-            }
+            Pause-ForUser; continue
         }
-    }
 
+        if ($input -match '^\d+$') {
+            $fi = [int]$input
+            $editKeys = @($editableFields.Keys)
+            if ($fi -ge 1 -and $fi -le $editKeys.Count) {
+                $label = $editKeys[$fi - 1]
+                $prop = $editableFields[$label]
+                $curVal = $profile.$prop
+                Write-StatusLine "Field" $label "Cyan"
+                Write-StatusLine "Current" $(if ($curVal) { "$curVal" } else { "(not set)" }) "White"
+                $newVal = Read-UserInput "New value (or 'clear')"
+                if ($newVal -eq 'clear') { $newVal = "" }
+                if (Confirm-Action "Update '$label'?" "Old: $(if ($curVal) { $curVal } else { '(empty)' })`nNew: $(if ($newVal) { $newVal } else { '(cleared)' })") {
+                    try {
+                        $body = @{}; $body[$prop] = if ([string]::IsNullOrWhiteSpace($newVal)) { $null } else { $newVal }
+                        Update-MgUser -UserId $user.Id -BodyParameter $body -ErrorAction Stop
+                        Write-Success "'$label' updated."
+                    } catch { Write-ErrorMsg "Failed: $_" }
+                }
+            } else { Write-ErrorMsg "Invalid number." }
+            Pause-ForUser; continue
+        }
+
+        Write-ErrorMsg "Enter a field number, 'M', or 'done'."
+        Pause-ForUser
+    }
     Write-Success "Profile management complete."
 }

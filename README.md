@@ -7,12 +7,21 @@ A modular PowerShell TUI application for common Microsoft 365 admin tasks. Blue 
 Install the required PowerShell modules (the tool will prompt if missing):
 
 ```powershell
-Install-Module AzureAD -Scope CurrentUser -Force
+Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force
+Install-Module Microsoft.Graph.Users -Scope CurrentUser -Force
+Install-Module Microsoft.Graph.Users.Actions -Scope CurrentUser -Force
+Install-Module Microsoft.Graph.Groups -Scope CurrentUser -Force
+Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope CurrentUser -Force
 Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
-Install-Module MSOnline -Scope CurrentUser -Force
 ```
 
+> **Note:** This tool uses the Microsoft Graph PowerShell SDK, not the deprecated AzureAD module. If you previously used AzureAD, it is no longer needed.
+
 ## Launch
+
+Double-click `Launch.bat` in the M365Admin folder.
+
+Or run manually from PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Main.ps1
@@ -22,6 +31,7 @@ powershell -ExecutionPolicy Bypass -File Main.ps1
 
 ```
 M365Admin/
+├── Launch.bat             # Double-click to start the tool
 ├── Main.ps1               # Entry point, main menu, session status bar
 ├── UI.ps1                 # Shared TUI helpers (colors, menus, confirmations, box drawing)
 ├── Auth.ps1               # Browser-based OAuth authentication & session management
@@ -44,15 +54,15 @@ M365Admin/
 
 | # | Feature | Services Used |
 |---|---------|---------------|
-| 1 | **Onboard** | AzureAD, MSOnline, EXO |
-| 2 | **Offboard** | AzureAD, MSOnline, EXO |
-| 3 | **License Management** | AzureAD, MSOnline |
-| 4 | **Mailbox Archiving** | AzureAD, EXO |
-| 5 | **Security Groups** | AzureAD |
-| 6 | **Distribution Lists** | AzureAD, EXO |
-| 7 | **Shared Mailboxes** | AzureAD, EXO |
-| 8 | **Calendar Access** | AzureAD, EXO |
-| 9 | **User Profile** | AzureAD |
+| 1 | **Onboard** | Graph, EXO |
+| 2 | **Offboard** | Graph, EXO |
+| 3 | **License Management** | Graph |
+| 4 | **Mailbox Archiving** | Graph, EXO |
+| 5 | **Security Groups** | Graph |
+| 6 | **Distribution Lists** | Graph, EXO |
+| 7 | **Shared Mailboxes** | Graph, EXO |
+| 8 | **Calendar Access** | Graph, EXO |
+| 9 | **User Profile** | Graph |
 
 ---
 
@@ -68,9 +78,8 @@ Onboarding steps:
 1. Create account with all profile fields
 2. Assign licenses (replicated or picked from tenant)
 3. Assign security groups (replicated or searched)
-4. Enforce MFA
-5. Set manager
-6. Display temporary password
+4. Set manager
+5. Display temporary password
 
 Profile fields supported: FirstName, LastName, DisplayName, UPN, JobTitle, Department, CompanyName, OfficeLocation, StreetAddress, City, State, PostalCode, Country, UsageLocation, BusinessPhone, MobilePhone, Manager.
 
@@ -90,9 +99,10 @@ Offboarding steps:
 ### 3. Add / Remove License
 
 - Search user by name or email
-- Shows all current licenses on the user
-- Add: displays full tenant license inventory with total/used/free counts, multi-select with commas
-- Remove: lists user's licenses, multi-select removal
+- Shows all current licenses with **friendly names** (e.g. "Microsoft 365 E3" instead of "SPE_E3")
+- Tags each license as **[Direct]**, **[Group-assigned]**, or **[Direct + Group]**
+- Add: displays full tenant license inventory with friendly names and total/used/free counts, multi-select
+- Remove: blocks removal of group-assigned licenses with an explanation of which group assigned it, only removes directly-assigned licenses
 
 ### 4. Mailbox Archiving
 
@@ -140,13 +150,32 @@ Offboarding steps:
 
 ## Authentication
 
-All authentication uses **browser-based interactive OAuth** — no stored passwords, no credential dialogs. When a task needs a service that isn't connected yet, a browser window opens for Microsoft sign-in. The session status bar on the main menu shows which services (AzureAD, EXO, MSOnline) are currently connected.
+All authentication uses **browser-based interactive OAuth**. On startup, the tool asks whether you're managing your own organization or a customer tenant via GDAP.
 
-Each service connects at most once per session. Quitting the app disconnects all active sessions.
+### Direct Mode (Own Tenant)
+Standard admin login. `Connect-MgGraph` and `Connect-ExchangeOnline` connect to your own tenant.
+
+### GDAP Partner Mode (Customer Tenants)
+For Microsoft Partner Center / CSP organizations with Granular Delegated Admin Privileges:
+
+1. Tool first connects to your **partner tenant** to list all customer relationships
+2. Fetches customer tenants via Microsoft Graph contracts API
+3. Presents a searchable list of all managed customers (name + domain)
+4. After you pick a customer, disconnects from partner and reconnects to the **customer tenant** using `-TenantId` (Graph) and `-DelegatedOrganization` (EXO)
+5. All subsequent operations run against the selected customer tenant
+6. **Switch Tenant** option on the main menu lets you disconnect and pick a different customer without restarting
+
+Required GDAP roles on the customer tenant: User Administrator, Groups Administrator, License Administrator, Exchange Administrator, Directory Readers.
+
+If the contract listing fails (permissions, no relationships), the tool falls back to manual tenant ID / domain entry.
+
+Only two modules are required: **Microsoft Graph PowerShell SDK** and **ExchangeOnlineManagement**.
 
 ## Design Principles
 
-- **Browser-based OAuth** — modern interactive login that supports MFA, conditional access, and SSO across services.
+- **Browser-based OAuth** — modern interactive login via Microsoft Graph. Supports MFA, conditional access, SSO, and GDAP partner access.
+- **GDAP partner support** — manage customer tenants with a built-in tenant picker. Switch between customers from the main menu.
+- **Friendly license names** — displays "Microsoft 365 E3" instead of "SPE_E3", with group-assignment detection.
 - **Confirmation on every change** — all destructive or modifying steps show a yellow confirmation prompt before executing.
 - **Modular** — each function lives in its own `.ps1` file.
 - **Encoding-safe** — all box-drawing characters are built at runtime via `[char]` hex codes, so files survive any encoding/download.

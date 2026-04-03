@@ -1,111 +1,184 @@
 # ============================================================
-#  License.ps1 - Add / Remove License Management
+#  License.ps1 - License Management (Microsoft Graph)
+#  Shows friendly names, detects group-assigned licenses
 # ============================================================
 
 function Start-LicenseManagement {
     Write-SectionHeader "License Management"
+    if (-not (Connect-ForTask "License")) { Pause-ForUser; return }
 
-    if (-not (Connect-ForTask "License")) {
-        Write-ErrorMsg "Could not connect to required services."
-        Pause-ForUser; return
-    }
-
-    # ---- Identify user ----
-    $user = Resolve-UserIdentity -PromptText "Enter user name or email"
+    $user = Resolve-UserIdentity
     if ($null -eq $user) { Pause-ForUser; return }
 
-    $upn = $user.UserPrincipalName
-
+    # ---- Get license assignment states (direct vs group) ----
+    $fullUser = $null
     try {
-        $msolUser = Get-MsolUser -UserPrincipalName $upn -ErrorAction Stop
+        $fullUser = Get-MgUser -UserId $user.Id -Property "Id,DisplayName,UserPrincipalName,LicenseAssignmentStates" -ErrorAction Stop
     } catch {
-        Write-ErrorMsg "Could not retrieve MSOnline user: $_"
-        Pause-ForUser; return
+        Write-Warn "Could not read assignment states: $_"
+    }
+
+    # Build a lookup: SkuId -> assignment info
+    $assignmentInfo = @{}
+    if ($fullUser -and $fullUser.LicenseAssignmentStates) {
+        foreach ($state in $fullUser.LicenseAssignmentStates) {
+            $skuId = "$($state.SkuId)"
+            $info = @{ Direct = $false; Groups = @() }
+            if ($assignmentInfo.ContainsKey($skuId)) { $info = $assignmentInfo[$skuId] }
+
+            if ($null -eq $state.AssignedByGroup -or $state.AssignedByGroup -eq "") {
+                $info.Direct = $true
+            } else {
+                $info.Groups += $state.AssignedByGroup
+            }
+            $assignmentInfo[$skuId] = $info
+        }
     }
 
     # ---- Show current licenses ----
     Write-SectionHeader "Current Licenses for $($user.DisplayName)"
-    $currentLicenses = $msolUser.Licenses
-    if ($currentLicenses.Count -eq 0) {
-        Write-InfoMsg "This user has no licenses assigned."
+
+    try { $currentLics = @(Get-MgUserLicenseDetail -UserId $user.Id -ErrorAction Stop) } catch { $currentLics = @() }
+
+    if ($currentLics.Count -eq 0) {
+        Write-InfoMsg "No licenses assigned."
     } else {
-        for ($i = 0; $i -lt $currentLicenses.Count; $i++) {
-            Write-Host "    [$($i+1)] $($currentLicenses[$i].AccountSkuId)" -ForegroundColor White
+        for ($i = 0; $i -lt $currentLics.Count; $i++) {
+            $lic = $currentLics[$i]
+            $label = Format-LicenseLabel $lic.SkuPartNumber
+
+            # Check assignment type
+            $skuId = "$($lic.SkuId)"
+            $assignTag = ""
+            if ($assignmentInfo.ContainsKey($skuId)) {
+                $ai = $assignmentInfo[$skuId]
+                if ($ai.Direct -and $ai.Groups.Count -gt 0) {
+                    $assignTag = " [Direct + Group]"
+                } elseif ($ai.Groups.Count -gt 0) {
+                    $assignTag = " [Group-assigned]"
+                } else {
+                    $assignTag = " [Direct]"
+                }
+            }
+
+            Write-Host "    [" -NoNewline -ForegroundColor $script:Colors.Accent
+            Write-Host ($i + 1) -NoNewline -ForegroundColor $script:Colors.Highlight
+            Write-Host "] " -NoNewline -ForegroundColor $script:Colors.Accent
+            Write-Host $label -NoNewline -ForegroundColor White
+            if ($assignTag -match "Group") {
+                Write-Host $assignTag -ForegroundColor $script:Colors.Warning
+            } else {
+                Write-Host $assignTag -ForegroundColor $script:Colors.Info
+            }
         }
     }
     Write-Host ""
 
     # ---- Add or Remove ----
-    $action = Show-Menu -Title "What would you like to do?" -Options @(
-        "Add license(s)",
-        "Remove license(s)"
-    ) -BackLabel "Cancel"
-
+    $action = Show-Menu -Title "Action" -Options @("Add license(s)", "Remove license(s)") -BackLabel "Cancel"
     if ($action -eq -1) { return }
 
     if ($action -eq 0) {
         # ---- ADD ----
         Write-SectionHeader "Available Tenant Licenses"
         try {
-            $allSkus = Get-MsolAccountSku -ErrorAction Stop
-            $available = $allSkus | ForEach-Object {
-                $free = $_.ActiveUnits - $_.ConsumedUnits
+            $skus = Get-MgSubscribedSku -ErrorAction Stop
+            $available = $skus | ForEach-Object {
+                $t = $_.PrepaidUnits.Enabled; $u = $_.ConsumedUnits
                 [PSCustomObject]@{
                     SkuPartNumber = $_.SkuPartNumber
-                    AccountSkuId  = $_.AccountSkuId
-                    Total         = $_.ActiveUnits
-                    Used          = $_.ConsumedUnits
-                    Free          = $free
+                    SkuId         = $_.SkuId
+                    FriendlyName  = Format-LicenseLabel $_.SkuPartNumber
+                    Total         = $t
+                    Used          = $u
+                    Free          = $t - $u
                 }
             }
 
             $labels = $available | ForEach-Object {
-                "$($_.SkuPartNumber)  [Total: $($_.Total) | Used: $($_.Used) | Free: $($_.Free)]"
+                "$($_.FriendlyName)  [Total: $($_.Total) | Used: $($_.Used) | Free: $($_.Free)]"
             }
 
-            $selected = Show-MultiSelect -Title "Select license(s) to add" -Options $labels `
-                -Prompt "Enter license number(s) (e.g. 1,3,5)"
-
+            $selected = Show-MultiSelect -Title "Select license(s) to add" -Options $labels
             foreach ($idx in $selected) {
                 $sku = $available[$idx]
                 if ($sku.Free -le 0) {
-                    Write-Warn "$($sku.SkuPartNumber) has no available seats. Skipping."
+                    Write-Warn "$(Get-SkuFriendlyName $sku.SkuPartNumber) has no available seats. Skipping."
                     continue
                 }
-                if (Confirm-Action "Assign '$($sku.SkuPartNumber)' to $upn?") {
+                if (Confirm-Action "Assign '$(Get-SkuFriendlyName $sku.SkuPartNumber)' to $($user.UserPrincipalName)?") {
                     try {
-                        Set-MsolUserLicense -UserPrincipalName $upn `
-                            -AddLicenses $sku.AccountSkuId -ErrorAction Stop
-                        Write-Success "License '$($sku.SkuPartNumber)' assigned."
+                        Set-MgUserLicense -UserId $user.Id -AddLicenses @(@{SkuId = $sku.SkuId}) -RemoveLicenses @() -ErrorAction Stop
+                        Write-Success "$(Get-SkuFriendlyName $sku.SkuPartNumber) assigned."
                     } catch {
-                        Write-ErrorMsg "Failed to assign $($sku.SkuPartNumber): $_"
+                        Write-ErrorMsg "Failed to assign: $_"
                     }
                 }
             }
-        } catch {
-            Write-ErrorMsg "Could not retrieve tenant licenses: $_"
-        }
+        } catch { Write-ErrorMsg "License error: $_" }
     }
     else {
         # ---- REMOVE ----
-        if ($currentLicenses.Count -eq 0) {
+        if ($currentLics.Count -eq 0) {
             Write-Warn "No licenses to remove."
             Pause-ForUser; return
         }
 
-        $licLabels = $currentLicenses | ForEach-Object { $_.AccountSkuId }
-        $selected = Show-MultiSelect -Title "Select license(s) to remove" -Options $licLabels `
-            -Prompt "Enter license number(s) (e.g. 1,3)"
+        $labels = @()
+        for ($i = 0; $i -lt $currentLics.Count; $i++) {
+            $lic = $currentLics[$i]
+            $label = Format-LicenseLabel $lic.SkuPartNumber
+            $skuId = "$($lic.SkuId)"
+            if ($assignmentInfo.ContainsKey($skuId) -and $assignmentInfo[$skuId].Groups.Count -gt 0 -and -not $assignmentInfo[$skuId].Direct) {
+                $label += "  !! GROUP-ASSIGNED"
+            }
+            $labels += $label
+        }
+
+        $selected = Show-MultiSelect -Title "Select license(s) to remove" -Options $labels
 
         foreach ($idx in $selected) {
-            $lic = $currentLicenses[$idx]
-            if (Confirm-Action "Remove '$($lic.AccountSkuId)' from $upn?") {
+            $lic = $currentLics[$idx]
+            $friendlyName = Get-SkuFriendlyName $lic.SkuPartNumber
+            $skuId = "$($lic.SkuId)"
+
+            # Check if group-assigned only
+            if ($assignmentInfo.ContainsKey($skuId)) {
+                $ai = $assignmentInfo[$skuId]
+                if ($ai.Groups.Count -gt 0 -and -not $ai.Direct) {
+                    Write-Host ""
+                    Write-ErrorMsg "'$friendlyName' is assigned via a group, not directly."
+                    Write-Warn "You cannot remove group-assigned licenses from individual users."
+                    Write-InfoMsg "To remove this license:"
+                    Write-InfoMsg "  1. Remove the user from the licensing group, OR"
+                    Write-InfoMsg "  2. Remove this license from the group itself."
+
+                    # Try to resolve group name
+                    foreach ($gId in $ai.Groups) {
+                        try {
+                            $grp = Get-MgGroup -GroupId $gId -Property "DisplayName" -ErrorAction Stop
+                            Write-InfoMsg "  Assigned by group: $($grp.DisplayName) ($gId)"
+                        } catch {
+                            Write-InfoMsg "  Assigned by group ID: $gId"
+                        }
+                    }
+                    Write-Host ""
+                    continue
+                }
+            }
+
+            if (Confirm-Action "Remove '$friendlyName' from $($user.UserPrincipalName)?") {
                 try {
-                    Set-MsolUserLicense -UserPrincipalName $upn `
-                        -RemoveLicenses $lic.AccountSkuId -ErrorAction Stop
-                    Write-Success "Removed: $($lic.AccountSkuId)"
+                    Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop
+                    Write-Success "$friendlyName removed."
                 } catch {
-                    Write-ErrorMsg "Failed to remove $($lic.AccountSkuId): $_"
+                    $errMsg = $_.Exception.Message
+                    if ($errMsg -match "group-based|inherited|cannot remove") {
+                        Write-ErrorMsg "Cannot remove: this license is inherited from a group."
+                        Write-InfoMsg "Remove the user from the licensing group instead."
+                    } else {
+                        Write-ErrorMsg "Failed to remove: $errMsg"
+                    }
                 }
             }
         }
