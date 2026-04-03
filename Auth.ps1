@@ -281,11 +281,6 @@ function Connect-EXO {
         return $true
     }
 
-    $exoModule = Get-Module -ListAvailable -Name ExchangeOnlineManagement |
-        Sort-Object Version -Descending | Select-Object -First 1
-    $exoVer = $exoModule.Version
-    $isModern = ($exoVer.Major -gt 3) -or ($exoVer.Major -eq 3 -and $exoVer.Minor -ge 2)
-
     $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") {
         "$($script:SessionState.TenantName) (GDAP)"
     } else { "own tenant" }
@@ -298,7 +293,7 @@ function Connect-EXO {
         $exoParams["DelegatedOrganization"] = $script:SessionState.TenantDomain
     }
 
-    # Attempt 1: Standard browser
+    # Attempt 1: Standard browser login
     try {
         Connect-ExchangeOnline @exoParams -ErrorAction Stop
         $script:SessionState.ExchangeOnline = $true
@@ -309,38 +304,91 @@ function Connect-EXO {
         Write-Warn "Browser login failed: $errMsg"
     }
 
-    # Attempt 2: Device code (v3.2+)
-    if ($isModern) {
-        Write-InfoMsg "Trying device code authentication..."
-        try {
-            Connect-ExchangeOnline @exoParams -Device -ErrorAction Stop
-            $script:SessionState.ExchangeOnline = $true
-            Write-Success "Exchange Online connected (device code)."
-            return $true
-        } catch {
-            Write-Warn "Device code flow failed: $_"
+    # ---- Detect MSAL broker DLL conflict ----
+    if ($errMsg -match "BrokerExtension|WithBroker|Method not found") {
+        Write-Host ""
+        Write-Warn "MSAL broker DLL conflict detected."
+        Write-InfoMsg "Microsoft Graph and ExchangeOnlineManagement load conflicting MSAL broker versions."
+        Write-InfoMsg "Fix: disable the broker DLL so EXO falls back to standard browser auth."
+        Write-Host ""
+
+        if (Confirm-Action "Auto-fix: disable the conflicting MSAL broker DLL and retry?") {
+
+            # Find the broker DLL(s) inside the EXO module directory
+            $exoMod = Get-Module -ListAvailable -Name ExchangeOnlineManagement |
+                Sort-Object Version -Descending | Select-Object -First 1
+
+            if ($exoMod) {
+                $brokerDlls = @(Get-ChildItem -Path $exoMod.ModuleBase -Recurse `
+                    -Filter "Microsoft.Identity.Client.Broker.dll" -ErrorAction SilentlyContinue)
+
+                if ($brokerDlls.Count -gt 0) {
+                    foreach ($dll in $brokerDlls) {
+                        $bakPath = "$($dll.FullName).bak"
+                        try {
+                            # Rename to .bak (disables it; the DLL isn't loaded yet in THIS session
+                            # because the first Connect attempt loaded the assembly from the Graph
+                            # module path, not from the EXO path -- the conflict IS the mismatch)
+                            if (Test-Path $dll.FullName) {
+                                Rename-Item -Path $dll.FullName -NewName "$($dll.Name).bak" -Force -ErrorAction Stop
+                                Write-Success "Disabled: $($dll.FullName)"
+                            }
+                        } catch {
+                            Write-Warn "Could not rename $($dll.FullName): $_"
+                            Write-InfoMsg "Try running the tool as Administrator if permission denied."
+                        }
+                    }
+                } else {
+                    Write-Warn "Broker DLL not found in EXO module directory."
+                }
+            }
+
+            # Retry connection -- without the broker DLL, EXO falls back to browser-only auth
+            Write-Host ""
+            Write-InfoMsg "Retrying Exchange Online connection without broker..."
+            try {
+                Connect-ExchangeOnline @exoParams -ErrorAction Stop
+                $script:SessionState.ExchangeOnline = $true
+                Write-Success "Exchange Online connected (broker disabled)."
+                return $true
+            } catch {
+                $retryErr = $_.Exception.Message
+                Write-ErrorMsg "Still failed after disabling broker: $retryErr"
+                Write-Host ""
+
+                # The broker assembly may already be loaded in memory from the first attempt.
+                # Need a full restart for the rename to take effect.
+                Write-Warn "The broken DLL was already loaded in memory from the first attempt."
+                Write-InfoMsg "The broker has been disabled on disk. Restarting the tool to pick up the fix..."
+                Start-Sleep -Seconds 2
+
+                # Relaunch
+                $mainScript = Join-Path $PSScriptRoot "Main.ps1"
+                if (-not $PSScriptRoot) {
+                    $mainScript = Join-Path (Split-Path -Parent $MyInvocation.ScriptName) "Main.ps1"
+                }
+
+                Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$mainScript`""
+                Write-Success "New instance launched. This window will close."
+                Start-Sleep -Seconds 2
+                exit
+            }
         }
+
+        Write-Host ""
+        Write-Warn "Manual fix:"
+        Write-InfoMsg "1. Find the ExchangeOnlineManagement module folder:"
+        Write-InfoMsg "   (Get-Module -ListAvailable ExchangeOnlineManagement).ModuleBase"
+        Write-InfoMsg "2. Find and rename Microsoft.Identity.Client.Broker.dll to .bak"
+        Write-InfoMsg "3. Restart PowerShell and run the tool again."
+        Write-Host ""
+        return $false
     }
 
-    # Attempt 3: Auto-update
-    Write-Warn "ExchangeOnlineManagement v$exoVer connection failed."
-    if (Confirm-Action "Auto-update ExchangeOnlineManagement now?") {
-        try {
-            Remove-Module ExchangeOnlineManagement -Force -ErrorAction SilentlyContinue
-            Uninstall-Module ExchangeOnlineManagement -AllVersions -Force -ErrorAction SilentlyContinue
-            Install-Module ExchangeOnlineManagement -Force -Scope CurrentUser -AllowClobber -ErrorAction Stop
-            Import-Module ExchangeOnlineManagement -Force -ErrorAction Stop
-            Write-Success "Module updated. Retrying..."
-            Connect-ExchangeOnline @exoParams -ErrorAction Stop
-            $script:SessionState.ExchangeOnline = $true
-            Write-Success "Exchange Online connected."
-            return $true
-        } catch {
-            Write-ErrorMsg "Still failed: $_"
-            Write-Warn "Close PowerShell, reopen, and try again."
-            return $false
-        }
-    }
+    # ---- Generic failure (not MSAL broker) ----
+    Write-Host ""
+    Write-ErrorMsg "Exchange Online connection failed."
+    Write-InfoMsg "Check your credentials, network, and module version."
     return $false
 }
 
@@ -358,15 +406,16 @@ function Connect-ForTask {
         [string]$Task
     )
 
+    # EXO listed first so it loads its MSAL before Graph loads a conflicting version
     $map = @{
-        Onboard          = @("Graph","EXO")
-        Offboard         = @("Graph","EXO")
+        Onboard          = @("EXO","Graph")
+        Offboard         = @("EXO","Graph")
         License          = @("Graph")
-        Archive          = @("Graph","EXO")
+        Archive          = @("EXO","Graph")
         SecurityGroup    = @("Graph")
-        DistributionList = @("Graph","EXO")
-        SharedMailbox    = @("Graph","EXO")
-        CalendarAccess   = @("Graph","EXO")
+        DistributionList = @("EXO","Graph")
+        SharedMailbox    = @("EXO","Graph")
+        CalendarAccess   = @("EXO","Graph")
         UserProfile      = @("Graph")
     }
 
