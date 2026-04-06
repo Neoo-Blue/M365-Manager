@@ -2,12 +2,9 @@
 
 A modular PowerShell TUI application for common Microsoft 365 admin tasks. Blue background, multi-color interface, confirmation prompts on every change, and browser-based OAuth authentication.
 
-<img width="661" height="457" alt="image" src="https://github.com/user-attachments/assets/75643cec-d490-41a9-a135-d8cd4a025d82" />
-
-
 ## Prerequisites
 
-Install the required PowerShell modules (the tool will prompt if missing):
+Install the required PowerShell modules (the tool will auto-install if missing):
 
 ```powershell
 Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force
@@ -18,7 +15,7 @@ Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope CurrentUser -
 Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
 ```
 
-> **Note:** This tool uses the Microsoft Graph PowerShell SDK, not the deprecated AzureAD module. If you previously used AzureAD, it is no longer needed.
+> **Note:** On launch, the tool automatically checks every module: installs if missing, imports into the session, and verifies key commands are available. If any dependency fails, it shows the specific error and offers to continue or exit.
 
 ## Launch
 
@@ -48,6 +45,8 @@ M365Admin/
 ├── CalendarAccess.ps1     # Calendar permission management
 ├── UserProfile.ps1        # View & edit full user profile
 ├── Reports.ps1            # Interactive reporting with sort & CSV export
+├── eDiscovery.ps1         # eDiscovery simple & advanced mode
+├── GroupManager.ps1       # Unified group membership view, edit, replicate
 ├── samples/
 │   ├── onboard_sample.txt # Sample onboard input file
 │   └── offboard_sample.txt# Sample offboard input file
@@ -67,7 +66,9 @@ M365Admin/
 | 7 | **Shared Mailboxes** | Graph, EXO |
 | 8 | **Calendar Access** | Graph, EXO |
 | 9 | **User Profile** | Graph |
-| 10 | **Reporting** | Graph, EXO |
+| 10 | **Group Membership Manager** | Graph, EXO |
+| 11 | **Reporting** | Graph, EXO |
+| 12 | **eDiscovery** | SCC, Graph |
 
 ---
 
@@ -151,7 +152,19 @@ Offboarding steps:
 - Refresh to see changes in real time
 - Loops until you pick Done, so multiple edits in one session
 
-### 10. Reporting
+### 10. Group Membership Manager
+
+Unified view of all group types (Security Groups, Distribution Lists, M365 Groups, Mail-Enabled SGs) for any user. Fetches from both Microsoft Graph and Exchange Online to get the complete picture.
+
+- **View all memberships** — shows every group a user belongs to, organized by type with counts
+- **Bulk remove** — filter by group type (SG/DL/M365), multi-select for removal across all types in one operation
+- **Add to groups** — search by name, choose Security Group, Distribution List, or search all types. Multi-select add.
+- **Replicate memberships** — copy group memberships from one user to another with three modes:
+  - **Selective** — pick which groups to copy, shows which ones the target already has
+  - **Full Copy** — add all source groups to target, keeping any groups the target already has
+  - **Full Replace** — remove target's current groups that aren't in the source, add any that are missing. Shows a full diff (removals in red, additions in green, unchanged count) before confirming.
+
+### 11. Reporting
 
 All reports share these common features:
 
@@ -174,6 +187,40 @@ Available reports:
 | **Shared Mailboxes** | Every shared mailbox with size, item count, access count, forwarding, GAL visibility |
 | **Inactive Users** | Configurable threshold (default 90 days), shows users with no sign-in, with license count to spot wasted seats. Can filter to enabled-only (consuming licenses) or disabled-only (cleanup candidates) |
 
+### 12. eDiscovery
+
+Two modes: **Simple** for quick ad-hoc searches, **Advanced** for full case-based investigations.
+
+**Simple Mode — Quick Content Search**
+- **New quick search** — guided wizard that builds a KQL query from prompts: keywords, date range, sender, recipient, message type (email/documents/IM/meetings). Choose to search all mailboxes or specific ones. Automatically creates and starts the search.
+- **View existing searches** — lists all content searches with status, item count, size, query, and creation date.
+- **View search results** — detailed view of a completed search including per-mailbox breakdown. Actions: create a preview, create an export (PST/individual messages/both), re-run the search, or check export status.
+- **Delete a search** — removes the search and all associated actions, with double confirmation.
+
+**Advanced Mode — Case Management**
+
+*Case Management:*
+- Create new eDiscovery Standard or Premium (Advanced) cases
+- List all cases with status, type, and creation date
+- View case details including all searches and holds within it
+- Add members to a case
+- Close, reopen, or delete cases (only closed cases can be deleted, with double confirmation)
+
+*Search Management (within a case):*
+- **Guided query builder** — same wizard as Simple mode: keywords, dates, sender, recipient, subject, attachment filters, message type
+- **Raw KQL mode** — type any KQL query directly, with a built-in reference card showing common operators (`from:`, `to:`, `subject:`, `sent>=`, `kind:`, `hasattachment:`, `filetype:`, `participants:`, `cc:`, `bcc:`, `size>`)
+- Search scope: all mailboxes, specific mailboxes, all SharePoint sites, or both
+- Run/re-run searches, view results, delete searches
+
+*Hold Management:*
+- **Create legal hold** — place one or more mailboxes on hold within a case, with optional KQL query to hold only matching content
+- **List holds** — shows all holds in a case with locations, enabled status, and query filters
+- **Modify hold** — add/remove mailboxes, enable/disable, update the KQL query filter
+- **Remove hold** — releases held content with confirmation
+
+*Export Management:*
+- View all export and preview actions across searches with status, creation time, and result counts
+
 ---
 
 ## Authentication
@@ -193,11 +240,11 @@ For Microsoft Partner Center / CSP organizations with Granular Delegated Admin P
 5. All subsequent operations run against the selected customer tenant
 6. **Switch Tenant** option on the main menu lets you disconnect and pick a different customer without restarting
 
-Required GDAP roles on the customer tenant: User Administrator, Groups Administrator, License Administrator, Exchange Administrator, Directory Readers.
+Required GDAP roles on the customer tenant: User Administrator, Groups Administrator, License Administrator, Exchange Administrator, Directory Readers. For eDiscovery: eDiscovery Manager or eDiscovery Administrator.
 
 If the contract listing fails (permissions, no relationships), the tool falls back to manual tenant ID / domain entry.
 
-Only two modules are required: **Microsoft Graph PowerShell SDK** and **ExchangeOnlineManagement**.
+Only two modules are required: **Microsoft Graph PowerShell SDK** and **ExchangeOnlineManagement** (which also provides `Connect-IPPSSession` for eDiscovery/Security & Compliance Center).
 
 ## Design Principles
 

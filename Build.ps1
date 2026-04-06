@@ -39,7 +39,9 @@ $scriptOrder = @(
     "SharedMailbox.ps1",
     "CalendarAccess.ps1",
     "UserProfile.ps1",
-    "Reports.ps1"
+    "Reports.ps1",
+    "eDiscovery.ps1",
+    "GroupManager.ps1"
 )
 
 $merged = @()

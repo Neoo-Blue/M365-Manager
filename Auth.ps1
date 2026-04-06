@@ -1,77 +1,105 @@
 # ============================================================
-#  Auth.ps1 - Authentication & Session Management
-# ============================================================
-# Supports:
-#  - Direct tenant management (your own org)
-#  - GDAP partner access (manage customer tenants)
+#  Auth.ps1 - Authentication, Dependencies & Session Management
 # ============================================================
 
 $script:SessionState = @{
-    MgGraph         = $false
-    ExchangeOnline  = $false
-    TenantMode      = "Direct"     # "Direct" or "Partner"
-    TenantId        = $null        # Customer tenant ID when in Partner mode
-    TenantName      = $null        # Customer display name
-    TenantDomain    = $null        # Customer default domain
-    PartnerConnected = $false      # Whether we already auth'd to partner tenant
+    MgGraph          = $false
+    ExchangeOnline   = $false
+    ComplianceCenter = $false
+    TenantMode       = "Direct"
+    TenantId         = $null
+    TenantName       = $null
+    TenantDomain     = $null
+    PartnerConnected = $false
 }
 
-# Scopes for direct or delegated operations
 $script:MgScopes = @(
-    "User.ReadWrite.All",
-    "Group.ReadWrite.All",
-    "Directory.ReadWrite.All",
-    "Organization.Read.All",
-    "UserAuthenticationMethod.ReadWrite.All"
+    "User.ReadWrite.All","Group.ReadWrite.All","Directory.ReadWrite.All",
+    "Organization.Read.All","UserAuthenticationMethod.ReadWrite.All"
 )
+$script:MgPartnerScopes = @("Directory.Read.All","Contract.Read.All")
 
-# Extra scopes needed to list customer tenants from partner
-$script:MgPartnerScopes = @(
-    "Directory.Read.All",
-    "Contract.Read.All"
-)
+# ============================================================
+#  Dependency Management - install, import, verify
+# ============================================================
 
-# ---- Module pre-check ----
 function Assert-ModulesInstalled {
-    $required = @(
-        @{ Name = "Microsoft.Graph.Authentication";            Install = "Install-Module Microsoft.Graph.Authentication -Scope CurrentUser -Force" },
-        @{ Name = "Microsoft.Graph.Users";                     Install = "Install-Module Microsoft.Graph.Users -Scope CurrentUser -Force" },
-        @{ Name = "Microsoft.Graph.Users.Actions";             Install = "Install-Module Microsoft.Graph.Users.Actions -Scope CurrentUser -Force" },
-        @{ Name = "Microsoft.Graph.Groups";                    Install = "Install-Module Microsoft.Graph.Groups -Scope CurrentUser -Force" },
-        @{ Name = "Microsoft.Graph.Identity.DirectoryManagement"; Install = "Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope CurrentUser -Force" },
-        @{ Name = "ExchangeOnlineManagement";                  Install = "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force" }
+    Write-SectionHeader "Checking Dependencies"
+
+    # ---- Define required modules with test commands ----
+    $requiredModules = @(
+        @{ Name = "Microsoft.Graph.Authentication";              TestCmd = "Get-MgContext" },
+        @{ Name = "Microsoft.Graph.Users";                       TestCmd = "Get-MgUser" },
+        @{ Name = "Microsoft.Graph.Users.Actions";               TestCmd = $null },
+        @{ Name = "Microsoft.Graph.Groups";                      TestCmd = "Get-MgGroup" },
+        @{ Name = "Microsoft.Graph.Identity.DirectoryManagement"; TestCmd = "Get-MgSubscribedSku" },
+        @{ Name = "ExchangeOnlineManagement";                    TestCmd = "Connect-ExchangeOnline" }
     )
 
-    $missing = @()
-    foreach ($mod in $required) {
-        if (-not (Get-Module -ListAvailable -Name $mod.Name)) {
-            $missing += $mod
-        }
-    }
+    $allGood = $true
 
-    if ($missing.Count -gt 0) {
-        Write-SectionHeader "Missing PowerShell Modules"
-        foreach ($m in $missing) {
-            Write-Warn "$($m.Name) is not installed."
-            Write-InfoMsg "  Run: $($m.Install)"
+    foreach ($mod in $requiredModules) {
+        $modName = $mod.Name
+
+        # ---- Step 1: Check if installed ----
+        $installed = Get-Module -ListAvailable -Name $modName | Sort-Object Version -Descending | Select-Object -First 1
+        if (-not $installed) {
+            Write-Warn "$modName is not installed. Installing..."
+            try {
+                Install-Module $modName -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+                Write-Success "$modName installed."
+                $installed = Get-Module -ListAvailable -Name $modName | Sort-Object Version -Descending | Select-Object -First 1
+            } catch {
+                Write-ErrorMsg "Failed to install $modName : $_"
+                $allGood = $false
+                continue
+            }
         }
-        Write-Host ""
-        if (Confirm-Action "Attempt to install missing modules now?") {
-            foreach ($m in $missing) {
-                Write-InfoMsg "Installing $($m.Name)..."
-                try { Invoke-Expression $m.Install; Write-Success "$($m.Name) installed." }
-                catch { Write-ErrorMsg "Failed to install $($m.Name): $_" }
+
+        # ---- Step 2: Import into session ----
+        $loaded = Get-Module -Name $modName
+        if (-not $loaded) {
+            try {
+                Import-Module $modName -ErrorAction Stop -Force
+                Write-Success "$modName v$($installed.Version) loaded."
+            } catch {
+                Write-Warn "Could not import $modName : $_"
+                # Try removing and reimporting
+                try {
+                    Remove-Module $modName -Force -ErrorAction SilentlyContinue
+                    Import-Module $modName -ErrorAction Stop -Force
+                    Write-Success "$modName v$($installed.Version) loaded (retry)."
+                } catch {
+                    Write-ErrorMsg "Failed to import $modName : $_"
+                    $allGood = $false
+                    continue
+                }
             }
         } else {
-            Write-ErrorMsg "Cannot continue without required modules."
-            return $false
+            Write-InfoMsg "$modName v$($loaded.Version) already loaded."
+        }
+
+        # ---- Step 3: Verify test command exists ----
+        if ($mod.TestCmd) {
+            $cmdExists = Get-Command $mod.TestCmd -ErrorAction SilentlyContinue
+            if (-not $cmdExists) {
+                Write-ErrorMsg "$modName loaded but command '$($mod.TestCmd)' not found."
+                Write-InfoMsg "Try: Remove-Module $modName; Import-Module $modName"
+                $allGood = $false
+            }
         }
     }
 
-    $exoMod = Get-Module -ListAvailable -Name ExchangeOnlineManagement | Sort-Object Version -Descending | Select-Object -First 1
-    if ($exoMod) { Write-InfoMsg "ExchangeOnlineManagement: v$($exoMod.Version)" }
-    $mgAuth = Get-Module -ListAvailable -Name Microsoft.Graph.Authentication | Sort-Object Version -Descending | Select-Object -First 1
-    if ($mgAuth) { Write-InfoMsg "Microsoft.Graph.Authentication: v$($mgAuth.Version)" }
+    if (-not $allGood) {
+        Write-Host ""
+        Write-ErrorMsg "Some modules have issues. The tool may not work correctly."
+        Write-InfoMsg "Try closing PowerShell, reopening, and running again."
+        Write-Host ""
+        $cont = Read-UserInput "Continue anyway? (y/n)"
+        if ($cont -notmatch '^[Yy]') { return $false }
+    } else {
+        Write-Success "All dependencies verified."
+    }
 
     return $true
 }
@@ -79,14 +107,8 @@ function Assert-ModulesInstalled {
 # ============================================================
 #  Tenant Mode Selection
 # ============================================================
-function Select-TenantMode {
-    <#
-    .SYNOPSIS
-        Called once at startup. Asks if managing own tenant or a customer tenant.
-        If partner mode, connects to partner tenant, lists customers via GDAP,
-        and stores the selected customer tenant ID for all subsequent connections.
-    #>
 
+function Select-TenantMode {
     Write-SectionHeader "Tenant Selection"
 
     $mode = Show-Menu -Title "Which tenant are you managing?" -Options @(
@@ -97,7 +119,6 @@ function Select-TenantMode {
     if ($mode -eq -1) { return $false }
 
     if ($mode -eq 0) {
-        # ---- Direct mode ----
         $script:SessionState.TenantMode = "Direct"
         $script:SessionState.TenantId   = $null
         $script:SessionState.TenantName = "Own Tenant"
@@ -105,195 +126,133 @@ function Select-TenantMode {
         return $true
     }
 
-    # ---- Partner / GDAP mode ----
+    # ---- Partner / GDAP ----
     $script:SessionState.TenantMode = "Partner"
 
-    Write-InfoMsg "First, signing in to your PARTNER tenant to list customer tenants..."
-    Write-InfoMsg "A browser window will open for sign-in."
-    Write-Host ""
-
-    # Connect to partner tenant (no TenantId = own tenant)
+    Write-InfoMsg "Signing in to your PARTNER tenant to list customers..."
     try {
         Connect-MgGraph -Scopes ($script:MgPartnerScopes + $script:MgScopes) -NoWelcome -ErrorAction Stop
         $script:SessionState.PartnerConnected = $true
         $ctx = Get-MgContext
-        Write-Success "Signed in as $($ctx.Account) (Partner Tenant: $($ctx.TenantId))"
+        Write-Success "Signed in as $($ctx.Account)"
     } catch {
-        Write-ErrorMsg "Failed to connect to partner tenant: $_"
+        Write-ErrorMsg "Partner tenant login failed: $_"
         return $false
     }
 
-    # ---- List customer tenants via contracts ----
     Write-InfoMsg "Fetching customer tenant list..."
-    Write-Host ""
-
     $customers = @()
     try {
-        # Get-MgContract lists all delegated admin relationships
         $contracts = @(Get-MgContract -All -ErrorAction Stop)
-
         if ($contracts.Count -eq 0) {
             Write-Warn "No customer contracts found."
-            Write-InfoMsg "This could mean:"
-            Write-InfoMsg "  - No GDAP relationships are established"
-            Write-InfoMsg "  - Your account lacks the required admin role"
-            Write-Host ""
-
-            # Offer manual entry as fallback
-            $manual = Read-UserInput "Enter a customer tenant ID or domain manually (or 'quit')"
-            if ($manual -eq 'quit' -or [string]::IsNullOrWhiteSpace($manual)) { return $false }
-
-            $script:SessionState.TenantId     = $manual
-            $script:SessionState.TenantName   = $manual
-            $script:SessionState.TenantDomain  = $manual
-
-            # Disconnect from partner, will reconnect to customer
-            Disconnect-MgGraph -ErrorAction SilentlyContinue
-            $script:SessionState.MgGraph = $false
-            $script:SessionState.PartnerConnected = $false
-
-            Write-Success "Will connect to tenant: $manual"
+            $manual = Read-UserInput "Enter tenant ID or domain manually (or 'back')"
+            if ($manual -eq 'back' -or [string]::IsNullOrWhiteSpace($manual)) { Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.PartnerConnected = $false; return $false }
+            $script:SessionState.TenantId = $manual; $script:SessionState.TenantName = $manual; $script:SessionState.TenantDomain = $manual
+            Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.MgGraph = $false; $script:SessionState.PartnerConnected = $false
             return $true
         }
 
-        # Build customer list from contracts
         foreach ($c in $contracts) {
-            $customers += [PSCustomObject]@{
-                DisplayName   = $c.DisplayName
-                CustomerId    = $c.CustomerId
-                DefaultDomain = $c.DefaultDomainName
-            }
+            $customers += [PSCustomObject]@{ DisplayName = $c.DisplayName; CustomerId = $c.CustomerId; DefaultDomain = $c.DefaultDomainName }
         }
-
-        # Deduplicate by CustomerId (a customer may have multiple contracts)
         $customers = $customers | Sort-Object DisplayName -Unique
-
     } catch {
         Write-ErrorMsg "Failed to list customers: $_"
-        Write-InfoMsg "Falling back to manual tenant entry."
-        Write-Host ""
-
-        $manual = Read-UserInput "Enter a customer tenant ID or domain (or 'quit')"
-        if ($manual -eq 'quit' -or [string]::IsNullOrWhiteSpace($manual)) { return $false }
-
-        $script:SessionState.TenantId     = $manual
-        $script:SessionState.TenantName   = $manual
-        $script:SessionState.TenantDomain  = $manual
-
-        Disconnect-MgGraph -ErrorAction SilentlyContinue
-        $script:SessionState.MgGraph = $false
-        $script:SessionState.PartnerConnected = $false
-
-        Write-Success "Will connect to tenant: $manual"
+        $manual = Read-UserInput "Enter tenant ID or domain (or 'back')"
+        if ($manual -eq 'back' -or [string]::IsNullOrWhiteSpace($manual)) { Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.PartnerConnected = $false; return $false }
+        $script:SessionState.TenantId = $manual; $script:SessionState.TenantName = $manual; $script:SessionState.TenantDomain = $manual
+        Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.MgGraph = $false; $script:SessionState.PartnerConnected = $false
         return $true
     }
 
-    # ---- Show customer picker ----
-    Write-SectionHeader "Customer Tenants ($($customers.Count) found)"
-
-    # If too many to show in a menu, offer search
     if ($customers.Count -gt 20) {
-        $searchInput = Read-UserInput "Search customer by name (or 'all' to list all)"
+        $searchInput = Read-UserInput "Search customer by name (or 'all')"
         if ($searchInput -ne 'all') {
             $customers = @($customers | Where-Object { $_.DisplayName -like "*$searchInput*" })
-            if ($customers.Count -eq 0) {
-                Write-ErrorMsg "No customers matching '$searchInput'."
-                return $false
-            }
+            if ($customers.Count -eq 0) { Write-ErrorMsg "None found."; return $false }
         }
     }
 
-    $custLabels = $customers | ForEach-Object {
-        "$($_.DisplayName)  ($($_.DefaultDomain))"
-    }
-
+    $custLabels = $customers | ForEach-Object { "$($_.DisplayName)  ($($_.DefaultDomain))" }
     $sel = Show-Menu -Title "Select Customer Tenant" -Options $custLabels -BackLabel "Cancel"
-    if ($sel -eq -1) { return $false }
+    if ($sel -eq -1) { Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.PartnerConnected = $false; return $false }
 
     $selected = $customers[$sel]
-    $script:SessionState.TenantId     = $selected.CustomerId
-    $script:SessionState.TenantName   = $selected.DisplayName
-    $script:SessionState.TenantDomain  = $selected.DefaultDomain
+    $script:SessionState.TenantId = $selected.CustomerId
+    $script:SessionState.TenantName = $selected.DisplayName
+    $script:SessionState.TenantDomain = $selected.DefaultDomain
 
-    Write-Host ""
-    Write-Success "Selected: $($selected.DisplayName)"
-    Write-StatusLine "Tenant ID" $selected.CustomerId "White"
-    Write-StatusLine "Domain" $selected.DefaultDomain "White"
-    Write-Host ""
-
-    # Disconnect partner graph session (will reconnect to customer)
+    Write-Success "Selected: $($selected.DisplayName) ($($selected.DefaultDomain))"
     Disconnect-MgGraph -ErrorAction SilentlyContinue
-    $script:SessionState.MgGraph = $false
-    $script:SessionState.PartnerConnected = $false
-
+    $script:SessionState.MgGraph = $false; $script:SessionState.PartnerConnected = $false
     return $true
 }
 
 # ============================================================
-#  Service Connections (tenant-aware)
+#  Full Session Cleanup (for tenant switch)
+# ============================================================
+
+function Reset-AllSessions {
+    <# Disconnects every service and resets all state. Used when switching tenants. #>
+    Write-SectionHeader "Cleaning Up All Sessions"
+
+    if ($script:SessionState.MgGraph) {
+        try { Disconnect-MgGraph -ErrorAction SilentlyContinue } catch {}
+        Write-Success "Microsoft Graph disconnected."
+    }
+    if ($script:SessionState.ExchangeOnline -or $script:SessionState.ComplianceCenter) {
+        try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        Write-Success "Exchange Online / SCC disconnected."
+    }
+
+    $script:SessionState.MgGraph          = $false
+    $script:SessionState.ExchangeOnline    = $false
+    $script:SessionState.ComplianceCenter  = $false
+    $script:SessionState.PartnerConnected  = $false
+    $script:SessionState.TenantId          = $null
+    $script:SessionState.TenantName        = $null
+    $script:SessionState.TenantDomain      = $null
+    $script:SessionState.TenantMode        = "Direct"
+
+    Write-Success "All sessions and tenant context cleared."
+}
+
+# ============================================================
+#  Service Connections
 # ============================================================
 
 function Connect-Graph {
-    if ($script:SessionState.MgGraph) {
-        Write-InfoMsg "Microsoft Graph already connected."
-        return $true
-    }
+    if ($script:SessionState.MgGraph) { Write-InfoMsg "Microsoft Graph already connected."; return $true }
 
-    $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") {
-        "$($script:SessionState.TenantName) (GDAP)"
-    } else { "own tenant" }
-
+    $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") { "$($script:SessionState.TenantName) (GDAP)" } else { "own tenant" }
     Write-InfoMsg "Connecting to Microsoft Graph ($targetLabel)..."
 
     try {
-        $params = @{
-            Scopes    = $script:MgScopes
-            NoWelcome = $true
-        }
-
-        if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantId) {
-            $params["TenantId"] = $script:SessionState.TenantId
-        }
-
+        $params = @{ Scopes = $script:MgScopes; NoWelcome = $true }
+        if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantId) { $params["TenantId"] = $script:SessionState.TenantId }
         Connect-MgGraph @params -ErrorAction Stop
         $script:SessionState.MgGraph = $true
-
         $ctx = Get-MgContext
         Write-Success "Microsoft Graph connected as $($ctx.Account)"
-        if ($script:SessionState.TenantMode -eq "Partner") {
-            Write-Success "  Target tenant: $($script:SessionState.TenantName) ($($ctx.TenantId))"
-        }
         return $true
     } catch {
         Write-ErrorMsg "Microsoft Graph connection failed: $_"
-        if ($script:SessionState.TenantMode -eq "Partner") {
-            Write-Warn "Ensure your GDAP relationship grants the required admin roles."
-            Write-InfoMsg "Required roles: User Administrator, Groups Administrator,"
-            Write-InfoMsg "  License Administrator, Directory Readers."
-        }
         return $false
     }
 }
 
 function Connect-EXO {
-    if ($script:SessionState.ExchangeOnline) {
-        Write-InfoMsg "Exchange Online already connected."
-        return $true
-    }
+    if ($script:SessionState.ExchangeOnline) { Write-InfoMsg "Exchange Online already connected."; return $true }
 
-    $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") {
-        "$($script:SessionState.TenantName) (GDAP)"
-    } else { "own tenant" }
-
+    $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") { "$($script:SessionState.TenantName) (GDAP)" } else { "own tenant" }
     Write-InfoMsg "Connecting to Exchange Online ($targetLabel)..."
 
-    # Build EXO connection params
     $exoParams = @{ ShowBanner = $false }
     if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantDomain) {
         $exoParams["DelegatedOrganization"] = $script:SessionState.TenantDomain
     }
 
-    # Attempt 1: Standard browser login
     try {
         Connect-ExchangeOnline @exoParams -ErrorAction Stop
         $script:SessionState.ExchangeOnline = $true
@@ -304,92 +263,70 @@ function Connect-EXO {
         Write-Warn "Browser login failed: $errMsg"
     }
 
-    # ---- Detect MSAL broker DLL conflict ----
     if ($errMsg -match "BrokerExtension|WithBroker|Method not found") {
-        Write-Host ""
         Write-Warn "MSAL broker DLL conflict detected."
-        Write-InfoMsg "Microsoft Graph and ExchangeOnlineManagement load conflicting MSAL broker versions."
-        Write-InfoMsg "Fix: disable the broker DLL so EXO falls back to standard browser auth."
-        Write-Host ""
-
-        if (Confirm-Action "Auto-fix: disable the conflicting MSAL broker DLL and retry?") {
-
-            # Find the broker DLL(s) inside the EXO module directory
-            $exoMod = Get-Module -ListAvailable -Name ExchangeOnlineManagement |
-                Sort-Object Version -Descending | Select-Object -First 1
-
+        if (Confirm-Action "Auto-fix: disable the conflicting broker DLL and retry?") {
+            $exoMod = Get-Module -ListAvailable -Name ExchangeOnlineManagement | Sort-Object Version -Descending | Select-Object -First 1
             if ($exoMod) {
-                $brokerDlls = @(Get-ChildItem -Path $exoMod.ModuleBase -Recurse `
-                    -Filter "Microsoft.Identity.Client.Broker.dll" -ErrorAction SilentlyContinue)
-
-                if ($brokerDlls.Count -gt 0) {
-                    foreach ($dll in $brokerDlls) {
-                        $bakPath = "$($dll.FullName).bak"
-                        try {
-                            # Rename to .bak (disables it; the DLL isn't loaded yet in THIS session
-                            # because the first Connect attempt loaded the assembly from the Graph
-                            # module path, not from the EXO path -- the conflict IS the mismatch)
-                            if (Test-Path $dll.FullName) {
-                                Rename-Item -Path $dll.FullName -NewName "$($dll.Name).bak" -Force -ErrorAction Stop
-                                Write-Success "Disabled: $($dll.FullName)"
-                            }
-                        } catch {
-                            Write-Warn "Could not rename $($dll.FullName): $_"
-                            Write-InfoMsg "Try running the tool as Administrator if permission denied."
-                        }
-                    }
-                } else {
-                    Write-Warn "Broker DLL not found in EXO module directory."
+                $brokerDlls = @(Get-ChildItem -Path $exoMod.ModuleBase -Recurse -Filter "Microsoft.Identity.Client.Broker.dll" -ErrorAction SilentlyContinue)
+                foreach ($dll in $brokerDlls) {
+                    try { if (Test-Path $dll.FullName) { Rename-Item -Path $dll.FullName -NewName "$($dll.Name).bak" -Force -ErrorAction Stop; Write-Success "Disabled: $($dll.FullName)" } }
+                    catch { Write-Warn "Could not rename: $_" }
                 }
             }
-
-            # Retry connection -- without the broker DLL, EXO falls back to browser-only auth
-            Write-Host ""
-            Write-InfoMsg "Retrying Exchange Online connection without broker..."
             try {
                 Connect-ExchangeOnline @exoParams -ErrorAction Stop
                 $script:SessionState.ExchangeOnline = $true
                 Write-Success "Exchange Online connected (broker disabled)."
                 return $true
             } catch {
-                $retryErr = $_.Exception.Message
-                Write-ErrorMsg "Still failed after disabling broker: $retryErr"
-                Write-Host ""
-
-                # The broker assembly may already be loaded in memory from the first attempt.
-                # Need a full restart for the rename to take effect.
-                Write-Warn "The broken DLL was already loaded in memory from the first attempt."
-                Write-InfoMsg "The broker has been disabled on disk. Restarting the tool to pick up the fix..."
-                Start-Sleep -Seconds 2
-
-                # Relaunch
+                Write-Warn "DLL already in memory. Restarting..."
                 $mainScript = Join-Path $PSScriptRoot "Main.ps1"
-                if (-not $PSScriptRoot) {
-                    $mainScript = Join-Path (Split-Path -Parent $MyInvocation.ScriptName) "Main.ps1"
-                }
-
+                if (-not $PSScriptRoot) { $mainScript = Join-Path (Split-Path -Parent $MyInvocation.ScriptName) "Main.ps1" }
                 Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$mainScript`""
-                Write-Success "New instance launched. This window will close."
-                Start-Sleep -Seconds 2
-                exit
+                Start-Sleep -Seconds 2; exit
             }
         }
-
-        Write-Host ""
-        Write-Warn "Manual fix:"
-        Write-InfoMsg "1. Find the ExchangeOnlineManagement module folder:"
-        Write-InfoMsg "   (Get-Module -ListAvailable ExchangeOnlineManagement).ModuleBase"
-        Write-InfoMsg "2. Find and rename Microsoft.Identity.Client.Broker.dll to .bak"
-        Write-InfoMsg "3. Restart PowerShell and run the tool again."
-        Write-Host ""
-        return $false
     }
 
-    # ---- Generic failure (not MSAL broker) ----
-    Write-Host ""
     Write-ErrorMsg "Exchange Online connection failed."
-    Write-InfoMsg "Check your credentials, network, and module version."
     return $false
+}
+
+function Connect-SCC {
+    if ($script:SessionState.ComplianceCenter) { Write-InfoMsg "SCC already connected."; return $true }
+
+    $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") { "$($script:SessionState.TenantName) (GDAP)" } else { "own tenant" }
+    Write-InfoMsg "Connecting to Security & Compliance ($targetLabel)..."
+
+    $sccParams = @{ ShowBanner = $false; EnableSearchOnlySession = $true }
+    if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantDomain) {
+        $sccParams["DelegatedOrganization"] = $script:SessionState.TenantDomain
+    }
+
+    try {
+        Connect-IPPSSession @sccParams -ErrorAction Stop
+        $script:SessionState.ComplianceCenter = $true
+        Write-Success "SCC connected (search session)."
+        return $true
+    } catch {
+        $errMsg = $_.Exception.Message
+        Write-Warn "SCC connect failed: $errMsg"
+    }
+
+    # Fallback without search session
+    try {
+        $fallback = @{ ShowBanner = $false }
+        if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantDomain) { $fallback["DelegatedOrganization"] = $script:SessionState.TenantDomain }
+        Connect-IPPSSession @fallback -ErrorAction Stop
+        $script:SessionState.ComplianceCenter = $true
+        Write-Success "SCC connected (basic)."
+        Write-Warn "Some search operations may require restart with search session."
+        return $true
+    } catch {
+        Write-ErrorMsg "All SCC connection methods failed: $_"
+        return $false
+    }
 }
 
 # ============================================================
@@ -401,12 +338,11 @@ function Connect-ForTask {
         [ValidateSet(
             "Onboard","Offboard","License","Archive",
             "SecurityGroup","DistributionList","SharedMailbox","CalendarAccess",
-            "UserProfile","Report"
+            "UserProfile","Report","eDiscovery","GroupManager"
         )]
         [string]$Task
     )
 
-    # EXO listed first so it loads its MSAL before Graph loads a conflicting version
     $map = @{
         Onboard          = @("EXO","Graph")
         Offboard         = @("EXO","Graph")
@@ -418,63 +354,57 @@ function Connect-ForTask {
         CalendarAccess   = @("EXO","Graph")
         UserProfile      = @("Graph")
         Report           = @("EXO","Graph")
+        eDiscovery       = @("SCC","Graph")
+        GroupManager     = @("EXO","Graph")
     }
 
     $services = $map[$Task]
     $needed = @()
     foreach ($svc in $services) {
         switch ($svc) {
-            "Graph" { if (-not $script:SessionState.MgGraph)        { $needed += $svc } }
-            "EXO"   { if (-not $script:SessionState.ExchangeOnline) { $needed += $svc } }
+            "Graph" { if (-not $script:SessionState.MgGraph)          { $needed += $svc } }
+            "EXO"   { if (-not $script:SessionState.ExchangeOnline)   { $needed += $svc } }
+            "SCC"   { if (-not $script:SessionState.ComplianceCenter) { $needed += $svc } }
         }
     }
 
-    if ($needed.Count -eq 0) {
-        Write-InfoMsg "All required services already connected."
-        return $true
-    }
+    if ($needed.Count -eq 0) { Write-InfoMsg "All required services connected."; return $true }
 
-    Write-InfoMsg "This task requires: $($services -join ', ')"
-    Write-InfoMsg "Need to connect: $($needed -join ', ')"
+    Write-InfoMsg "Requires: $($services -join ', '). Connecting: $($needed -join ', ')"
     Write-Host ""
 
     foreach ($svc in $services) {
         switch ($svc) {
             "Graph" { if (-not (Connect-Graph)) { return $false } }
             "EXO"   { if (-not (Connect-EXO))   { return $false } }
+            "SCC"   { if (-not (Connect-SCC))    { return $false } }
         }
     }
     return $true
 }
 
 # ============================================================
-#  Disconnect all
+#  Disconnect (for quit)
 # ============================================================
+
 function Disconnect-AllSessions {
     Write-SectionHeader "Disconnecting Sessions"
 
     if ($script:SessionState.MgGraph) {
-        try { Disconnect-MgGraph -ErrorAction SilentlyContinue; Write-Success "Microsoft Graph disconnected." }
-        catch { Write-Warn "Graph disconnect issue: $_" }
+        try { Disconnect-MgGraph -ErrorAction SilentlyContinue; Write-Success "Graph disconnected." } catch {}
     }
-    if ($script:SessionState.ExchangeOnline) {
-        try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue; Write-Success "Exchange Online disconnected." }
-        catch { Write-Warn "EXO disconnect issue: $_" }
+    if ($script:SessionState.ExchangeOnline -or $script:SessionState.ComplianceCenter) {
+        try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue; Write-Success "EXO/SCC disconnected." } catch {}
     }
 
-    $script:SessionState.MgGraph          = $false
-    $script:SessionState.ExchangeOnline    = $false
-    $script:SessionState.PartnerConnected  = $false
-
+    $script:SessionState.MgGraph = $false
+    $script:SessionState.ExchangeOnline = $false
+    $script:SessionState.ComplianceCenter = $false
+    $script:SessionState.PartnerConnected = $false
     Write-Success "All sessions cleared."
 }
 
-# ============================================================
-#  Helper: Get tenant display string for status bar
-# ============================================================
 function Get-TenantDisplayString {
-    if ($script:SessionState.TenantMode -eq "Partner") {
-        return "GDAP: $($script:SessionState.TenantName)"
-    }
+    if ($script:SessionState.TenantMode -eq "Partner") { return "GDAP: $($script:SessionState.TenantName)" }
     return "Direct (own tenant)"
 }
