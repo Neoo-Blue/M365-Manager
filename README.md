@@ -1,8 +1,6 @@
 # M365 Administration Tool
 
 A modular PowerShell TUI application for common Microsoft 365 admin tasks. Blue background, multi-color interface, confirmation prompts on every change, and browser-based OAuth authentication.
-<img width="786" height="437" alt="image" src="https://github.com/user-attachments/assets/a3ceb9f4-130b-4a0d-a7fd-221c541a45fa" />
-
 
 ## Prerequisites
 
@@ -46,6 +44,7 @@ M365Admin/
 ├── SharedMailbox.ps1      # Shared mailbox access & permissions
 ├── CalendarAccess.ps1     # Calendar permission management
 ├── UserProfile.ps1        # View & edit full user profile
+├── Reports.ps1            # Interactive reporting with sort & CSV export
 ├── samples/
 │   ├── onboard_sample.txt # Sample onboard input file
 │   └── offboard_sample.txt# Sample offboard input file
@@ -65,6 +64,7 @@ M365Admin/
 | 7 | **Shared Mailboxes** | Graph, EXO |
 | 8 | **Calendar Access** | Graph, EXO |
 | 9 | **User Profile** | Graph |
+| 10 | **Reporting** | Graph, EXO |
 
 ---
 
@@ -147,6 +147,29 @@ Offboarding steps:
 - Set or remove manager with search/confirm
 - Refresh to see changes in real time
 - Loops until you pick Done, so multiple edits in one session
+
+### 10. Reporting
+
+All reports share these common features:
+
+- **Scope picker** — run against the entire org, a single user, or members of a specific group
+- **Active/inactive filter** — before each report, choose to include all users, active (enabled) users only, or disabled users only
+- **Interactive sorting** — after data is collected, pick any column to sort by (ascending or descending) before display
+- **TUI display** — formatted table in the console, capped at 50 rows for readability
+- **CSV export** — export full data to `C:\Temp` or a custom folder, timestamped filename (e.g. `UserLicenses_20260406_141500.csv`)
+
+Available reports:
+
+| Report | Description |
+|--------|-------------|
+| **License Summary** | Every SKU in the tenant with friendly name, total/assigned/available seats, usage percentage |
+| **Per-User Licenses** | Each user with every license they hold, filterable by active/inactive status |
+| **Mailbox Sizes** | Item count, total size, last activity date per mailbox |
+| **Archive Mailboxes** | Archive enabled/disabled, retention policy, archive size and item count |
+| **User Account Status** | Enabled/disabled, department, job title, license count, creation date, last sign-in |
+| **Group Membership** | Three modes: all groups for a user, all members of a group (with active filter), or all security groups with member counts |
+| **Shared Mailboxes** | Every shared mailbox with size, item count, access count, forwarding, GAL visibility |
+| **Inactive Users** | Configurable threshold (default 90 days), shows users with no sign-in, with license count to spot wasted seats. Can filter to enabled-only (consuming licenses) or disabled-only (cleanup candidates) |
 
 ---
 

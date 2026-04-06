@@ -19,6 +19,7 @@ if (-not $ScriptRoot) { $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand
 . "$ScriptRoot\SharedMailbox.ps1"
 . "$ScriptRoot\CalendarAccess.ps1"
 . "$ScriptRoot\UserProfile.ps1"
+. "$ScriptRoot\Reports.ps1"
 
 # ---- Bootstrap ----
 function Start-M365Admin {
@@ -98,6 +99,7 @@ function Start-M365Admin {
             "Shared Mailbox Management",
             "Calendar Access Management",
             "User Profile Management",
+            "Reporting",
             "Switch Tenant"
         ) -BackLabel "Quit and Disconnect"
 
@@ -111,7 +113,8 @@ function Start-M365Admin {
             6 { Start-SharedMailboxManagement }
             7 { Start-CalendarAccessManagement }
             8 { Start-UserProfileManagement }
-            9 {
+            9 { Start-ReportingMenu }
+            10 {
                 # ---- Switch Tenant ----
                 Write-Host ""
                 if (Confirm-Action "Disconnect current sessions and switch tenant?") {

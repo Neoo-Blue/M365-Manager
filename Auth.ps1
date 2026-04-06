@@ -401,7 +401,7 @@ function Connect-ForTask {
         [ValidateSet(
             "Onboard","Offboard","License","Archive",
             "SecurityGroup","DistributionList","SharedMailbox","CalendarAccess",
-            "UserProfile"
+            "UserProfile","Report"
         )]
         [string]$Task
     )
@@ -417,6 +417,7 @@ function Connect-ForTask {
         SharedMailbox    = @("EXO","Graph")
         CalendarAccess   = @("EXO","Graph")
         UserProfile      = @("Graph")
+        Report           = @("EXO","Graph")
     }
 
     $services = $map[$Task]
