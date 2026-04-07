@@ -142,56 +142,157 @@ function Select-TenantMode {
         Connect-MgGraph -Scopes ($script:MgPartnerScopes + $script:MgScopes) -NoWelcome -ErrorAction Stop
         $script:SessionState.PartnerConnected = $true
         $ctx = Get-MgContext
-        Write-Success "Signed in as $($ctx.Account)"
+        Write-Success "Signed in as $($ctx.Account) (Tenant: $($ctx.TenantId))"
     } catch {
         Write-ErrorMsg "Partner tenant login failed: $_"
+        $script:SessionState.TenantMode = "Direct"
         return $false
     }
 
     Write-InfoMsg "Fetching customer tenant list..."
     $customers = @()
-    try {
-        $contracts = @(Get-MgContract -All -ErrorAction Stop)
-        if ($contracts.Count -eq 0) {
-            Write-Warn "No customer contracts found."
-            $manual = Read-UserInput "Enter tenant ID or domain manually (or 'back')"
-            if ($manual -eq 'back' -or [string]::IsNullOrWhiteSpace($manual)) { Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.PartnerConnected = $false; return $false }
-            $script:SessionState.TenantId = $manual; $script:SessionState.TenantName = $manual; $script:SessionState.TenantDomain = $manual
-            Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.MgGraph = $false; $script:SessionState.PartnerConnected = $false
-            return $true
-        }
 
-        foreach ($c in $contracts) {
-            $customers += [PSCustomObject]@{ DisplayName = $c.DisplayName; CustomerId = $c.CustomerId; DefaultDomain = $c.DefaultDomainName }
+    # ---- Method 1: GDAP delegatedAdminCustomers API ----
+    Write-InfoMsg "Trying GDAP delegated admin customers API..."
+    try {
+        $gdapResponse = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/tenantRelationships/delegatedAdminCustomers" -ErrorAction Stop
+        if ($gdapResponse.value -and $gdapResponse.value.Count -gt 0) {
+            Write-Success "Found $($gdapResponse.value.Count) GDAP customer(s)."
+            foreach ($c in $gdapResponse.value) {
+                $custDomain = ""
+                if ($c.tenantId) {
+                    # Try to get the default domain
+                    try {
+                        $domainResp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/tenantRelationships/delegatedAdminCustomers/$($c.tenantId)/serviceManagementDetails" -ErrorAction SilentlyContinue
+                    } catch {}
+                    $custDomain = $c.tenantId
+                }
+                $customers += [PSCustomObject]@{
+                    DisplayName   = $c.displayName
+                    CustomerId    = $c.tenantId
+                    DefaultDomain = if ($custDomain) { $custDomain } else { $c.tenantId }
+                }
+            }
+        } else {
+            Write-InfoMsg "GDAP API returned 0 customers."
         }
-        $customers = $customers | Sort-Object DisplayName -Unique
     } catch {
-        Write-ErrorMsg "Failed to list customers: $_"
-        $manual = Read-UserInput "Enter tenant ID or domain (or 'back')"
-        if ($manual -eq 'back' -or [string]::IsNullOrWhiteSpace($manual)) { Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.PartnerConnected = $false; return $false }
-        $script:SessionState.TenantId = $manual; $script:SessionState.TenantName = $manual; $script:SessionState.TenantDomain = $manual
-        Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.MgGraph = $false; $script:SessionState.PartnerConnected = $false
+        Write-InfoMsg "GDAP API not available: $_"
+    }
+
+    # ---- Method 2: Try delegatedAdminRelationships (more detail) ----
+    if ($customers.Count -eq 0) {
+        Write-InfoMsg "Trying GDAP relationships API..."
+        try {
+            $relResponse = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/tenantRelationships/delegatedAdminRelationships?`$filter=status eq 'active'" -ErrorAction Stop
+            if ($relResponse.value -and $relResponse.value.Count -gt 0) {
+                Write-Success "Found $($relResponse.value.Count) active GDAP relationship(s)."
+                $seen = @{}
+                foreach ($r in $relResponse.value) {
+                    $custId = $r.customer.tenantId
+                    $custName = $r.customer.displayName
+                    if (-not $seen.ContainsKey($custId)) {
+                        $seen[$custId] = $true
+                        $customers += [PSCustomObject]@{
+                            DisplayName   = $custName
+                            CustomerId    = $custId
+                            DefaultDomain = $custId
+                        }
+                    }
+                }
+            } else {
+                Write-InfoMsg "Relationships API returned 0 active relationships."
+            }
+        } catch {
+            Write-InfoMsg "Relationships API not available: $_"
+        }
+    }
+
+    # ---- Method 3: Legacy contracts (DAP) ----
+    if ($customers.Count -eq 0) {
+        Write-InfoMsg "Trying legacy contracts API (DAP)..."
+        try {
+            $contracts = @(Get-MgContract -All -ErrorAction Stop)
+            if ($contracts.Count -gt 0) {
+                Write-Success "Found $($contracts.Count) DAP contract(s)."
+                foreach ($c in $contracts) {
+                    $customers += [PSCustomObject]@{
+                        DisplayName   = $c.DisplayName
+                        CustomerId    = $c.CustomerId
+                        DefaultDomain = $c.DefaultDomainName
+                    }
+                }
+            }
+        } catch {
+            Write-InfoMsg "Contracts API not available: $_"
+        }
+    }
+
+    # ---- Deduplicate ----
+    if ($customers.Count -gt 0) {
+        $customers = $customers | Sort-Object DisplayName -Unique
+    }
+
+    # ---- If no customers found by any method, manual entry ----
+    if ($customers.Count -eq 0) {
+        Write-Host ""
+        Write-Warn "No customer tenants found via any API method."
+        Write-InfoMsg "This could mean:"
+        Write-InfoMsg "  - No active GDAP relationships"
+        Write-InfoMsg "  - Insufficient partner admin roles"
+        Write-InfoMsg "  - API permissions not granted"
+        Write-Host ""
+        Write-InfoMsg "You can enter a customer tenant ID or domain manually."
+        $manual = Read-UserInput "Tenant ID or domain (or 'back' to cancel)"
+        if ($manual -eq 'back' -or [string]::IsNullOrWhiteSpace($manual)) {
+            Disconnect-MgGraph -ErrorAction SilentlyContinue
+            $script:SessionState.PartnerConnected = $false
+            $script:SessionState.TenantMode = "Direct"
+            return $false
+        }
+        $script:SessionState.TenantId = $manual
+        $script:SessionState.TenantName = $manual
+        $script:SessionState.TenantDomain = $manual
+        Disconnect-MgGraph -ErrorAction SilentlyContinue
+        $script:SessionState.MgGraph = $false; $script:SessionState.PartnerConnected = $false
+        Write-Success "Will connect to tenant: $manual"
         return $true
     }
 
+    # ---- Customer picker ----
     if ($customers.Count -gt 20) {
-        $searchInput = Read-UserInput "Search customer by name (or 'all')"
+        $searchInput = Read-UserInput "Search customer by name (or 'all' to list all)"
         if ($searchInput -ne 'all') {
             $customers = @($customers | Where-Object { $_.DisplayName -like "*$searchInput*" })
-            if ($customers.Count -eq 0) { Write-ErrorMsg "None found."; return $false }
+            if ($customers.Count -eq 0) {
+                Write-ErrorMsg "No customers matching '$searchInput'."
+                Disconnect-MgGraph -ErrorAction SilentlyContinue
+                $script:SessionState.TenantMode = "Direct"
+                return $false
+            }
         }
     }
 
     $custLabels = $customers | ForEach-Object { "$($_.DisplayName)  ($($_.DefaultDomain))" }
-    $sel = Show-Menu -Title "Select Customer Tenant" -Options $custLabels -BackLabel "Cancel"
-    if ($sel -eq -1) { Disconnect-MgGraph -ErrorAction SilentlyContinue; $script:SessionState.PartnerConnected = $false; return $false }
+    $sel = Show-Menu -Title "Select Customer Tenant ($($customers.Count) found)" -Options $custLabels -BackLabel "Cancel"
+    if ($sel -eq -1) {
+        Disconnect-MgGraph -ErrorAction SilentlyContinue
+        $script:SessionState.PartnerConnected = $false
+        $script:SessionState.TenantMode = "Direct"
+        return $false
+    }
 
     $selected = $customers[$sel]
     $script:SessionState.TenantId = $selected.CustomerId
     $script:SessionState.TenantName = $selected.DisplayName
     $script:SessionState.TenantDomain = $selected.DefaultDomain
 
-    Write-Success "Selected: $($selected.DisplayName) ($($selected.DefaultDomain))"
+    Write-Host ""
+    Write-Success "Selected: $($selected.DisplayName)"
+    Write-StatusLine "Tenant ID" $selected.CustomerId "White"
+    Write-StatusLine "Domain" $selected.DefaultDomain "White"
+    Write-Host ""
+
     Disconnect-MgGraph -ErrorAction SilentlyContinue
     $script:SessionState.MgGraph = $false; $script:SessionState.PartnerConnected = $false
     return $true
