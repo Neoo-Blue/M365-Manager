@@ -2,6 +2,9 @@
 
 A modular PowerShell TUI application for common Microsoft 365 admin tasks. Blue background, multi-color interface, confirmation prompts on every change, and browser-based OAuth authentication.
 
+<img width="776" height="596" alt="image" src="https://github.com/user-attachments/assets/3299c893-43ba-4d76-82aa-7cdc5734aba7" />
+
+
 ## Prerequisites
 
 Install the required PowerShell modules (the tool will auto-install if missing):
