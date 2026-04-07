@@ -2,6 +2,11 @@
 #  Auth.ps1 - Authentication, Dependencies & Session Management
 # ============================================================
 
+# Disable MSAL WAM broker globally for this process.
+# Prevents DLL version conflicts between MS Graph SDK and EXO module.
+# Forces all connections to use standard browser auth instead.
+[System.Environment]::SetEnvironmentVariable("MSAL_BROKER_ENABLED", "0", "Process")
+
 $script:SessionState = @{
     MgGraph          = $false
     ExchangeOnline   = $false
@@ -27,13 +32,16 @@ function Assert-ModulesInstalled {
     Write-SectionHeader "Checking Dependencies"
 
     # ---- Define required modules with test commands ----
+    # IMPORTANT: ExchangeOnlineManagement MUST be first.
+    # It loads its MSAL assemblies first, preventing version conflicts
+    # when Graph modules try to load a different MSAL version later.
     $requiredModules = @(
+        @{ Name = "ExchangeOnlineManagement";                    TestCmd = "Connect-ExchangeOnline" },
         @{ Name = "Microsoft.Graph.Authentication";              TestCmd = "Get-MgContext" },
         @{ Name = "Microsoft.Graph.Users";                       TestCmd = "Get-MgUser" },
         @{ Name = "Microsoft.Graph.Users.Actions";               TestCmd = $null },
         @{ Name = "Microsoft.Graph.Groups";                      TestCmd = "Get-MgGroup" },
-        @{ Name = "Microsoft.Graph.Identity.DirectoryManagement"; TestCmd = "Get-MgSubscribedSku" },
-        @{ Name = "ExchangeOnlineManagement";                    TestCmd = "Connect-ExchangeOnline" }
+        @{ Name = "Microsoft.Graph.Identity.DirectoryManagement"; TestCmd = "Get-MgSubscribedSku" }
     )
 
     $allGood = $true
@@ -232,12 +240,65 @@ function Connect-Graph {
         $params = @{ Scopes = $script:MgScopes; NoWelcome = $true }
         if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantId) { $params["TenantId"] = $script:SessionState.TenantId }
         Connect-MgGraph @params -ErrorAction Stop
-        $script:SessionState.MgGraph = $true
         $ctx = Get-MgContext
         Write-Success "Microsoft Graph connected as $($ctx.Account)"
+
+        # Verify scopes were actually granted
+        $grantedScopes = $ctx.Scopes
+        $missing = @()
+        foreach ($s in $script:MgScopes) {
+            if ($grantedScopes -notcontains $s) { $missing += $s }
+        }
+
+        if ($missing.Count -gt 0) {
+            Write-Warn "Some scopes were not granted: $($missing -join ', ')"
+            Write-InfoMsg "This usually means admin consent is needed."
+            Write-InfoMsg "An admin must visit:"
+            Write-InfoMsg "  Azure Portal > App registrations > Microsoft Graph PowerShell"
+            Write-InfoMsg "  > API permissions > Grant admin consent"
+            Write-Host ""
+            Write-Warn "Attempting to continue - some operations may fail with 403 errors."
+        }
+
+        $script:SessionState.MgGraph = $true
         return $true
     } catch {
         Write-ErrorMsg "Microsoft Graph connection failed: $_"
+        return $false
+    }
+}
+
+function Reconnect-GraphWithConsent {
+    <# Disconnects Graph, clears cached token, and reconnects to trigger fresh consent. #>
+    Write-InfoMsg "Disconnecting current Graph session..."
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue } catch {}
+    $script:SessionState.MgGraph = $false
+
+    # Clear cached Graph context to force fresh login
+    try {
+        $cachePath = Join-Path $env:USERPROFILE ".graph"
+        if (Test-Path $cachePath) {
+            Remove-Item -Path $cachePath -Recurse -Force -ErrorAction SilentlyContinue
+            Write-InfoMsg "Graph token cache cleared."
+        }
+    } catch {}
+
+    Write-InfoMsg "Reconnecting (a browser window will open for consent)..."
+    Write-Warn "If you are an admin, check 'Consent on behalf of your organization' in the prompt."
+    Write-Host ""
+
+    try {
+        $params = @{ Scopes = $script:MgScopes; NoWelcome = $true }
+        if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantId) { $params["TenantId"] = $script:SessionState.TenantId }
+        Connect-MgGraph @params -ErrorAction Stop
+        $script:SessionState.MgGraph = $true
+        $ctx = Get-MgContext
+        Write-Success "Reconnected as $($ctx.Account)"
+        Write-InfoMsg "Granted scopes: $($ctx.Scopes -join ', ')"
+        return $true
+    } catch {
+        Write-ErrorMsg "Reconnect failed: $_"
+        $script:SessionState.MgGraph = $false
         return $false
     }
 }
@@ -247,6 +308,10 @@ function Connect-EXO {
 
     $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") { "$($script:SessionState.TenantName) (GDAP)" } else { "own tenant" }
     Write-InfoMsg "Connecting to Exchange Online ($targetLabel)..."
+
+    # Disable MSAL WAM broker to prevent DLL version conflicts with MS Graph
+    # This forces EXO to use standard browser auth instead
+    [System.Environment]::SetEnvironmentVariable("MSAL_BROKER_ENABLED", "0", "Process")
 
     $exoParams = @{ ShowBanner = $false }
     if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantDomain) {
@@ -259,38 +324,9 @@ function Connect-EXO {
         Write-Success "Exchange Online connected."
         return $true
     } catch {
-        $errMsg = $_.Exception.Message
-        Write-Warn "Browser login failed: $errMsg"
+        Write-ErrorMsg "Exchange Online connection failed: $_"
+        return $false
     }
-
-    if ($errMsg -match "BrokerExtension|WithBroker|Method not found") {
-        Write-Warn "MSAL broker DLL conflict detected."
-        if (Confirm-Action "Auto-fix: disable the conflicting broker DLL and retry?") {
-            $exoMod = Get-Module -ListAvailable -Name ExchangeOnlineManagement | Sort-Object Version -Descending | Select-Object -First 1
-            if ($exoMod) {
-                $brokerDlls = @(Get-ChildItem -Path $exoMod.ModuleBase -Recurse -Filter "Microsoft.Identity.Client.Broker.dll" -ErrorAction SilentlyContinue)
-                foreach ($dll in $brokerDlls) {
-                    try { if (Test-Path $dll.FullName) { Rename-Item -Path $dll.FullName -NewName "$($dll.Name).bak" -Force -ErrorAction Stop; Write-Success "Disabled: $($dll.FullName)" } }
-                    catch { Write-Warn "Could not rename: $_" }
-                }
-            }
-            try {
-                Connect-ExchangeOnline @exoParams -ErrorAction Stop
-                $script:SessionState.ExchangeOnline = $true
-                Write-Success "Exchange Online connected (broker disabled)."
-                return $true
-            } catch {
-                Write-Warn "DLL already in memory. Restarting..."
-                $mainScript = Join-Path $PSScriptRoot "Main.ps1"
-                if (-not $PSScriptRoot) { $mainScript = Join-Path (Split-Path -Parent $MyInvocation.ScriptName) "Main.ps1" }
-                Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$mainScript`""
-                Start-Sleep -Seconds 2; exit
-            }
-        }
-    }
-
-    Write-ErrorMsg "Exchange Online connection failed."
-    return $false
 }
 
 function Connect-SCC {
@@ -298,6 +334,9 @@ function Connect-SCC {
 
     $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") { "$($script:SessionState.TenantName) (GDAP)" } else { "own tenant" }
     Write-InfoMsg "Connecting to Security & Compliance ($targetLabel)..."
+
+    # Disable MSAL WAM broker (same conflict as EXO)
+    [System.Environment]::SetEnvironmentVariable("MSAL_BROKER_ENABLED", "0", "Process")
 
     $sccParams = @{ ShowBanner = $false; EnableSearchOnlySession = $true }
     if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantDomain) {
@@ -310,8 +349,7 @@ function Connect-SCC {
         Write-Success "SCC connected (search session)."
         return $true
     } catch {
-        $errMsg = $_.Exception.Message
-        Write-Warn "SCC connect failed: $errMsg"
+        Write-Warn "SCC search session failed: $_"
     }
 
     # Fallback without search session

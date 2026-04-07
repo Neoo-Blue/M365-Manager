@@ -19,12 +19,15 @@ Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
 
 ## Launch
 
+**Always use `Launch.bat`** — it sets a required environment variable (`MSAL_BROKER_ENABLED=0`) that prevents DLL conflicts between the Microsoft Graph and Exchange Online modules.
+
 Double-click `Launch.bat` in the M365Admin folder.
 
-Or run manually from PowerShell:
+If running manually, set the environment variable first:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File Main.ps1
+$env:MSAL_BROKER_ENABLED = "0"
+powershell -ExecutionPolicy Bypass -NoProfile -File Main.ps1
 ```
 
 ## File Structure

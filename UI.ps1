@@ -198,6 +198,7 @@ function Resolve-UserIdentity {
     <#
     .SYNOPSIS
         Asks for name or email, searches Microsoft Graph, confirms the right user.
+        Handles 403 errors by offering to reconnect Graph with proper consent.
         Returns a user object or $null.
     #>
     param([string]$PromptText = "Enter user name or email")
@@ -205,48 +206,98 @@ function Resolve-UserIdentity {
     $searchInput = Read-UserInput $PromptText
     if ([string]::IsNullOrWhiteSpace($searchInput)) { return $null }
 
-    Write-InfoMsg "Searching for user..."
+    $userProps = "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,CompanyName,OfficeLocation,StreetAddress,City,State,PostalCode,Country,UsageLocation,BusinessPhones,MobilePhone,Mail,MailNickname,AccountEnabled,UserType"
 
-    try {
-        if ($searchInput -match '@') {
-            $user = Get-MgUser -UserId $searchInput -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,CompanyName,OfficeLocation,StreetAddress,City,State,PostalCode,Country,UsageLocation,BusinessPhones,MobilePhone,Mail,MailNickname,AccountEnabled,UserType" -ErrorAction Stop
-        } else {
-            # Use Search with ConsistencyLevel for partial matching
-            $users = @(Get-MgUser -Search "displayName:$searchInput" -ConsistencyLevel eventual -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" -ErrorAction Stop)
-            if ($users.Count -eq 0) {
-                # Fallback: try filter with startsWith
-                $users = @(Get-MgUser -Filter "startsWith(displayName,'$searchInput')" -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" -ErrorAction Stop)
-            }
-            if ($users.Count -eq 0) {
-                Write-ErrorMsg "No users found matching '$searchInput'."
-                return $null
-            }
-            if ($users.Count -eq 1) {
-                # Fetch full properties
-                $user = Get-MgUser -UserId $users[0].Id -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,CompanyName,OfficeLocation,StreetAddress,City,State,PostalCode,Country,UsageLocation,BusinessPhones,MobilePhone,Mail,MailNickname,AccountEnabled,UserType" -ErrorAction Stop
+    # Allow up to 2 attempts (first try + retry after reconnect)
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+
+        Write-InfoMsg "Searching for user..."
+
+        try {
+            if ($searchInput -match '@') {
+                $user = Get-MgUser -UserId $searchInput -Property $userProps -ErrorAction Stop
             } else {
-                Write-Warn "Multiple users found:"
-                $names = $users | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }
-                $sel = Show-Menu -Title "Select User" -Options $names -BackLabel "Cancel"
-                if ($sel -eq -1) { return $null }
-                $user = Get-MgUser -UserId $users[$sel].Id -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,CompanyName,OfficeLocation,StreetAddress,City,State,PostalCode,Country,UsageLocation,BusinessPhones,MobilePhone,Mail,MailNickname,AccountEnabled,UserType" -ErrorAction Stop
+                $users = @(Get-MgUser -Search "displayName:$searchInput" -ConsistencyLevel eventual -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" -ErrorAction Stop)
+                if ($users.Count -eq 0) {
+                    $users = @(Get-MgUser -Filter "startsWith(displayName,'$searchInput')" -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" -ErrorAction Stop)
+                }
+                if ($users.Count -eq 0) {
+                    Write-ErrorMsg "No users found matching '$searchInput'."
+                    return $null
+                }
+                if ($users.Count -eq 1) {
+                    $user = Get-MgUser -UserId $users[0].Id -Property $userProps -ErrorAction Stop
+                } else {
+                    Write-Warn "Multiple users found:"
+                    $names = $users | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }
+                    $sel = Show-Menu -Title "Select User" -Options $names -BackLabel "Cancel"
+                    if ($sel -eq -1) { return $null }
+                    $user = Get-MgUser -UserId $users[$sel].Id -Property $userProps -ErrorAction Stop
+                }
             }
+
+            Write-Host ""
+            Write-StatusLine "Display Name" $user.DisplayName "White"
+            Write-StatusLine "UPN" $user.UserPrincipalName "White"
+            Write-StatusLine "Job Title" $user.JobTitle "White"
+            Write-StatusLine "Department" $user.Department "White"
+            Write-Host ""
+
+            if (-not (Confirm-Action "Is this the correct user?")) { return $null }
+            return $user
         }
+        catch {
+            $errMsg = "$_"
 
-        Write-Host ""
-        Write-StatusLine "Display Name" $user.DisplayName "White"
-        Write-StatusLine "UPN" $user.UserPrincipalName "White"
-        Write-StatusLine "Job Title" $user.JobTitle "White"
-        Write-StatusLine "Department" $user.Department "White"
-        Write-Host ""
+            # Detect 403 / insufficient privileges
+            if ($errMsg -match "403|Forbidden|Authorization_RequestDenied|Insufficient privileges") {
+                Write-ErrorMsg "Microsoft Graph returned 403 Forbidden."
+                Write-Host ""
+                Write-Warn "The current Graph session lacks the required permissions."
+                Write-InfoMsg "This usually means admin consent was not granted for the app."
+                Write-Host ""
 
-        if (-not (Confirm-Action "Is this the correct user?")) { return $null }
-        return $user
+                if ($attempt -eq 1) {
+                    $fix = Show-Menu -Title "How to fix?" -Options @(
+                        "Reconnect Graph with fresh consent prompt",
+                        "Show manual admin consent instructions"
+                    ) -BackLabel "Cancel"
+
+                    if ($fix -eq 0) {
+                        if (Reconnect-GraphWithConsent) {
+                            Write-InfoMsg "Retrying search..."
+                            continue   # retry the for loop
+                        } else {
+                            Write-ErrorMsg "Reconnect failed."
+                            return $null
+                        }
+                    }
+                    elseif ($fix -eq 1) {
+                        Write-Host ""
+                        Write-InfoMsg "An Azure AD admin needs to grant consent:"
+                        Write-Host ""
+                        Write-Host "  1. Go to: https://entra.microsoft.com" -ForegroundColor White
+                        Write-Host "  2. App registrations > Microsoft Graph PowerShell" -ForegroundColor White
+                        Write-Host "  3. API permissions > Grant admin consent" -ForegroundColor White
+                        Write-Host ""
+                        Write-Host "  Required permissions:" -ForegroundColor $script:Colors.Info
+                        Write-Host "    User.ReadWrite.All" -ForegroundColor White
+                        Write-Host "    Group.ReadWrite.All" -ForegroundColor White
+                        Write-Host "    Directory.ReadWrite.All" -ForegroundColor White
+                        Write-Host "    Organization.Read.All" -ForegroundColor White
+                        Write-Host ""
+                        Write-InfoMsg "After granting consent, restart the tool."
+                        return $null
+                    }
+                    else { return $null }
+                }
+            }
+
+            Write-ErrorMsg "Could not find user: $errMsg"
+            return $null
+        }
     }
-    catch {
-        Write-ErrorMsg "Could not find user: $_"
-        return $null
-    }
+    return $null
 }
 
 function Pause-ForUser {
