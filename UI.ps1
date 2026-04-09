@@ -103,7 +103,12 @@ function Confirm-Action {
 }
 
 function Show-Menu {
-    param([string]$Title, [string[]]$Options, [string]$BackLabel = "Back to Main Menu")
+    param(
+        [string]$Title,
+        [string[]]$Options,
+        [string]$BackLabel = "Back to Main Menu",
+        [int[]]$HiddenOptions = @()
+    )
     Write-SectionHeader $Title
     for ($i = 0; $i -lt $Options.Count; $i++) {
         Write-Host "    [" -NoNewline -ForegroundColor $script:Colors.Accent
@@ -125,6 +130,8 @@ function Show-Menu {
             $num = [int]$sel
             if ($num -eq 0) { return -1 }
             if ($num -ge 1 -and $num -le $Options.Count) { return ($num - 1) }
+            # Check hidden options (returned as raw number, not index)
+            if ($HiddenOptions -contains $num) { return $num }
         }
         Write-ErrorMsg "Invalid selection. Please try again."
     }

@@ -41,7 +41,8 @@ $scriptOrder = @(
     "UserProfile.ps1",
     "Reports.ps1",
     "eDiscovery.ps1",
-    "GroupManager.ps1"
+    "GroupManager.ps1",
+    "AIAssistant.ps1"
 )
 
 $merged = @()

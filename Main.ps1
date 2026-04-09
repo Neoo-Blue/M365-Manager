@@ -2,24 +2,102 @@
 #  Main.ps1 - M365 Administration Tool - Entry Point
 # ============================================================
 
-$ScriptRoot = $PSScriptRoot
-if (-not $ScriptRoot) { $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
+# ---- Find the folder containing all .ps1 files ----
+# Try every known method; OneDrive/spaces/renamed folders break some of them
+$ScriptRoot = $null
 
-. "$ScriptRoot\UI.ps1"
-. "$ScriptRoot\Auth.ps1"
-. "$ScriptRoot\Onboard.ps1"
-. "$ScriptRoot\Offboard.ps1"
-. "$ScriptRoot\License.ps1"
-. "$ScriptRoot\Archive.ps1"
-. "$ScriptRoot\SecurityGroup.ps1"
-. "$ScriptRoot\DistributionList.ps1"
-. "$ScriptRoot\SharedMailbox.ps1"
-. "$ScriptRoot\CalendarAccess.ps1"
-. "$ScriptRoot\UserProfile.ps1"
-. "$ScriptRoot\Reports.ps1"
-. "$ScriptRoot\eDiscovery.ps1"
-. "$ScriptRoot\GroupManager.ps1"
+# Method 1: $PSScriptRoot (works when launched via -File)
+if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "UI.ps1"))) {
+    $ScriptRoot = $PSScriptRoot
+}
 
+# Method 2: Environment variable set by Launch.bat
+if (-not $ScriptRoot) {
+    $envRoot = $env:M365ADMIN_ROOT
+    if ($envRoot) {
+        $envRoot = $envRoot.TrimEnd('\')
+        if (Test-Path (Join-Path $envRoot "UI.ps1")) { $ScriptRoot = $envRoot }
+    }
+}
+
+# Method 3: $MyInvocation path
+if (-not $ScriptRoot) {
+    $invPath = $MyInvocation.MyCommand.Path
+    if ($invPath) {
+        $dir = Split-Path -Parent $invPath
+        if (Test-Path (Join-Path $dir "UI.ps1")) { $ScriptRoot = $dir }
+    }
+}
+
+# Method 4: $MyInvocation.InvocationName (handles relative paths)
+if (-not $ScriptRoot) {
+    $invName = $MyInvocation.InvocationName
+    if ($invName -and $invName -ne '&') {
+        try {
+            $resolved = (Resolve-Path $invName -ErrorAction Stop).Path
+            $dir = Split-Path -Parent $resolved
+            if (Test-Path (Join-Path $dir "UI.ps1")) { $ScriptRoot = $dir }
+        } catch {}
+    }
+}
+
+# Method 5: Current working directory
+if (-not $ScriptRoot) {
+    $cwd = (Get-Location).Path
+    if (Test-Path (Join-Path $cwd "UI.ps1")) { $ScriptRoot = $cwd }
+}
+
+# ---- Fail if nothing worked ----
+if (-not $ScriptRoot) {
+    Write-Host "" -ForegroundColor Red
+    Write-Host "  ERROR: Cannot locate tool files (UI.ps1 not found)." -ForegroundColor Red
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "  Searched in:" -ForegroundColor Yellow
+    Write-Host "    PSScriptRoot : $PSScriptRoot" -ForegroundColor Gray
+    Write-Host "    ENV          : $env:M365ADMIN_ROOT" -ForegroundColor Gray
+    Write-Host "    InvocationPath: $($MyInvocation.MyCommand.Path)" -ForegroundColor Gray
+    Write-Host "    WorkingDir   : $((Get-Location).Path)" -ForegroundColor Gray
+    Write-Host "" -ForegroundColor Yellow
+    Write-Host "  FIX: Use Launch.bat to start the tool." -ForegroundColor Yellow
+    Write-Host "       Or cd into the tool folder first, then run .\Main.ps1" -ForegroundColor Yellow
+    Write-Host "" -ForegroundColor Gray
+    Write-Host "  Press any key to exit..." -ForegroundColor Gray
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
+
+# ---- Load all modules ----
+$loadErrors = @()
+$modules = @(
+    "UI.ps1","Auth.ps1","Onboard.ps1","Offboard.ps1","License.ps1",
+    "Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
+    "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
+    "Reports.ps1","eDiscovery.ps1","GroupManager.ps1","AIAssistant.ps1"
+)
+
+foreach ($mod in $modules) {
+    $modPath = Join-Path $ScriptRoot $mod
+    if (Test-Path $modPath) {
+        try {
+            . "$modPath"
+        } catch {
+            $loadErrors += "  $mod : $_"
+        }
+    }
+    # AIAssistant.ps1 is optional, others are not
+    elseif ($mod -ne "AIAssistant.ps1") {
+        $loadErrors += "  $mod : FILE NOT FOUND at $modPath"
+    }
+}
+
+if ($loadErrors.Count -gt 0) {
+    Write-Host "" -ForegroundColor Red
+    Write-Host "  WARNING: Some modules failed to load:" -ForegroundColor Yellow
+    foreach ($e in $loadErrors) { Write-Host $e -ForegroundColor Red }
+    Write-Host "" -ForegroundColor Gray
+}
+
+# ---- Main Application ----
 function Start-M365Admin {
     Initialize-UI
     Write-Banner
@@ -88,7 +166,7 @@ function Start-M365Admin {
             "Reporting",
             "eDiscovery",
             "Switch Tenant"
-        ) -BackLabel "Quit and Disconnect"
+        ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
 
         switch ($sel) {
             0  { Start-Onboard }
@@ -103,6 +181,7 @@ function Start-M365Admin {
             9  { Start-GroupManagerMenu }
             10 { Start-ReportingMenu }
             11 { Start-eDiscoveryMenu }
+            99 { Start-AIAssistant }
             12 {
                 Write-Host ""
                 if (Confirm-Action "Disconnect ALL sessions and switch tenant?") {
@@ -129,4 +208,5 @@ function Start-M365Admin {
     Write-Host ""
 }
 
+# ---- Run ----
 Start-M365Admin

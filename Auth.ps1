@@ -138,16 +138,48 @@ function Select-TenantMode {
     $script:SessionState.TenantMode = "Partner"
 
     Write-InfoMsg "Signing in to your PARTNER tenant to list customers..."
+    Write-Host ""
+
+    $partnerScopes = @("Directory.Read.All")
+    $partnerConnected = $false
+
+    # Attempt 1: Interactive browser
     try {
-        Connect-MgGraph -Scopes ($script:MgPartnerScopes + $script:MgScopes) -NoWelcome -ErrorAction Stop
-        $script:SessionState.PartnerConnected = $true
-        $ctx = Get-MgContext
-        Write-Success "Signed in as $($ctx.Account) (Tenant: $($ctx.TenantId))"
+        Connect-MgGraph -Scopes $partnerScopes -NoWelcome -ErrorAction Stop
+        $partnerConnected = $true
     } catch {
-        Write-ErrorMsg "Partner tenant login failed: $_"
-        $script:SessionState.TenantMode = "Direct"
-        return $false
+        Write-Warn "Browser login failed: $_"
+        Write-InfoMsg "Trying device code flow instead..."
+        Write-Host ""
+
+        # Attempt 2: Device code (works when browser popup is blocked)
+        try {
+            Connect-MgGraph -Scopes $partnerScopes -NoWelcome -UseDeviceAuthentication -ErrorAction Stop
+            $partnerConnected = $true
+        } catch {
+            Write-ErrorMsg "Device code flow also failed: $_"
+        }
     }
+
+    if (-not $partnerConnected) {
+        Write-Host ""
+        Write-ErrorMsg "Could not authenticate to partner tenant."
+        Write-InfoMsg "You can still enter a customer tenant ID manually."
+        $manual = Read-UserInput "Tenant ID or domain (or 'back' to cancel)"
+        if ($manual -eq 'back' -or [string]::IsNullOrWhiteSpace($manual)) {
+            $script:SessionState.TenantMode = "Direct"
+            return $false
+        }
+        $script:SessionState.TenantId = $manual
+        $script:SessionState.TenantName = $manual
+        $script:SessionState.TenantDomain = $manual
+        Write-Success "Will connect to tenant: $manual"
+        return $true
+    }
+
+    $script:SessionState.PartnerConnected = $true
+    $ctx = Get-MgContext
+    Write-Success "Signed in as $($ctx.Account)"
 
     Write-InfoMsg "Fetching customer tenant list..."
     $customers = @()
@@ -337,35 +369,48 @@ function Connect-Graph {
     $targetLabel = if ($script:SessionState.TenantMode -eq "Partner") { "$($script:SessionState.TenantName) (GDAP)" } else { "own tenant" }
     Write-InfoMsg "Connecting to Microsoft Graph ($targetLabel)..."
 
+    $params = @{ Scopes = $script:MgScopes; NoWelcome = $true }
+    if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantId) { $params["TenantId"] = $script:SessionState.TenantId }
+
+    # Attempt 1: Interactive browser
     try {
-        $params = @{ Scopes = $script:MgScopes; NoWelcome = $true }
-        if ($script:SessionState.TenantMode -eq "Partner" -and $script:SessionState.TenantId) { $params["TenantId"] = $script:SessionState.TenantId }
         Connect-MgGraph @params -ErrorAction Stop
+        $script:SessionState.MgGraph = $true
         $ctx = Get-MgContext
         Write-Success "Microsoft Graph connected as $($ctx.Account)"
-
-        # Verify scopes were actually granted
-        $grantedScopes = $ctx.Scopes
-        $missing = @()
-        foreach ($s in $script:MgScopes) {
-            if ($grantedScopes -notcontains $s) { $missing += $s }
-        }
-
-        if ($missing.Count -gt 0) {
-            Write-Warn "Some scopes were not granted: $($missing -join ', ')"
-            Write-InfoMsg "This usually means admin consent is needed."
-            Write-InfoMsg "An admin must visit:"
-            Write-InfoMsg "  Azure Portal > App registrations > Microsoft Graph PowerShell"
-            Write-InfoMsg "  > API permissions > Grant admin consent"
-            Write-Host ""
-            Write-Warn "Attempting to continue - some operations may fail with 403 errors."
-        }
-
-        $script:SessionState.MgGraph = $true
+        Verify-GraphScopes
         return $true
     } catch {
-        Write-ErrorMsg "Microsoft Graph connection failed: $_"
+        Write-Warn "Browser login failed: $_"
+    }
+
+    # Attempt 2: Device code
+    Write-InfoMsg "Trying device code flow..."
+    try {
+        $params["UseDeviceAuthentication"] = $true
+        Connect-MgGraph @params -ErrorAction Stop
+        $script:SessionState.MgGraph = $true
+        $ctx = Get-MgContext
+        Write-Success "Microsoft Graph connected via device code as $($ctx.Account)"
+        Verify-GraphScopes
+        return $true
+    } catch {
+        Write-ErrorMsg "All Graph connection methods failed: $_"
         return $false
+    }
+}
+
+function Verify-GraphScopes {
+    $ctx = Get-MgContext
+    if ($ctx.Scopes) {
+        $missing = @()
+        foreach ($s in $script:MgScopes) {
+            if ($ctx.Scopes -notcontains $s) { $missing += $s }
+        }
+        if ($missing.Count -gt 0) {
+            Write-Warn "Missing scopes: $($missing -join ', ')"
+            Write-InfoMsg "An admin may need to grant consent in Entra portal."
+        }
     }
 }
 
