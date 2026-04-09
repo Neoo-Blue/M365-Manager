@@ -1,6 +1,3 @@
 ﻿{
-    "Endpoint":  "http://localhost:11434",
-    "Provider":  "Ollama",
-    "Model":  "gemma4:e2b",
-    "ApiKey":  "none"
-}
+     
+ }
