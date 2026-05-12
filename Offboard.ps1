@@ -42,6 +42,15 @@ function Start-Offboard {
 
     if (-not (Confirm-Action "Begin offboarding for $($user.DisplayName)?")) { Pause-ForUser; return }
 
+    # Step 0: Revoke MFA methods (so the user cannot re-authenticate
+    # even with their device, before we kill in-flight sessions). Each
+    # method-revoke flows through Invoke-Action so it audits + previews.
+    Write-SectionHeader "Step 0 - Revoke MFA Methods"
+    if ((Get-Command Remove-AllAuthMethods -ErrorAction SilentlyContinue) -and (Confirm-Action "Revoke all MFA methods for $upn?")) {
+        $revoked = Remove-AllAuthMethods -User $user.Id
+        if (-not (Get-PreviewMode)) { Write-Success "$revoked MFA method(s) revoked." }
+    }
+
     # Step 1: Revoke sessions
     Write-SectionHeader "Step 1 - Revoke All Sessions"
     if (Confirm-Action "Revoke all sessions for $upn?") {

@@ -191,6 +191,15 @@ function Invoke-BulkOffboard {
             }
         }
 
+        # Step 0 — Revoke MFA methods (delegates to MFAManager.Remove-AllAuthMethods,
+        # which wraps each per-method DELETE in Invoke-Action so audit + preview work).
+        if (Get-Command Remove-AllAuthMethods -ErrorAction SilentlyContinue) {
+            try {
+                $mfaRevoked = Remove-AllAuthMethods -User $user.Id
+                $entry | Add-Member -NotePropertyName MfaMethodsRevoked -NotePropertyValue $mfaRevoked -Force
+            } catch { $stepErrors += "MFARevoke: $($_.Exception.Message)" }
+        }
+
         # Step 1 — Revoke sessions
         if (Invoke-Action -Description ("Revoke sign-in sessions for {0}" -f $upn) -Action {
             Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; $true
