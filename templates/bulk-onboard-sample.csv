@@ -1,0 +1,6 @@
+FirstName,LastName,DisplayName,UserPrincipalName,Email,Manager,Department,JobTitle,OfficeLocation,UsageLocation,Template,Password,IssueTAP
+Jane,Smith,,jane.smith@contoso.com,jane.smith@contoso.com,manager@contoso.com,Sales,Account Executive,NYC,US,sales-rep,,true
+Bob,Jones,Bob Jones,bob.jones@contoso.com,,manager@contoso.com,Engineering,Senior Engineer,SFO,US,engineer,,true
+Carol,Davis,,carol.davis@contoso.com,,ceo@contoso.com,Executive Office,Executive Assistant,NYC,US,exec-assistant,,false
+Eve,Brown,,eve.brown@contoso.com,,manager@contoso.com,External,Contract Designer,Remote,US,contractor,,true
+Frank,Wilson,,frank.wilson@contoso.com,,,Operations,Operations Analyst,,US,default,TempStartP@ss1,false
