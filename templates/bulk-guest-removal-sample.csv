@@ -1,0 +1,4 @@
+UPN,Reason
+alice@old-vendor.com_#EXT#@contoso.onmicrosoft.com,Vendor engagement ended 2026-04-30
+bob@partner.io_#EXT#@contoso.onmicrosoft.com,Recert response: do not retain
+ghost@external.com_#EXT#@contoso.onmicrosoft.com,Never signed in (180+ days)

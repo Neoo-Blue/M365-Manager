@@ -169,16 +169,65 @@ Integration with existing flows:
 - Onboard / BulkOnboard's TAP issuance now delegates to `New-TemporaryAccessPass` — single source of truth, single audit trail.
 - Offboard / BulkOffboard adds a new Step 0 that calls `Remove-AllAuthMethods` before session revocation, so a hostile actor with the user's device cannot re-authenticate during the window between session revoke and account block.
 
+## OneDrive handoff
+
+When a user leaves, their personal OneDrive site begins a ~30-day countdown after license removal. `OneDriveManager.ps1` orchestrates the handoff window:
+
+- `Get-UserOneDriveUrl` resolves the personal site URL.
+- `Grant-OneDriveAccess` adds the successor as a site-collection admin (reverse pair with `Revoke-OneDriveAccess` — undoable).
+- `Extend-OneDriveRetention` records the planned end date in audit and prints the three real options for actually pausing the auto-purge (keep license / Purview retention policy / transfer ownership). M365 has no clean "extend the clock" cmdlet; we are honest about that.
+- `Send-OneDriveHandoffSummary` emails the successor an HTML summary with the URL, planned end date, and top-20 recently-modified files.
+- `Invoke-OneDriveHandoff` is the single-call orchestrator (used by both single-user Offboard Step 9 and `Invoke-BulkOffboard`'s `HandoffOneDriveTo` column).
+
+Default retention extension: **60 days** (30-day auto-purge + 30-day grace). Required permission: SharePoint Administrator + Graph `Sites.FullControl.All` + `Mail.Send`.
+
+## Teams management
+
+New "Teams Management..." top-level menu plus `TeamsManager.ps1`. Per-user: view memberships, add / remove (Member or Owner), promote / demote. Tenant reports: orphaned (zero-owner), single-owner (SPOF), and teams-with-guests. Bulk via `Invoke-BulkTeamsMembership -Path .csv [-WhatIf]` (sample: `templates/bulk-teams-membership-sample.csv`). Offboard integration: `Invoke-TeamsOffboardTransfer` handles sole-owner promote-then-remove, co-owner demote, and member-only removal in one call. Add / remove / promote / demote all carry reverse recipes so the Undo menu rolls them back cleanly.
+
+## SharePoint management
+
+New "SharePoint..." top-level menu plus `SharePoint.ps1`. Site-collection admin add / remove (reversible), orphaned-site report, stale-site report (**default 365-day threshold**), top-storage report. External sharing: `Get-UserOutboundShares` walks the unified audit log; `Revoke-Share` best-effort revokes (warns when only the SPO admin UI can revoke anonymous links). Lightweight provisioning via `New-ProjectSite` + `templates/site-*.json` (two examples ship: `site-project.json`, `site-team.json`). Offboard integration: `Invoke-SharePointOffboardCleanup` revokes the leaver's outbound shares from the last 365 days with Y / A / N confirm.
+
+## Guest user lifecycle
+
+New "Guest Users..." top-level menu (and a viewer from Audit & Reporting) plus `GuestUsers.ps1`. Discovery filters: domain, age, last-sign-in window. Reports: stale guests (**default 90 days no sign-in**), by domain, by inviter. Recertification campaigns: `Invoke-GuestRecertification -Path .csv` (UPN, ManagerUPN) emails managers and queues a row in `<stateDir>/guest-recerts.json` with `state='pending'`; `Show-PendingRecerts` is the manual viewer where decisions land (Keep / Remove / Defer). `Remove-Guest` is a proper 4-step teardown: revoke outbound shares, remove from groups, run Teams ownership-transfer logic, then `DELETE /users/{id}`. The 30-day restore window via `/directory/deletedItems/{id}/restore` is surfaced in the audit `noUndoReason`.
+
+Bulk via `Invoke-BulkGuestRemoval -Path .csv [-WhatIf]` (sample: `templates/bulk-guest-removal-sample.csv`).
+
+## Offboarding (canonical 12-step flow)
+
+See `docs/offboard-flow.md` for the diagram and the per-step Graph / EXO / SPO connectivity requirements. The step order, in both single-user and bulk modes:
+
+| # | Step                                          | Skippable? |
+|---|-----------------------------------------------|------------|
+| 0 | Revoke MFA methods                            | yes |
+| 1 | Block sign-in (revoke sessions + AccountEnabled=$false) | yes |
+| 2 | Set OOO + forwarding                          | yes |
+| 3 | Remove from security groups                   | yes (single) / column `RemoveFromAllGroups` (bulk) |
+| 4 | Remove from distribution lists / non-team M365 groups | yes (single) / column `RemoveFromAllGroups` (bulk) |
+| 5 | Remove direct license assignments             | yes |
+| 6 | Convert mailbox to shared                     | yes (`ConvertToShared` column) |
+| 6b| Grant mailbox access to delegates (single-user only) | yes |
+| 7 | Teams ownership transfer                      | yes (`TeamsSuccessor` column drives sole-owner promotion) |
+| 8 | Revoke outbound SharePoint shares             | yes (`RevokeShares` column) |
+| 9 | OneDrive handoff                              | yes (`HandoffOneDriveTo` column) |
+| 10| Manager summary email                         | yes (`NotifyManager` column) |
+| 11| Final audit summary line                      | always emitted |
+
+Bulk CSV columns extended in this phase: `TeamsSuccessor`, `RevokeShares` (default true), `NotifyManager` (default true). Updated sample at `templates/bulk-offboard-sample.csv`.
+
 ## Tests
 
 ```powershell
 Invoke-Pester ./tests/
 ```
 
-Phase 2 adds three Pester suites alongside the privacy tests:
-- `tests/AuditViewer.Tests.ps1` — JSONL + legacy + AI line parsing, filter correctness, CSV/HTML export shape.
-- `tests/Undo.Tests.ps1` — dispatch-table coverage, target-hashtable round-trip, state-transitions (mocked sidecar so the test doesn't touch real machine state).
-- `tests/MFAManager.Tests.ps1` — method-type classification, compliance-view predicates against canned method sets.
+Phase 3 adds four more Pester suites alongside the Phase 1 / 2 ones:
+- `tests/OneDriveManager.Tests.ps1` — recent-files cutoff math, URL parsing, retention end-date math.
+- `tests/TeamsManager.Tests.ps1` — orphan + single-owner classification, GUID short-circuit.
+- `tests/SharePoint.Tests.ps1` — stale-site filter, system-account filter, site-template JSON shape, owner add / remove reverse-recipe pair.
+- `tests/GuestUsers.Tests.ps1` — stale-guest math, recert state-file round-trip (mocked path), domain pivot.
 
 No network or M365 connection required for any test.
 
