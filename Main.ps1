@@ -74,7 +74,7 @@ $modules = @(
     "License.ps1","Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
     "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
     "Reports.ps1","eDiscovery.ps1","GroupManager.ps1",
-    "AuditViewer.ps1","Undo.ps1","SignInLookup.ps1","AIAssistant.ps1"
+    "AuditViewer.ps1","Undo.ps1","SignInLookup.ps1","UnifiedAuditLog.ps1","AIAssistant.ps1"
 )
 
 foreach ($mod in $modules) {
