@@ -23,10 +23,11 @@ $script:SessionState = @{
 $script:MgScopes = @(
     "User.ReadWrite.All","Group.ReadWrite.All","Directory.ReadWrite.All",
     "Organization.Read.All","UserAuthenticationMethod.ReadWrite.All",
-    "AuditLog.Read.All","Mail.Send",
+    "AuditLog.Read.All","Reports.Read.All","Mail.Send",
     "Sites.FullControl.All",
     "TeamMember.ReadWrite.All","TeamSettings.ReadWrite.All",
-    "Channel.ReadBasic.All","ChannelMember.ReadWrite.All"
+    "Channel.ReadBasic.All","ChannelMember.ReadWrite.All",
+    "Policy.Read.All"
 )
 $script:MgPartnerScopes = @("Directory.Read.All","Contract.Read.All")
 

@@ -1,0 +1,4 @@
+UPN,SKU,Action,TargetSKU
+inactive.alice@contoso.com,SPE_E3,Remove,
+hoarder.bob@contoso.com,STANDARDPACK,Remove,
+premium.carol@contoso.com,SPE_E5,Downgrade,SPE_E3
