@@ -11,6 +11,11 @@
 #    POSIX   : ~/.m365manager/audit/session-<ts>-<pid>.log
 #  Directory mode 0700 on POSIX; inherits user-only NTFS ACL from
 #  %LOCALAPPDATA% on Windows.
+#
+#  Format: JSON-per-line (NDJSON / JSONL). One complete JSON object
+#  per line. See docs/audit-format.md for the field reference.
+#  Pre-Phase-2 logs are human-readable text; AuditViewer.ps1's
+#  parser handles both shapes transparently.
 # ============================================================
 
 $script:AuditLogPath = $null
@@ -44,45 +49,86 @@ function Get-AuditLogPath {
     return $script:AuditLogPath
 }
 
+function Get-AuditLogDirectory {
+    if ($env:LOCALAPPDATA) { return Join-Path $env:LOCALAPPDATA 'M365Manager\audit' }
+    if ($env:HOME) { return Join-Path $env:HOME '.m365manager/audit' }
+    return Join-Path (Get-Location).Path 'audit'
+}
+
+function New-AuditEntryId {
+    return [guid]::NewGuid().ToString()
+}
+
 function Write-AuditEntry {
     <#
-        Append one timestamped line to the session audit log. The
-        line is tagged with MODE=PREVIEW or MODE=LIVE so reviewers
-        can grep distinct sets of entries.
+        Append one JSON-line entry to the session audit log.
+
+        Backward-compatible: callers that pass only -EventType and
+        -Detail still work; the record is built with just those two
+        fields populated and the rest left null. New structured
+        callers (Invoke-Action, undo flows, etc.) pass the full set.
+
+        Returns the generated entryId so callers (e.g. Invoke-Action)
+        can correlate ERROR / OK entries with the original PROPOSE /
+        EXEC, and so Undo can reference an entry by id.
     #>
     param(
         [Parameter(Mandatory)][string]$EventType,
-        [Parameter(Mandatory)][string]$Detail
+        [Parameter(Mandatory)][string]$Detail,
+        [string]$ActionType,
+        [hashtable]$Target,
+        [string]$Result,
+        [string]$ErrorMessage,
+        [hashtable]$Reverse,
+        [string]$NoUndoReason,
+        [string]$EntryId
     )
     $path = Get-AuditLogPath
-    if (-not $path) { return }
-    $modeTag = if ($script:PreviewMode) { 'MODE=PREVIEW' } else { 'MODE=LIVE' }
-    $line = "[{0}] [{1}] [{2}] {3}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $EventType, $modeTag, $Detail
-    try { Add-Content -LiteralPath $path -Value $line -ErrorAction Stop } catch {}
+    if (-not $path) { return $null }
+
+    if (-not $EntryId) { $EntryId = New-AuditEntryId }
+    $modeTag = if ($script:PreviewMode) { 'PREVIEW' } else { 'LIVE' }
+
+    $tenant = $null
+    if ($script:SessionState) {
+        if ($script:SessionState.TenantDomain) { $tenant = $script:SessionState.TenantDomain }
+        elseif ($script:SessionState.TenantId) { $tenant = $script:SessionState.TenantId }
+        elseif ($script:SessionState.TenantName) { $tenant = $script:SessionState.TenantName }
+    }
+
+    $record = [ordered]@{
+        ts            = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        entryId       = $EntryId
+        mode          = $modeTag
+        event         = $EventType
+        description   = $Detail
+        actionType    = $ActionType
+        target        = $Target
+        result        = $Result
+        error         = $ErrorMessage
+        tenant        = $tenant
+        session       = $PID
+        reverse       = $Reverse
+        noUndoReason  = $NoUndoReason
+    }
+    try {
+        $json = $record | ConvertTo-Json -Depth 8 -Compress
+        Add-Content -LiteralPath $path -Value $json -ErrorAction Stop
+    } catch {}
+    return $EntryId
 }
 
 function Write-AuditBanner {
     <#
-        Write a multi-line banner so anyone tailing the log knows
+        Write a top-of-session marker so anyone tailing the log knows
         which session started, in which mode, against which tenant.
-        Called from Main.ps1 right after the mode picker.
+        Emitted as a JSON line with event=SESSION_START so the viewer
+        can group entries by session.
     #>
-    $path = Get-AuditLogPath
-    if (-not $path) { return }
-    $modeLabel = if ($script:PreviewMode) { 'PREVIEW (no tenant changes will be made)' } else { 'LIVE (tenant changes WILL be made)' }
+    $modeLabel = if ($script:PreviewMode) { 'PREVIEW' } else { 'LIVE' }
     $tenant = 'unknown'
     if ($script:SessionState) {
         $tenant = "$($script:SessionState.TenantMode) / $($script:SessionState.TenantName)"
     }
-    $sep = ('-' * 60)
-    $banner = @(
-        $sep,
-        "M365 Manager session START",
-        ("Mode    : " + $modeLabel),
-        ("Tenant  : " + $tenant),
-        ("PID     : " + $PID),
-        ("Started : " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')),
-        $sep
-    )
-    try { Add-Content -LiteralPath $path -Value $banner -ErrorAction Stop } catch {}
+    Write-AuditEntry -EventType 'SESSION_START' -Detail "M365 Manager session start ($modeLabel) -- $tenant" -ActionType 'SessionStart' -Target @{ pid = $PID; mode = $modeLabel; tenant = $tenant } -Result 'info' | Out-Null
 }
