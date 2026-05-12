@@ -18,5 +18,18 @@
     "RedactInAuditLog":        "Disabled",
     "ExternalPayloadCapBytes": 8192,
     "TrustedProviders":        []
+  },
+
+  "Notifications": {
+    "_comment_email":     "DefaultEmailFrom is the UPN /me/sendMail will spoof when set; leave empty to use the operator's mailbox. SecurityTeamRecipients / OperationsTeamRecipients route Critical / Warning / Info severities respectively (see Notifications.ps1 dispatcher).",
+    "_comment_webhooks":  "Teams webhook URLs are sensitive (anyone with the URL can post). Stored DPAPI-encrypted on save (DPAPI:... prefix). Set via /privacy menu or Start-NotificationsSetup -- never paste raw URLs into this file in source control.",
+    "_comment_dryrun":    "Set DryRunNotifications=true to log each send to the audit log without actually firing. Useful for testing health checks.",
+
+    "DefaultEmailFrom":         "",
+    "SecurityTeamRecipients":   [],
+    "OperationsTeamRecipients": [],
+    "TeamsWebhookSecurity":     "",
+    "TeamsWebhookOperations":   "",
+    "DryRunNotifications":      false
   }
 }
