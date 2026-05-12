@@ -1,10 +1,22 @@
 {
   "_comment_provider": "One of: Ollama, Anthropic, OpenAI, AzureOpenAI, Custom",
-  "_comment_apikey":   "DPAPI-encrypted at rest after first save. Do NOT paste a real key here — run option 99 (AI Assistant) inside the tool to configure interactively, or copy this file to ai_config.json and replace REPLACE_ME.",
+  "_comment_apikey":   "DPAPI-encrypted at rest after first save. Do NOT paste a real key here -- run option 99 (AI Assistant) inside the tool to configure interactively, or copy this file to ai_config.json and replace REPLACE_ME.",
   "_comment_portable": "ai_config.json is encrypted per-user and is NOT portable across machines or accounts.",
 
   "Provider": "Anthropic",
   "Endpoint": "https://api.anthropic.com/v1/messages",
   "Model":    "claude-sonnet-4-20250514",
-  "ApiKey":   "REPLACE_ME"
+  "ApiKey":   "REPLACE_ME",
+
+  "Privacy": {
+    "_comment_ExternalRedaction":      "Enabled | Disabled. When Enabled, UPNs / emails / GUIDs / tenant IDs / display names captured from cmdlet args are tokenized (<UPN_1>, <GUID_3>, ...) before being sent to non-local providers, and restored on the AI's response. Secrets (JWTs, sk-... keys, cert thumbprints) are ALWAYS tokenized regardless of this setting and regardless of provider.",
+    "_comment_RedactInAuditLog":       "Enabled | Disabled. Disabled (default) writes raw cmdlet text + results to the audit log for forensics. Enabled writes the tokenized form. Either way, -Password / -Credential / -AccessToken / -ClientSecret / -ApiKey / -Secret / -Token values are always redacted in the audit log (commit 5 behavior).",
+    "_comment_ExternalPayloadCapBytes":"0 = no cap. Otherwise the outbound message content is truncated AFTER redaction with an explicit [TRUNCATED N BYTES] marker, so the operator sees that context was cut. Recommended: 8192. Applies only to external providers.",
+    "_comment_TrustedProviders":       "Lowercase provider names to treat like localhost (no PII redaction; secrets still scrubbed). Example: [\"azure-openai\"] if your Azure OpenAI deployment sits in the same compliance boundary as the M365 tenant you administer. WARNING: only add a provider here after reviewing its data-handling terms. Provider retention defaults: Anthropic enterprise = zero retention; OpenAI = 30-day abuse-monitoring retention unless your org has opted out; Azure OpenAI = governed by your Azure subscription.",
+
+    "ExternalRedaction":       "Enabled",
+    "RedactInAuditLog":        "Disabled",
+    "ExternalPayloadCapBytes": 8192,
+    "TrustedProviders":        []
+  }
 }

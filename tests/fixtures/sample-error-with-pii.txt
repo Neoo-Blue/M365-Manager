@@ -1,0 +1,21 @@
+Get-MgUser : Resource '01234567-89ab-cdef-0123-456789abcdef' does not exist
+or one of its queried reference-property objects are not present.
+At line:1 char:1
++ Get-MgUser -UserId 01234567-89ab-cdef-0123-456789abcdef
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Context:
+  Tenant    : aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  Account   : jackie.smith@contoso.onmicrosoft.com
+  Manager   : manager@contoso.com
+  Group ID  : 76543210-fedc-ba98-7654-3210fedcba98
+  License   : 11111111-2222-3333-4444-555555555555
+  AppId     : 12345678-1234-5678-1234-567812345678
+
+Access token (cached): eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJhcGkubWljcm9zb2Z0LmNvbSIsImlzcyI6Imh0dHBzOi8vbG9naW4ubWljcm9zb2Z0b25saW5lLmNvbS90ZW5hbnQvIiwiaWF0IjoxNzMwMDAwMDAwfQ.signaturedatahereLOTSofChars
+Service principal API key: sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789QrStUvWx
+Backup key: sk-proj1234567890abcdefghijklmnopqrstuvwx
+Cert thumbprint: A1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A9B0
+
+Search "displayName:Jackie Smith"
+Set-MgUser -UserId jackie.smith@contoso.onmicrosoft.com -DisplayName "Jackie Smith"
