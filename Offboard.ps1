@@ -246,6 +246,22 @@ function Start-Offboard {
         }
     } catch { Write-ErrorMsg "License error: $_" }
 
+    # Step 7: Teams ownership transfer (Phase 3 -- before account block.
+    # Step number is interim; Commit E re-orders the whole flow.)
+    if (Get-Command Invoke-TeamsOffboardTransfer -ErrorAction SilentlyContinue) {
+        Write-SectionHeader "Step 7 - Teams Ownership Transfer"
+        if (Confirm-Action "Transfer / clean up Teams memberships for $upn?") {
+            $teamsSuccessor = Read-UserInput "Default successor for sole-owner teams (UPN, blank to prompt per team)"
+            $summary = Invoke-TeamsOffboardTransfer -LeaverUPN $upn -TeamsSuccessorUPN $teamsSuccessor.Trim()
+            if ($summary) {
+                Write-StatusLine "Sole-owner transferred" "$($summary.SoleOwnerActions)" 'White'
+                Write-StatusLine "Co-owner demoted"       "$($summary.CoOwnerActions)"   'White'
+                Write-StatusLine "Member-only removed"    "$($summary.MemberRemovals)"   'White'
+                if ($summary.Failures -gt 0) { Write-Warn "$($summary.Failures) team operation(s) failed." }
+            }
+        }
+    }
+
     # Step 8: OneDrive handoff (Phase 3 -- moved in Commit E re-ordering)
     if (Get-Command Invoke-OneDriveHandoff -ErrorAction SilentlyContinue) {
         Write-SectionHeader "Step 8 - OneDrive Handoff"

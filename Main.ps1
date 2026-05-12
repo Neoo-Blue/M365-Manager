@@ -75,7 +75,7 @@ $modules = @(
     "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
     "Reports.ps1","eDiscovery.ps1","GroupManager.ps1",
     "AuditViewer.ps1","Undo.ps1","SignInLookup.ps1","UnifiedAuditLog.ps1",
-    "MFAManager.ps1","OneDriveManager.ps1","AIAssistant.ps1"
+    "MFAManager.ps1","OneDriveManager.ps1","TeamsManager.ps1","AIAssistant.ps1"
 )
 
 foreach ($mod in $modules) {
@@ -203,6 +203,7 @@ function Start-M365Admin {
             "Bulk Offboard from CSV...",
             "Audit & Reporting...",
             "MFA & Authentication...",
+            "Teams Management...",
             "Switch Tenant"
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
 
@@ -223,8 +224,9 @@ function Start-M365Admin {
             13 { Start-BulkOffboard }
             14 { Start-AuditReportingMenu }
             15 { Start-MFAMenu }
+            16 { Start-TeamsMenu }
             99 { Start-AIAssistant }
-            16 {
+            17 {
                 Write-Host ""
                 if (Confirm-Action "Disconnect ALL sessions and switch tenant?") {
                     Reset-AllSessions
