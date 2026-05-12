@@ -1,0 +1,92 @@
+============================================================
+  Sample audit-log output for a single onboard in PREVIEW mode
+  -- captured from %LOCALAPPDATA%\M365Manager\audit\session-*.log
+     during a representative dry-run against a sales-rep template.
+============================================================
+
+------------------------------------------------------------
+M365 Manager session START
+Mode    : PREVIEW (no tenant changes will be made)
+Tenant  : Direct / Own Tenant
+PID     : 17432
+Started : 2026-05-12 09:14:02 -07:00
+------------------------------------------------------------
+
+------------------------------------------------------------
+  Console output (what the operator sees)
+------------------------------------------------------------
+
+  [ PREVIEW MODE -- dry-run, no tenant changes ]
+
+  Main Menu - Select a Task
+  ...
+
+  >> Bulk Onboard from CSV...
+
+  Path to CSV file: ./templates/bulk-onboard-sample.csv
+  Apply a default template to rows without their own Template column? (y/n): n
+  Run as DRY-RUN first (validate + preview, no tenant changes)? (y/n): y
+
+  5 row(s) read from ./templates/bulk-onboard-sample.csv
+  Validation passed: 5 row(s) ready.
+  Checking tenant for existing UPNs...
+  Nothing left to process.
+  About to onboard 5 user(s) in PREVIEW (no changes). Proceed? (y/n): y
+
+  [PREVIEW] Would: Create user jane.smith@contoso.com
+  [PREVIEW] Would: Assign license 'SPE_E3' to user preview-9f3a-...
+  [PREVIEW] Would: Assign license 'POWER_BI_PRO' to user preview-9f3a-...
+  [PREVIEW] Would: Add user preview-9f3a-... to security group 'SG-Sales'
+  [PREVIEW] Would: Add user preview-9f3a-... to security group 'SG-CRM-Users'
+
+  -- Step 3a - Distribution Lists (from template) --
+  [PREVIEW] Would: Add jane.smith@contoso.com to distribution list 'DL-All-Sales'
+  [PREVIEW] Would: Add jane.smith@contoso.com to distribution list 'DL-All-Employees'
+
+  -- Step 3b - Shared Mailboxes (from template) --
+  [PREVIEW] Would: Grant jane.smith@contoso.com FullAccess on shared mailbox 'sales-inbox@contoso.com'
+  [PREVIEW] Would: Grant jane.smith@contoso.com SendAs on shared mailbox 'support@contoso.com'
+
+  [PREVIEW] Would: Set manager of jane.smith@contoso.com to manager@contoso.com
+  [PREVIEW] Would: Issue Temporary Access Pass for jane.smith@contoso.com (60 min, single-use)
+
+  Result CSV: ./templates/bulk-onboard-20260512-091402.csv
+
+  Bulk onboard summary:
+    Succeeded : 0
+    Failed    : 0
+    Preview   : 5
+
+------------------------------------------------------------
+  Audit log entries (session-2026-05-12_091402-17432.log)
+------------------------------------------------------------
+
+[2026-05-12 09:14:03.124] [PREVIEW] [MODE=PREVIEW] Create user jane.smith@contoso.com
+[2026-05-12 09:14:03.198] [PREVIEW] [MODE=PREVIEW] Assign license 'SPE_E3' to user preview-9f3a-de01-4f44-a1bc-72211a55b6c2
+[2026-05-12 09:14:03.213] [PREVIEW] [MODE=PREVIEW] Assign license 'POWER_BI_PRO' to user preview-9f3a-de01-4f44-a1bc-72211a55b6c2
+[2026-05-12 09:14:03.226] [PREVIEW] [MODE=PREVIEW] Add user preview-9f3a-de01-4f44-a1bc-72211a55b6c2 to security group 'SG-Sales'
+[2026-05-12 09:14:03.241] [PREVIEW] [MODE=PREVIEW] Add user preview-9f3a-de01-4f44-a1bc-72211a55b6c2 to security group 'SG-CRM-Users'
+[2026-05-12 09:14:03.255] [PREVIEW] [MODE=PREVIEW] Add jane.smith@contoso.com to distribution list 'DL-All-Sales'
+[2026-05-12 09:14:03.270] [PREVIEW] [MODE=PREVIEW] Add jane.smith@contoso.com to distribution list 'DL-All-Employees'
+[2026-05-12 09:14:03.288] [PREVIEW] [MODE=PREVIEW] Grant jane.smith@contoso.com FullAccess on shared mailbox 'sales-inbox@contoso.com'
+[2026-05-12 09:14:03.305] [PREVIEW] [MODE=PREVIEW] Grant jane.smith@contoso.com SendAs on shared mailbox 'support@contoso.com'
+[2026-05-12 09:14:03.319] [PREVIEW] [MODE=PREVIEW] Set manager of jane.smith@contoso.com to manager@contoso.com
+[2026-05-12 09:14:03.334] [PREVIEW] [MODE=PREVIEW] Issue Temporary Access Pass for jane.smith@contoso.com (60 min, single-use)
+
+------------------------------------------------------------
+  Notes for reviewers
+------------------------------------------------------------
+
+* Every line is tagged MODE=PREVIEW or MODE=LIVE. Grep one or the
+  other to filter the audit trail:
+      Select-String -Path session-*.log -Pattern 'MODE=LIVE'
+* User Ids referenced in PREVIEW entries start with "preview-"
+  followed by a GUID -- those are the stub Ids Invoke-Action
+  returns when -StubReturn was supplied. Real Ids appear only
+  under MODE=LIVE.
+* A live run uses the same Description strings under EXEC + OK or
+  EXEC + ERROR entries -- this makes diffing a preview against a
+  later live run trivial.
+* Audit directory: %LOCALAPPDATA%\M365Manager\audit\ on Windows
+  (inherits user-only NTFS ACLs from LOCALAPPDATA);
+  ~/.m365manager/audit/ on POSIX, chmod 700 at first create.
