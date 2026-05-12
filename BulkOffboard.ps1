@@ -15,7 +15,7 @@
 # ============================================================
 
 $script:BulkOffboardRequiredColumns = @('UserPrincipalName')
-$script:BulkOffboardBoolColumns     = @('ConvertToShared','RemoveFromAllGroups')
+$script:BulkOffboardBoolColumns     = @('ConvertToShared','RemoveFromAllGroups','RevokeShares','NotifyManager')
 
 function ConvertTo-BulkOffboardRow {
     param($Row)
@@ -158,92 +158,84 @@ function Invoke-BulkOffboard {
         $pct = [int](($i / $toProcess.Count) * 100)
         Write-Progress -Activity "Bulk offboard" -Status "$upn ($($i + 1) of $($toProcess.Count))" -PercentComplete $pct
 
-        $convertShared = ConvertTo-BulkBool $r['ConvertToShared']
-        $removeGroups  = ConvertTo-BulkBool $r['RemoveFromAllGroups']
-        $forwardTo     = $r['ForwardTo']
-        $oooMsg        = $r['Reason']
-        $handoffOd     = $r['HandoffOneDriveTo']
+        $convertShared    = ConvertTo-BulkBool $r['ConvertToShared']
+        $removeGroups     = ConvertTo-BulkBool $r['RemoveFromAllGroups']
+        $forwardTo        = $r['ForwardTo']
+        $oooMsg           = $r['Reason']
+        $handoffOd        = $r['HandoffOneDriveTo']
+        $teamsSuccessor   = $r['TeamsSuccessor']
+        $revokeShares     = if ($null -ne $r['RevokeShares'])  { ConvertTo-BulkBool $r['RevokeShares']  } else { $true }
+        $notifyManager    = if ($null -ne $r['NotifyManager']) { ConvertTo-BulkBool $r['NotifyManager'] } else { $true }
 
         $entry = [ordered]@{
-            UPN                 = $upn
-            Status              = ''
-            Reason              = ''
-            SessionsRevoked     = $false
-            SignInBlocked       = $false
-            OOOSet              = $false
-            ForwardingSet       = $false
-            ConvertedToShared   = $false
-            GroupsRemoved       = 0
-            LicensesRemoved     = 0
-            OneDriveHandoff     = if ($handoffOd) { "TODO (Phase 3): handoff to $handoffOd" } else { '' }
+            UPN                  = $upn
+            Status               = ''
+            Reason               = ''
+            MfaMethodsRevoked    = 0
+            SignInBlocked        = $false
+            OOOSet               = $false
+            ForwardingSet        = $false
+            SecurityGroupsRemoved= 0
+            DLsRemoved           = 0
+            LicensesRemoved      = 0
+            ConvertedToShared    = $false
+            TeamsTransferred     = 0
+            SharesRevoked        = 0
+            OneDriveHandoffSite  = ''
+            OneDriveHandoffNote  = ''
+            ManagerNotified      = $false
         }
-
         $stepErrors = @()
-        $stepOk = {
-            param([string]$Description, [scriptblock]$Body)
-            $result = $null
-            try {
-                $result = Invoke-Action -Description $Description -Action $Body
-                return $true
-            } catch {
-                $stepErrors += ("{0}: {1}" -f $Description, $_.Exception.Message)
-                return $false
-            }
-        }
 
-        # Step 0 — Revoke MFA methods (delegates to MFAManager.Remove-AllAuthMethods,
-        # which wraps each per-method DELETE in Invoke-Action so audit + preview work).
+        # Step 0 -- Revoke MFA methods
         if (Get-Command Remove-AllAuthMethods -ErrorAction SilentlyContinue) {
-            try {
-                $mfaRevoked = Remove-AllAuthMethods -User $user.Id
-                $entry | Add-Member -NotePropertyName MfaMethodsRevoked -NotePropertyValue $mfaRevoked -Force
-            } catch { $stepErrors += "MFARevoke: $($_.Exception.Message)" }
+            try { $entry.MfaMethodsRevoked = Remove-AllAuthMethods -User $user.Id }
+            catch { $stepErrors += "MFARevoke: $($_.Exception.Message)" }
         }
 
-        # Step 1 — Revoke sessions
-        if (Invoke-Action -Description ("Revoke sign-in sessions for {0}" -f $upn) -Action {
-            Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; $true
-        }) { $entry.SessionsRevoked = $true } elseif (-not $dryRun) { $stepErrors += "RevokeSessions failed" }
+        # Step 1 -- Block sign-in (revoke sessions, then AccountEnabled=false)
+        $okSess = Invoke-Action `
+            -Description ("Revoke sign-in sessions for {0}" -f $upn) `
+            -ActionType 'RevokeSignInSessions' `
+            -Target @{ userId = [string]$user.Id; userUpn = $upn } `
+            -NoUndoReason 'Sign-in sessions cannot be restored.' `
+            -Action { Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; $true }
+        $okBlk = Invoke-Action `
+            -Description ("Block sign-in for {0}" -f $upn) `
+            -ActionType 'BlockSignIn' `
+            -Target @{ userId = [string]$user.Id; userUpn = $upn } `
+            -ReverseType 'UnblockSignIn' `
+            -ReverseDescription ("Unblock sign-in for {0}" -f $upn) `
+            -Action { Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; $true }
+        if ($okBlk) { $entry.SignInBlocked = $true } elseif (-not $dryRun) { $stepErrors += "BlockSignIn failed" }
 
-        # Step 2 — Block sign-in
-        if (Invoke-Action -Description ("Block sign-in for {0}" -f $upn) -Action {
-            Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; $true
-        }) { $entry.SignInBlocked = $true } elseif (-not $dryRun) { $stepErrors += "BlockSignIn failed" }
-
-        # Step 3 — OOO
+        # Step 2 -- OOO + forwarding
         if (-not [string]::IsNullOrWhiteSpace($oooMsg)) {
-            if (Invoke-Action -Description ("Set out-of-office auto-reply on {0}" -f $upn) -Action {
+            if (Invoke-Action -Description ("Set OOO auto-reply on {0}" -f $upn) -ActionType 'SetOOO' -Target @{ identity = $upn } -ReverseType 'ClearOOO' -ReverseDescription ("Clear OOO on {0}" -f $upn) -Action {
                 Set-MailboxAutoReplyConfiguration -Identity $upn -AutoReplyState Enabled -InternalMessage $oooMsg -ExternalMessage $oooMsg -ErrorAction Stop; $true
             }) { $entry.OOOSet = $true } elseif (-not $dryRun) { $stepErrors += "OOO failed" }
         }
-
-        # Step 4 — Forwarding
         if (-not [string]::IsNullOrWhiteSpace($forwardTo)) {
-            if (Invoke-Action -Description ("Set forwarding {0} -> {1} (keep copy)" -f $upn, $forwardTo) -Action {
+            if (Invoke-Action -Description ("Set forwarding {0} -> {1} (keep copy)" -f $upn, $forwardTo) -ActionType 'SetForwarding' -Target @{ identity = $upn; forwardTo = $forwardTo; keepCopy = $true } -ReverseType 'ClearForwarding' -ReverseDescription ("Clear forwarding on {0}" -f $upn) -Action {
                 Set-Mailbox -Identity $upn -ForwardingSmtpAddress ("smtp:{0}" -f $forwardTo) -DeliverToMailboxAndForward $true -ErrorAction Stop; $true
             }) { $entry.ForwardingSet = $true } elseif (-not $dryRun) { $stepErrors += "Forwarding failed" }
         }
 
-        # Step 5 — Remove from all groups (must run BEFORE license removal,
-        # since group-assigned licenses can only be revoked by removing
-        # the user from the source group)
-        if ($removeGroups) {
-            try {
-                $memberOf = @(Get-MgUserMemberOf -UserId $user.Id -All -ErrorAction Stop)
-                foreach ($g in $memberOf) {
-                    $gid = $g.Id
-                    $gtype = $g.AdditionalProperties['@odata.type']
-                    if ($gtype -ne '#microsoft.graph.group') { continue }
-                    $gname = $g.AdditionalProperties['displayName']
-                    $ok = Invoke-Action -Description ("Remove {0} from group '{1}'" -f $upn, $gname) -Action {
-                        Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$gid/members/$($user.Id)/`$ref" -ErrorAction Stop; $true
-                    }
-                    if ($ok) { $entry.GroupsRemoved++ }
-                }
-            } catch { $stepErrors += "GroupEnumerate: $($_.Exception.Message)" }
+        # Step 3 -- Remove from security groups
+        if ($removeGroups -and (Get-Command Invoke-OffboardRemoveSecurityGroups -ErrorAction SilentlyContinue)) {
+            $sg = Invoke-OffboardRemoveSecurityGroups -UPN $upn -UserId $user.Id
+            $entry.SecurityGroupsRemoved = $sg.Removed
+            if ($sg.Failed -gt 0) { $stepErrors += "SecurityGroups: $($sg.Failed) failed" }
         }
 
-        # Step 6 — Remove direct licenses
+        # Step 4 -- Remove from DLs / non-team M365 groups
+        if ($removeGroups -and (Get-Command Invoke-OffboardRemoveDistributionLists -ErrorAction SilentlyContinue)) {
+            $dl = Invoke-OffboardRemoveDistributionLists -UPN $upn -UserId $user.Id
+            $entry.DLsRemoved = $dl.Removed
+            if ($dl.Failed -gt 0) { $stepErrors += "DLs: $($dl.Failed) failed" }
+        }
+
+        # Step 5 -- Remove direct licenses (skipped on dry-run audit-noise grounds)
         if (-not $dryRun) {
             try {
                 $lics = @(Get-MgUserLicenseDetail -UserId $user.Id -ErrorAction Stop)
@@ -260,38 +252,81 @@ function Invoke-BulkOffboard {
                 }
                 foreach ($lic in $lics) {
                     $sid = "$($lic.SkuId)"
-                    if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) {
-                        continue  # group-assigned only -- leave alone
-                    }
+                    if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) { continue }
                     $sku = $lic.SkuPartNumber
-                    $ok = Invoke-Action -Description ("Remove license '{0}' from {1}" -f $sku, $upn) -Action {
-                        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
-                    }
+                    $ok = Invoke-Action `
+                        -Description ("Remove license '{0}' from {1}" -f $sku, $upn) `
+                        -ActionType 'RemoveLicense' `
+                        -Target @{ userId = [string]$user.Id; userUpn = $upn; skuId = [string]$lic.SkuId; skuPart = [string]$sku } `
+                        -ReverseType 'AssignLicense' `
+                        -ReverseDescription ("Re-assign license '{0}' to {1}" -f $sku, $upn) `
+                        -Action { Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true }
                     if ($ok) { $entry.LicensesRemoved++ }
                 }
             } catch { $stepErrors += "LicensesEnumerate: $($_.Exception.Message)" }
         } else {
-            Invoke-Action -Description ("Remove direct-assigned licenses from {0}" -f $upn) -Action { } | Out-Null
+            Invoke-Action -Description ("Remove direct-assigned licenses from {0}" -f $upn) -ActionType 'RemoveLicense' -Target @{ userUpn = $upn } -Action { } | Out-Null
         }
 
-        # Step 7 — Convert to shared
+        # Step 6 -- Convert to shared (conditional)
         if ($convertShared) {
-            if (Invoke-Action -Description ("Convert {0} to Shared Mailbox" -f $upn) -Action {
+            if (Invoke-Action -Description ("Convert {0} to Shared Mailbox" -f $upn) -ActionType 'ConvertToShared' -Target @{ identity = $upn } -NoUndoReason 'Re-licensing required.' -Action {
                 Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; $true
             }) { $entry.ConvertedToShared = $true } elseif (-not $dryRun) { $stepErrors += "ConvertShared failed" }
         }
 
-        # Step 8 — OneDrive handoff (Phase 3 -- now executes)
-        if (-not [string]::IsNullOrWhiteSpace($handoffOd)) {
-            if (Get-Command Invoke-OneDriveHandoff -ErrorAction SilentlyContinue) {
-                try {
-                    $h = Invoke-OneDriveHandoff -LeaverUPN $upn -SuccessorUPN $handoffOd -RetentionDays 60 -NotifyManager
-                    $entry | Add-Member -NotePropertyName OneDriveHandoffSite -NotePropertyValue ([string]$h.SiteUrl) -Force
-                    $entry | Add-Member -NotePropertyName OneDriveHandoffNote -NotePropertyValue ([string]$h.Note) -Force
-                    if (-not $h.SiteUrl -and $h.Note) { $stepErrors += "OneDriveHandoff: $($h.Note)" }
-                } catch { $stepErrors += "OneDriveHandoff: $($_.Exception.Message)" }
-            } else { $stepErrors += "OneDriveHandoff: Invoke-OneDriveHandoff not loaded" }
+        # Step 7 -- Teams ownership transfer
+        if (Get-Command Invoke-TeamsOffboardTransfer -ErrorAction SilentlyContinue) {
+            try {
+                $t = Invoke-TeamsOffboardTransfer -LeaverUPN $upn -TeamsSuccessorUPN $teamsSuccessor
+                if ($t) { $entry.TeamsTransferred = ($t.SoleOwnerActions + $t.CoOwnerActions + $t.MemberRemovals) }
+                if ($t -and $t.Failures -gt 0) { $stepErrors += "Teams: $($t.Failures) failed" }
+            } catch { $stepErrors += "Teams: $($_.Exception.Message)" }
         }
+
+        # Step 8 -- Revoke outbound SharePoint shares
+        if ($revokeShares -and (Get-Command Invoke-SharePointOffboardCleanup -ErrorAction SilentlyContinue)) {
+            try {
+                $s = Invoke-SharePointOffboardCleanup -LeaverUPN $upn -LookbackDays 365
+                if ($s) { $entry.SharesRevoked = $s.Revoked }
+                if ($s -and $s.Failed -gt 0) { $stepErrors += "Shares: $($s.Failed) failed" }
+            } catch { $stepErrors += "Shares: $($_.Exception.Message)" }
+        }
+
+        # Step 9 -- OneDrive handoff
+        if (-not [string]::IsNullOrWhiteSpace($handoffOd) -and (Get-Command Invoke-OneDriveHandoff -ErrorAction SilentlyContinue)) {
+            try {
+                $h = Invoke-OneDriveHandoff -LeaverUPN $upn -SuccessorUPN $handoffOd -RetentionDays 60 -NotifyManager:$notifyManager
+                $entry.OneDriveHandoffSite = [string]$h.SiteUrl
+                $entry.OneDriveHandoffNote = [string]$h.Note
+                if (-not $h.SiteUrl -and $h.Note) { $stepErrors += "OneDriveHandoff: $($h.Note)" }
+            } catch { $stepErrors += "OneDriveHandoff: $($_.Exception.Message)" }
+        }
+
+        # Step 10 -- Manager summary email
+        if ($notifyManager -and (Get-Command Send-OffboardManagerSummary -ErrorAction SilentlyContinue)) {
+            $mgr = if ($handoffOd) { $handoffOd } else { $null }
+            if ($mgr) {
+                try {
+                    $ok = Send-OffboardManagerSummary -ManagerUPN $mgr -LeaverUPN $upn -Summary @{
+                        'MFA methods revoked'    = $entry.MfaMethodsRevoked
+                        'Sign-in blocked'        = $entry.SignInBlocked
+                        'Security groups removed'= $entry.SecurityGroupsRemoved
+                        'DLs / groups removed'   = $entry.DLsRemoved
+                        'Licenses removed'       = $entry.LicensesRemoved
+                        'Converted to shared'    = $entry.ConvertedToShared
+                        'Teams handed off'       = $entry.TeamsTransferred
+                        'Shares revoked'         = $entry.SharesRevoked
+                        'OneDrive site'          = $entry.OneDriveHandoffSite
+                    }
+                    if ($ok) { $entry.ManagerNotified = $true }
+                } catch { $stepErrors += "ManagerSummary: $($_.Exception.Message)" }
+            }
+        }
+
+        # Step 11 -- Final audit summary line
+        $detail = ("Offboard summary for {0} :: " -f $upn) + (($entry.GetEnumerator() | Where-Object { $_.Key -notin 'Status','Reason' } | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ; ')
+        Write-AuditEntry -EventType 'OFFBOARD_COMPLETE' -Detail $detail -ActionType 'OffboardComplete' -Target @{ userUpn = $upn } -Result 'info' | Out-Null
 
         if ($dryRun) {
             $entry.Status = 'Preview'

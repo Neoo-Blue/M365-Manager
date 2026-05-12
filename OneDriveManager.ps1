@@ -239,6 +239,54 @@ $rowsHtml
         } | Out-Null
 }
 
+function Send-OffboardManagerSummary {
+    <#
+        Higher-level offboard summary email. Sent in Step 10 of the
+        offboard flow once the per-system work is done. -Summary
+        is a hashtable of "key -> value" rows that the helper
+        renders as a small HTML table; the offboard orchestrator
+        passes in counts ("Licenses removed: 3", "Teams handed off:
+        2") so the manager has a one-glance recap.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ManagerUPN,
+        [Parameter(Mandatory)][string]$LeaverUPN,
+        [hashtable]$Summary = @{}
+    )
+    $rows = ''
+    foreach ($k in ($Summary.Keys | Sort-Object)) {
+        $kHtml = [System.Net.WebUtility]::HtmlEncode([string]$k)
+        $vHtml = [System.Net.WebUtility]::HtmlEncode([string]$Summary[$k])
+        $rows += "<tr><th align='left'>$kHtml</th><td>$vHtml</td></tr>"
+    }
+    $body = @"
+<html><body style='font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#222'>
+<p>Offboarding complete for <b>$([System.Net.WebUtility]::HtmlEncode($LeaverUPN))</b>.</p>
+<table border='1' cellpadding='5' cellspacing='0' style='border-collapse:collapse;font-size:13px'>$rows</table>
+<p>If anything looks off, reply to this email and IT will follow up.</p>
+<p style='color:#666;font-size:12px'>Sent automatically by M365 Manager.</p>
+</body></html>
+"@
+    $message = @{
+        message = @{
+            subject = "Offboard complete: $LeaverUPN"
+            body = @{ contentType = "HTML"; content = $body }
+            toRecipients = @(@{ emailAddress = @{ address = $ManagerUPN } })
+        }
+        saveToSentItems = $true
+    } | ConvertTo-Json -Depth 10
+
+    return Invoke-Action `
+        -Description ("Send offboard summary to manager {0} (leaver: {1})" -f $ManagerUPN, $LeaverUPN) `
+        -ActionType 'SendOffboardSummary' `
+        -Target @{ manager = $ManagerUPN; leaverUpn = $LeaverUPN } `
+        -NoUndoReason 'Email send is irreversible.' `
+        -Action {
+            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/me/sendMail" -Body $message -ContentType 'application/json' -ErrorAction Stop | Out-Null
+            $true
+        }
+}
+
 function Invoke-OneDriveHandoff {
     <#
         Orchestrator. Returns a hashtable describing what happened
