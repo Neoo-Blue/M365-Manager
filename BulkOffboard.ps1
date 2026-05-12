@@ -281,11 +281,16 @@ function Invoke-BulkOffboard {
             }) { $entry.ConvertedToShared = $true } elseif (-not $dryRun) { $stepErrors += "ConvertShared failed" }
         }
 
-        # Step 8 — OneDrive handoff (TODO Phase 3)
+        # Step 8 — OneDrive handoff (Phase 3 -- now executes)
         if (-not [string]::IsNullOrWhiteSpace($handoffOd)) {
-            Write-Warn "OneDrive handoff for $upn -> $handoffOd queued (TODO Phase 3)."
-            Write-AuditEntry -EventType 'TODO' -Detail ("OneDriveHandoff {0} -> {1}" -f $upn, $handoffOd)
-            $stepErrors += "OneDriveHandoff: NOT_IMPLEMENTED (Phase 3 deliverable)"
+            if (Get-Command Invoke-OneDriveHandoff -ErrorAction SilentlyContinue) {
+                try {
+                    $h = Invoke-OneDriveHandoff -LeaverUPN $upn -SuccessorUPN $handoffOd -RetentionDays 60 -NotifyManager
+                    $entry | Add-Member -NotePropertyName OneDriveHandoffSite -NotePropertyValue ([string]$h.SiteUrl) -Force
+                    $entry | Add-Member -NotePropertyName OneDriveHandoffNote -NotePropertyValue ([string]$h.Note) -Force
+                    if (-not $h.SiteUrl -and $h.Note) { $stepErrors += "OneDriveHandoff: $($h.Note)" }
+                } catch { $stepErrors += "OneDriveHandoff: $($_.Exception.Message)" }
+            } else { $stepErrors += "OneDriveHandoff: Invoke-OneDriveHandoff not loaded" }
         }
 
         if ($dryRun) {

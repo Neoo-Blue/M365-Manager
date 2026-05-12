@@ -246,6 +246,26 @@ function Start-Offboard {
         }
     } catch { Write-ErrorMsg "License error: $_" }
 
+    # Step 8: OneDrive handoff (Phase 3 -- moved in Commit E re-ordering)
+    if (Get-Command Invoke-OneDriveHandoff -ErrorAction SilentlyContinue) {
+        Write-SectionHeader "Step 8 - OneDrive Handoff"
+        if (Confirm-Action "Hand off $upn's OneDrive to a successor?") {
+            $successor = Read-UserInput "Successor UPN (typically the manager)"
+            if (-not [string]::IsNullOrWhiteSpace($successor)) {
+                $retention = 60
+                $rt = Read-UserInput "Retention extension days (default 60)"
+                if ($rt -and [int]::TryParse($rt, [ref]$null)) { $retention = [int]$rt }
+                $notify = Confirm-Action "Email the successor a handoff summary?"
+                $hand = Invoke-OneDriveHandoff -LeaverUPN $upn -SuccessorUPN $successor.Trim() -RetentionDays $retention -NotifyManager:$notify
+                if ($hand.SiteUrl) {
+                    Write-Success "OneDrive: $($hand.SiteUrl)"
+                    if ($hand.AccessGranted) { Write-Success "Successor granted site-collection admin." }
+                    if ($hand.Notified)      { Write-Success "Handoff summary emailed to $successor." }
+                } elseif ($hand.Note) { Write-Warn $hand.Note }
+            }
+        }
+    }
+
     Write-Success "Offboarding complete for $($user.DisplayName)!"
     Pause-ForUser
 }

@@ -8,19 +8,25 @@
 [System.Environment]::SetEnvironmentVariable("MSAL_BROKER_ENABLED", "0", "Process")
 
 $script:SessionState = @{
-    MgGraph          = $false
-    ExchangeOnline   = $false
-    ComplianceCenter = $false
-    TenantMode       = "Direct"
-    TenantId         = $null
-    TenantName       = $null
-    TenantDomain     = $null
-    PartnerConnected = $false
+    MgGraph            = $false
+    ExchangeOnline     = $false
+    ComplianceCenter   = $false
+    SharePointOnline   = $false
+    SharePointAdminUrl = $null
+    TenantMode         = "Direct"
+    TenantId           = $null
+    TenantName         = $null
+    TenantDomain       = $null
+    PartnerConnected   = $false
 }
 
 $script:MgScopes = @(
     "User.ReadWrite.All","Group.ReadWrite.All","Directory.ReadWrite.All",
-    "Organization.Read.All","UserAuthenticationMethod.ReadWrite.All"
+    "Organization.Read.All","UserAuthenticationMethod.ReadWrite.All",
+    "AuditLog.Read.All","Mail.Send",
+    "Sites.FullControl.All",
+    "TeamMember.ReadWrite.All","TeamSettings.ReadWrite.All",
+    "Channel.ReadBasic.All","ChannelMember.ReadWrite.All"
 )
 $script:MgPartnerScopes = @("Directory.Read.All","Contract.Read.All")
 
@@ -41,17 +47,23 @@ function Assert-ModulesInstalled {
         @{ Name = "Microsoft.Graph.Users";                       TestCmd = "Get-MgUser" },
         @{ Name = "Microsoft.Graph.Users.Actions";               TestCmd = $null },
         @{ Name = "Microsoft.Graph.Groups";                      TestCmd = "Get-MgGroup" },
-        @{ Name = "Microsoft.Graph.Identity.DirectoryManagement"; TestCmd = "Get-MgSubscribedSku" }
+        @{ Name = "Microsoft.Graph.Identity.DirectoryManagement"; TestCmd = "Get-MgSubscribedSku" },
+        @{ Name = "Microsoft.Online.SharePoint.PowerShell";      TestCmd = "Connect-SPOService"; Optional = $true }
     )
 
     $allGood = $true
 
     foreach ($mod in $requiredModules) {
-        $modName = $mod.Name
+        $modName  = $mod.Name
+        $optional = [bool]($mod.Optional)
 
         # ---- Step 1: Check if installed ----
         $installed = Get-Module -ListAvailable -Name $modName | Sort-Object Version -Descending | Select-Object -First 1
         if (-not $installed) {
+            if ($optional) {
+                Write-InfoMsg "$modName not installed (optional -- SPO / OneDrive features will be unavailable until installed)."
+                continue
+            }
             Write-Warn "$modName is not installed. Installing..."
             try {
                 Install-Module $modName -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
@@ -391,14 +403,16 @@ function Clear-StartupSession {
     }
 
     # ---- Reset in-memory state (defensive — module-load already initialized it) ----
-    $script:SessionState.MgGraph          = $false
-    $script:SessionState.ExchangeOnline   = $false
-    $script:SessionState.ComplianceCenter = $false
-    $script:SessionState.PartnerConnected = $false
-    $script:SessionState.TenantMode       = "Direct"
-    $script:SessionState.TenantId         = $null
-    $script:SessionState.TenantName       = $null
-    $script:SessionState.TenantDomain     = $null
+    $script:SessionState.MgGraph            = $false
+    $script:SessionState.ExchangeOnline     = $false
+    $script:SessionState.ComplianceCenter   = $false
+    $script:SessionState.SharePointOnline   = $false
+    $script:SessionState.SharePointAdminUrl = $null
+    $script:SessionState.PartnerConnected   = $false
+    $script:SessionState.TenantMode         = "Direct"
+    $script:SessionState.TenantId           = $null
+    $script:SessionState.TenantName         = $null
+    $script:SessionState.TenantDomain       = $null
 
     Write-Success "Starting with a clean session."
 }
@@ -419,15 +433,21 @@ function Reset-AllSessions {
         try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue } catch {}
         Write-Success "Exchange Online / SCC disconnected."
     }
+    if ($script:SessionState.SharePointOnline) {
+        try { Disconnect-SPOService -ErrorAction SilentlyContinue } catch {}
+        Write-Success "SharePoint Online disconnected."
+    }
 
-    $script:SessionState.MgGraph          = $false
-    $script:SessionState.ExchangeOnline    = $false
-    $script:SessionState.ComplianceCenter  = $false
-    $script:SessionState.PartnerConnected  = $false
-    $script:SessionState.TenantId          = $null
-    $script:SessionState.TenantName        = $null
-    $script:SessionState.TenantDomain      = $null
-    $script:SessionState.TenantMode        = "Direct"
+    $script:SessionState.MgGraph            = $false
+    $script:SessionState.ExchangeOnline     = $false
+    $script:SessionState.ComplianceCenter   = $false
+    $script:SessionState.SharePointOnline   = $false
+    $script:SessionState.SharePointAdminUrl = $null
+    $script:SessionState.PartnerConnected   = $false
+    $script:SessionState.TenantId           = $null
+    $script:SessionState.TenantName         = $null
+    $script:SessionState.TenantDomain       = $null
+    $script:SessionState.TenantMode         = "Direct"
 
     Write-Success "All sessions and tenant context cleared."
 }
@@ -587,6 +607,98 @@ function Connect-SCC {
 }
 
 # ============================================================
+#  SharePoint Online connection (Phase 3)
+#
+#  Requires SharePoint Administrator role. Connect-SPOService
+#  uses the tenant admin URL (e.g. https://contoso-admin.sharepoint.com)
+#  -- we cache the last-used URL per-tenant in a small JSON state
+#  file so the operator isn't prompted on every reconnect.
+# ============================================================
+
+function Get-StateDirectory {
+    $base = $null
+    if ($env:LOCALAPPDATA) { $base = Join-Path $env:LOCALAPPDATA 'M365Manager\state' }
+    elseif ($env:HOME)     { $base = Join-Path $env:HOME '.m365manager/state' }
+    else                   { $base = Join-Path (Get-Location).Path 'state' }
+    if (-not (Test-Path -LiteralPath $base)) {
+        try { New-Item -ItemType Directory -Path $base -Force | Out-Null } catch { return $null }
+        if (-not $env:LOCALAPPDATA -and (Get-Command chmod -ErrorAction SilentlyContinue)) {
+            try { & chmod 700 $base 2>$null | Out-Null } catch {}
+        }
+    }
+    return $base
+}
+
+function Get-SPOAdminUrlCache {
+    $dir = Get-StateDirectory
+    if (-not $dir) { return @{} }
+    $p = Join-Path $dir 'spo-tenants.json'
+    if (-not (Test-Path -LiteralPath $p)) { return @{} }
+    try {
+        $raw = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+        $h = @{}
+        foreach ($prop in $raw.PSObject.Properties) { $h[$prop.Name] = [string]$prop.Value }
+        return $h
+    } catch { return @{} }
+}
+
+function Set-SPOAdminUrlCache {
+    param([string]$TenantKey, [string]$AdminUrl)
+    $dir = Get-StateDirectory
+    if (-not $dir) { return }
+    $p = Join-Path $dir 'spo-tenants.json'
+    $h = Get-SPOAdminUrlCache
+    $h[$TenantKey] = $AdminUrl
+    try { ($h | ConvertTo-Json -Depth 3) | Set-Content -LiteralPath $p -Encoding UTF8 -Force } catch {}
+}
+
+function Connect-SPO {
+    <#
+        Connect-SPOService wrapper. Prompts for the tenant admin URL
+        on first use, caches by tenant key (TenantDomain or TenantId)
+        so subsequent runs reuse the same URL silently.
+    #>
+    if ($script:SessionState.SharePointOnline) { Write-InfoMsg "SharePoint Online already connected."; return $true }
+
+    if (-not (Get-Command Connect-SPOService -ErrorAction SilentlyContinue)) {
+        Write-ErrorMsg "Microsoft.Online.SharePoint.PowerShell module not loaded."
+        Write-InfoMsg "Install with: Install-Module Microsoft.Online.SharePoint.PowerShell -Scope CurrentUser"
+        return $false
+    }
+    Write-InfoMsg "SharePoint Online connection requires the SharePoint Administrator role."
+
+    $tenantKey = if ($script:SessionState.TenantDomain) { $script:SessionState.TenantDomain }
+                 elseif ($script:SessionState.TenantId) { $script:SessionState.TenantId }
+                 else { 'default' }
+
+    $cache = Get-SPOAdminUrlCache
+    $adminUrl = $cache[$tenantKey]
+    if (-not $adminUrl) {
+        $hint = ""
+        if ($script:SessionState.TenantDomain -and $script:SessionState.TenantDomain -like '*.onmicrosoft.com') {
+            $shortName = ($script:SessionState.TenantDomain -split '\.')[0]
+            $hint = " (e.g. https://$shortName-admin.sharepoint.com)"
+        }
+        $adminUrl = Read-UserInput "SharePoint admin URL$hint"
+        if ([string]::IsNullOrWhiteSpace($adminUrl)) { Write-Warn "Cancelled."; return $false }
+        $adminUrl = $adminUrl.Trim().TrimEnd('/')
+    }
+
+    Write-InfoMsg "Connecting to SharePoint Online ($adminUrl)..."
+    try {
+        Connect-SPOService -Url $adminUrl -ErrorAction Stop
+        $script:SessionState.SharePointOnline   = $true
+        $script:SessionState.SharePointAdminUrl = $adminUrl
+        Set-SPOAdminUrlCache -TenantKey $tenantKey -AdminUrl $adminUrl
+        Write-Success "SharePoint Online connected."
+        return $true
+    } catch {
+        Write-ErrorMsg "SPO connection failed: $_"
+        return $false
+    }
+}
+
+# ============================================================
 #  Per-task connection sets
 # ============================================================
 
@@ -595,14 +707,15 @@ function Connect-ForTask {
         [ValidateSet(
             "Onboard","Offboard","License","Archive",
             "SecurityGroup","DistributionList","SharedMailbox","CalendarAccess",
-            "UserProfile","Report","eDiscovery","GroupManager"
+            "UserProfile","Report","eDiscovery","GroupManager",
+            "OneDrive","SharePoint","Teams","GuestUsers"
         )]
         [string]$Task
     )
 
     $map = @{
         Onboard          = @("EXO","Graph")
-        Offboard         = @("EXO","Graph")
+        Offboard         = @("EXO","Graph","SPO")
         License          = @("Graph")
         Archive          = @("EXO","Graph")
         SecurityGroup    = @("Graph")
@@ -613,15 +726,20 @@ function Connect-ForTask {
         Report           = @("EXO","Graph")
         eDiscovery       = @("SCC","Graph")
         GroupManager     = @("EXO","Graph")
+        OneDrive         = @("SPO","Graph")
+        SharePoint       = @("SPO","Graph")
+        Teams            = @("Graph")
+        GuestUsers       = @("Graph","SPO")
     }
 
     $services = $map[$Task]
     $needed = @()
     foreach ($svc in $services) {
         switch ($svc) {
-            "Graph" { if (-not $script:SessionState.MgGraph)          { $needed += $svc } }
-            "EXO"   { if (-not $script:SessionState.ExchangeOnline)   { $needed += $svc } }
-            "SCC"   { if (-not $script:SessionState.ComplianceCenter) { $needed += $svc } }
+            "Graph" { if (-not $script:SessionState.MgGraph)            { $needed += $svc } }
+            "EXO"   { if (-not $script:SessionState.ExchangeOnline)     { $needed += $svc } }
+            "SCC"   { if (-not $script:SessionState.ComplianceCenter)   { $needed += $svc } }
+            "SPO"   { if (-not $script:SessionState.SharePointOnline)   { $needed += $svc } }
         }
     }
 
@@ -634,7 +752,17 @@ function Connect-ForTask {
         switch ($svc) {
             "Graph" { if (-not (Connect-Graph)) { return $false } }
             "EXO"   { if (-not (Connect-EXO))   { return $false } }
-            "SCC"   { if (-not (Connect-SCC))    { return $false } }
+            "SCC"   { if (-not (Connect-SCC))   { return $false } }
+            "SPO"   {
+                if (-not (Connect-SPO)) {
+                    # SPO is optional for some tasks (Offboard / GuestUsers still
+                    # complete without it; OneDrive / SharePoint can't). Treat
+                    # the failure as soft and let the caller's per-step
+                    # Get-Command guards handle missing functionality.
+                    if ($Task -eq 'OneDrive' -or $Task -eq 'SharePoint') { return $false }
+                    Write-Warn "SPO connect failed; continuing without SharePoint-dependent steps."
+                }
+            }
         }
     }
     return $true
@@ -653,11 +781,16 @@ function Disconnect-AllSessions {
     if ($script:SessionState.ExchangeOnline -or $script:SessionState.ComplianceCenter) {
         try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue; Write-Success "EXO/SCC disconnected." } catch {}
     }
+    if ($script:SessionState.SharePointOnline) {
+        try { Disconnect-SPOService -ErrorAction SilentlyContinue; Write-Success "SPO disconnected." } catch {}
+    }
 
-    $script:SessionState.MgGraph = $false
-    $script:SessionState.ExchangeOnline = $false
-    $script:SessionState.ComplianceCenter = $false
-    $script:SessionState.PartnerConnected = $false
+    $script:SessionState.MgGraph            = $false
+    $script:SessionState.ExchangeOnline     = $false
+    $script:SessionState.ComplianceCenter   = $false
+    $script:SessionState.SharePointOnline   = $false
+    $script:SessionState.SharePointAdminUrl = $null
+    $script:SessionState.PartnerConnected   = $false
     Write-Success "All sessions cleared."
 }
 

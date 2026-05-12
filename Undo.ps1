@@ -105,6 +105,16 @@ $script:UndoHandlers = @{
         param($Target)
         Update-MgUser -UserId $Target.userId -AccountEnabled:$false -ErrorAction Stop | Out-Null
     }
+
+    # -- OneDrive site collection admin (Phase 3) --
+    'RevokeOneDriveAccess' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.granteeUpn -IsSiteCollectionAdmin $false -ErrorAction Stop | Out-Null
+    }
+    'GrantOneDriveAccess' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.granteeUpn -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+    }
 }
 
 # ============================================================
