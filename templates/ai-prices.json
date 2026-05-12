@@ -1,0 +1,46 @@
+{
+  "_comment": "USD per 1,000,000 tokens. Edit to match your account's negotiated rates. Family entries (key ends with '*') match any model whose name starts with that prefix. Exact entries win over family. Unknown models cost zero (with a 'cost source = unknown' marker in the log).",
+  "_lastUpdated": "2025-10-01",
+  "Anthropic": {
+    "claude-opus-4-7":   { "input": 15.00, "output": 75.00 },
+    "claude-opus-4":     { "input": 15.00, "output": 75.00 },
+    "claude-sonnet-4-6": { "input":  3.00, "output": 15.00 },
+    "claude-sonnet-4":   { "input":  3.00, "output": 15.00 },
+    "claude-haiku-4-5":  { "input":  1.00, "output":  5.00 },
+    "claude-haiku-4":    { "input":  1.00, "output":  5.00 },
+    "claude-3-5-sonnet": { "input":  3.00, "output": 15.00 },
+    "claude-3-5-haiku":  { "input":  0.80, "output":  4.00 },
+    "claude-3-opus":     { "input": 15.00, "output": 75.00 },
+    "claude-3-sonnet":   { "input":  3.00, "output": 15.00 },
+    "claude-3-haiku":    { "input":  0.25, "output":  1.25 },
+    "claude-opus-*":     { "input": 15.00, "output": 75.00 },
+    "claude-sonnet-*":   { "input":  3.00, "output": 15.00 },
+    "claude-haiku-*":    { "input":  1.00, "output":  5.00 },
+    "claude-*":          { "input":  3.00, "output": 15.00 }
+  },
+  "OpenAI": {
+    "gpt-4o":            { "input":  2.50, "output": 10.00 },
+    "gpt-4o-mini":       { "input":  0.15, "output":  0.60 },
+    "gpt-4-turbo":       { "input": 10.00, "output": 30.00 },
+    "gpt-4":             { "input": 30.00, "output": 60.00 },
+    "gpt-3.5-turbo":     { "input":  0.50, "output":  1.50 },
+    "o1":                { "input": 15.00, "output": 60.00 },
+    "o1-mini":           { "input":  3.00, "output": 12.00 },
+    "o1-preview":        { "input": 15.00, "output": 60.00 },
+    "gpt-4o-*":          { "input":  2.50, "output": 10.00 },
+    "gpt-4-*":           { "input": 10.00, "output": 30.00 },
+    "o1-*":              { "input": 15.00, "output": 60.00 },
+    "gpt-*":             { "input":  2.50, "output": 10.00 }
+  },
+  "AzureOpenAI": {
+    "gpt-4o":            { "input":  2.50, "output": 10.00 },
+    "gpt-4o-mini":       { "input":  0.15, "output":  0.60 },
+    "gpt-4-turbo":       { "input": 10.00, "output": 30.00 },
+    "gpt-4":             { "input": 30.00, "output": 60.00 },
+    "gpt-35-turbo":      { "input":  0.50, "output":  1.50 },
+    "gpt-*":             { "input":  2.50, "output": 10.00 }
+  },
+  "Ollama": {
+    "*": { "input": 0.0, "output": 0.0 }
+  }
+}

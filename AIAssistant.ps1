@@ -343,6 +343,7 @@ function Invoke-AIChat {
     # ---- Call provider ----
     try {
         $rawResponse = $null
+        $usage = @{ InputTokens = 0; OutputTokens = 0 }
         switch ($p) {
             "Ollama" {
                 $body = @{
@@ -350,7 +351,10 @@ function Invoke-AIChat {
                     stream   = $false
                     messages = @(@{ role='system'; content=$safeSystemPrompt }) + $safeMessages
                 } | ConvertTo-Json -Depth 10
-                $rawResponse = (Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop).message.content
+                $resp = Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop
+                $rawResponse = $resp.message.content
+                if ($resp.prompt_eval_count) { $usage.InputTokens  = [int]$resp.prompt_eval_count }
+                if ($resp.eval_count)        { $usage.OutputTokens = [int]$resp.eval_count }
             }
             "Anthropic" {
                 $body = @{
@@ -360,7 +364,12 @@ function Invoke-AIChat {
                     messages   = $safeMessages
                 } | ConvertTo-Json -Depth 10
                 $h = @{ "x-api-key"=$k; "anthropic-version"="2023-06-01"; "content-type"="application/json" }
-                $rawResponse = (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).content[0].text
+                $resp = Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop
+                $rawResponse = $resp.content[0].text
+                if ($resp.usage) {
+                    $usage.InputTokens  = [int]$resp.usage.input_tokens
+                    $usage.OutputTokens = [int]$resp.usage.output_tokens
+                }
             }
             default {
                 $body = @{
@@ -370,8 +379,20 @@ function Invoke-AIChat {
                 } | ConvertTo-Json -Depth 10
                 $h = @{ "Content-Type"="application/json" }
                 if ($p -eq "AzureOpenAI") { $h["api-key"] = $k } else { $h["Authorization"] = "Bearer $k" }
-                $rawResponse = (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).choices[0].message.content
+                $resp = Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop
+                $rawResponse = $resp.choices[0].message.content
+                if ($resp.usage) {
+                    $usage.InputTokens  = [int]$resp.usage.prompt_tokens
+                    $usage.OutputTokens = [int]$resp.usage.completion_tokens
+                }
             }
+        }
+
+        # ---- Cost tracking ----
+        if (Get-Command Add-AICostEvent -ErrorAction SilentlyContinue) {
+            try {
+                $script:LastAICostResult = Add-AICostEvent -Config $Config -Usage $usage -Reason 'chat'
+            } catch { Write-Warn "Cost tracker: $($_.Exception.Message)" }
         }
 
         # ---- Restore placeholders so the operator sees real values and
@@ -986,7 +1007,7 @@ function Start-AIAssistant {
     $pd="$($config['Provider']) ($($config['Model']))"; if($pd.Length -gt 52){$pd=$pd.Substring(0,49)+"..."}
     Write-Host ("  " + $b.DV + "   $("{0,-52}" -f $pd)" + $b.DV) -ForegroundColor "Gray"
     Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor "Cyan"
-    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /privacy  /tools  /plan  /noplan  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /privacy  /tools  /plan  /noplan  /cost  /costs  /quit" -ForegroundColor "DarkGray"; Write-Host ""
 
     # Phase 5: pre-load the tool catalog and probe provider capability.
     if (Get-Command Get-AIToolCatalog -ErrorAction SilentlyContinue) { Get-AIToolCatalog | Out-Null }
@@ -1017,7 +1038,17 @@ function Start-AIAssistant {
 
         $cmd = $userMsg.Trim().ToLower()
         if ($cmd -match '^/(quit|exit|back)$') { Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": See you!" -ForegroundColor White; Write-Host ""; $chatting=$false; continue }
-        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /privacy /clear /context /tools /plan /noplan /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /privacy /clear /context /tools /plan /noplan /cost /costs /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -eq '/cost') {
+            if (Get-Command Show-AICostSummary -ErrorAction SilentlyContinue) { Show-AICostSummary }
+            else { Write-Warn "Cost tracker not loaded." }
+            continue
+        }
+        if ($cmd -eq '/costs') {
+            if (Get-Command Show-AICostHistory -ErrorAction SilentlyContinue) { Show-AICostHistory }
+            else { Write-Warn "Cost tracker not loaded." }
+            continue
+        }
         if ($cmd -eq '/plan') {
             if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) {
                 Set-AIPlanMode -Mode 'force'
@@ -1071,6 +1102,13 @@ function Start-AIAssistant {
                     }
                     Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": [!] $($turn.Error)" -ForegroundColor $script:Colors.Error
                     break
+                }
+                # ---- Cost tracking for this hop ----
+                if ($turn.Usage -and (Get-Command Add-AICostEvent -ErrorAction SilentlyContinue)) {
+                    try {
+                        $costResult = Add-AICostEvent -Config $config -Usage $turn.Usage -Reason 'tooling-hop'
+                        if (Get-Command Show-AICostFooter -ErrorAction SilentlyContinue) { Show-AICostFooter -Result $costResult }
+                    } catch { Write-Warn "Cost tracker: $($_.Exception.Message)" }
                 }
                 # Persist assistant turn into history in Anthropic-shaped form
                 # so subsequent tool_result blocks have somewhere to attach.
@@ -1176,6 +1214,12 @@ function Start-AIAssistant {
         try{$t=$Host.UI.RawUI.CursorPosition.Y-1;$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t;Write-Host(" "*80);$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t}catch{}
 
         if ($response -match "^\[!\]") { Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": $response" -ForegroundColor $script:Colors.Error; Write-Host ""; continue }
+
+        # ---- Cost footer (regex path) ----
+        if ($script:LastAICostResult -and (Get-Command Show-AICostFooter -ErrorAction SilentlyContinue)) {
+            Show-AICostFooter -Result $script:LastAICostResult
+            $script:LastAICostResult = $null
+        }
 
         $hasCmd = Test-HasCommands -Response $response
         $cleanText = Get-CleanResponse $response
