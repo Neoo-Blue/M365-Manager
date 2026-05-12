@@ -262,6 +262,20 @@ function Start-Offboard {
         }
     }
 
+    # Step 9: Revoke outbound SharePoint shares (Phase 3, interim slot)
+    if (Get-Command Invoke-SharePointOffboardCleanup -ErrorAction SilentlyContinue) {
+        Write-SectionHeader "Step 9 - Revoke Outbound SharePoint Shares"
+        if (Confirm-Action "Scan and revoke outbound shares created by $upn?") {
+            $summary = Invoke-SharePointOffboardCleanup -LeaverUPN $upn -LookbackDays 365
+            if ($summary) {
+                Write-StatusLine "Shares found"  "$($summary.ShareCount)" 'White'
+                Write-StatusLine "Revoked"       "$($summary.Revoked)"    'Green'
+                Write-StatusLine "Skipped"       "$($summary.Skipped)"    'Yellow'
+                if ($summary.Failed -gt 0) { Write-Warn "$($summary.Failed) revocation(s) failed." }
+            }
+        }
+    }
+
     # Step 8: OneDrive handoff (Phase 3 -- moved in Commit E re-ordering)
     if (Get-Command Invoke-OneDriveHandoff -ErrorAction SilentlyContinue) {
         Write-SectionHeader "Step 8 - OneDrive Handoff"

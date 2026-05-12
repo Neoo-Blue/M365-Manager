@@ -116,6 +116,16 @@ $script:UndoHandlers = @{
         Set-SPOUser -Site $Target.siteUrl -LoginName $Target.granteeUpn -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
     }
 
+    # -- SharePoint site owners (Phase 3) --
+    'RemoveSiteOwner' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.userUpn -IsSiteCollectionAdmin $false -ErrorAction Stop | Out-Null
+    }
+    'AddSiteOwner' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.userUpn -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+    }
+
     # -- Teams membership / ownership (Phase 3) --
     'RemoveFromTeam' = {
         param($Target)
