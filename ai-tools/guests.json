@@ -1,0 +1,44 @@
+[
+  {
+    "name": "Get-Guests",
+    "description": "List guest users with enriched age + last-sign-in fields.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Domain":            { "type": "string", "description": "Filter to a single external domain" },
+        "MaxLastSignInDays": { "type": "integer", "description": "Only return guests last seen within N days" }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-StaleGuests",
+    "description": "Convenience: guests with DaysSinceSignIn >= -DaysSinceSignIn (default 90).",
+    "parameters": {
+      "type": "object",
+      "properties": { "DaysSinceSignIn": { "type": "integer", "default": 90 } },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Remove-Guest",
+    "description": "Full guest teardown: revoke shares, remove from groups + teams, then DELETE /users/{id}. 30-day restore window via /directory/deletedItems.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN":    { "type": "string" },
+        "Reason": { "type": "string", "description": "Recorded in the audit log" }
+      },
+      "required": ["UPN","Reason"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": null
+  }
+]

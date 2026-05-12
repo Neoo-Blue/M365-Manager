@@ -1,0 +1,96 @@
+[
+  {
+    "name": "Get-Mailbox",
+    "description": "Get an Exchange Online mailbox by Identity (UPN, alias, or primary SMTP).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity": { "type": "string" }
+      },
+      "required": ["Identity"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Set-Mailbox-Type",
+    "description": "Change mailbox type (e.g. convert to Shared during offboarding).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity": { "type": "string" },
+        "Type":     { "type": "string", "enum": ["Shared","Regular","Room","Equipment"] }
+      },
+      "required": ["Identity","Type"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": null
+  },
+  {
+    "name": "Set-Mailbox-Forwarding",
+    "description": "Set or clear SMTP forwarding on a mailbox.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity":               { "type": "string" },
+        "ForwardingSmtpAddress":  { "type": "string", "description": "SMTP target. Empty string clears the rule." },
+        "DeliverToMailboxAndForward": { "type": "boolean", "default": true }
+      },
+      "required": ["Identity"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Set-Mailbox-Forwarding"
+  },
+  {
+    "name": "Set-MailboxAutoReplyConfiguration",
+    "description": "Configure out-of-office auto-reply.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity":         { "type": "string" },
+        "AutoReplyState":   { "type": "string", "enum": ["Enabled","Disabled"], "default": "Enabled" },
+        "InternalMessage":  { "type": "string" },
+        "ExternalMessage":  { "type": "string" }
+      },
+      "required": ["Identity","AutoReplyState"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Set-MailboxAutoReplyConfiguration"
+  },
+  {
+    "name": "Add-MailboxPermission",
+    "description": "Grant a user FullAccess on a mailbox.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity":       { "type": "string" },
+        "User":           { "type": "string" },
+        "AccessRights":   { "type": "string", "enum": ["FullAccess"], "default": "FullAccess" },
+        "AutoMapping":    { "type": "boolean", "default": true }
+      },
+      "required": ["Identity","User"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Remove-MailboxPermission"
+  },
+  {
+    "name": "Remove-MailboxPermission",
+    "description": "Revoke FullAccess on a mailbox.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity": { "type": "string" },
+        "User":     { "type": "string" }
+      },
+      "required": ["Identity","User"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Add-MailboxPermission"
+  }
+]

@@ -1,0 +1,77 @@
+[
+  {
+    "name": "Get-MgUser",
+    "description": "Look up a user by UPN or object id. Returns id, displayName, userPrincipalName, accountEnabled, mail.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UserId":   { "type": "string", "description": "UPN (email) or object id of the user" },
+        "Search":   { "type": "string", "description": "displayName search (use instead of UserId when the operator gives a partial name)" }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Update-MgUser",
+    "description": "Update properties on an existing user (block sign-in, change department, set employeeLeaveDateTime, etc.).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UserId":        { "type": "string", "description": "UPN or object id" },
+        "AccountEnabled":{ "type": "boolean", "description": "true to enable, false to block sign-in" },
+        "Department":    { "type": "string" },
+        "JobTitle":      { "type": "string" },
+        "OfficeLocation":{ "type": "string" }
+      },
+      "required": ["UserId"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Update-MgUser"
+  },
+  {
+    "name": "Revoke-MgUserSignInSession",
+    "description": "Kill every active sign-in session for a user (does NOT block future sign-ins -- pair with Update-MgUser -AccountEnabled:$false).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UserId": { "type": "string", "description": "UPN or object id" }
+      },
+      "required": ["UserId"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-UserOneDriveUrl",
+    "description": "Resolve the personal OneDrive site URL for a user (Phase 3 OneDriveManager).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN": { "type": "string", "description": "User principal name" }
+      },
+      "required": ["UPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-UserTeams",
+    "description": "List every team a user belongs to, with Member vs Owner role.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN": { "type": "string" }
+      },
+      "required": ["UPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]

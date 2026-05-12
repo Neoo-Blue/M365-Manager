@@ -1,0 +1,67 @@
+[
+  {
+    "name": "Get-AllSites",
+    "description": "List SPO sites (excludes personal OneDrive sites).",
+    "parameters": { "type": "object", "properties": {}, "required": [] },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-SiteOwners",
+    "description": "List site-collection admins on a site.",
+    "parameters": {
+      "type": "object",
+      "properties": { "SiteUrl": { "type": "string" } },
+      "required": ["SiteUrl"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Set-SiteOwner-Add",
+    "description": "Add a user as site-collection admin.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "SiteUrl": { "type": "string" },
+        "UPN":     { "type": "string" }
+      },
+      "required": ["SiteUrl","UPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Set-SiteOwner-Remove"
+  },
+  {
+    "name": "Set-SiteOwner-Remove",
+    "description": "Remove a user from site-collection admins.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "SiteUrl": { "type": "string" },
+        "UPN":     { "type": "string" }
+      },
+      "required": ["SiteUrl","UPN"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Set-SiteOwner-Add"
+  },
+  {
+    "name": "Get-UserOutboundShares",
+    "description": "Pull a user's outbound SPO/OneDrive sharing events from the unified audit log.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN":  { "type": "string" },
+        "Days": { "type": "integer", "default": 365 }
+      },
+      "required": ["UPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]

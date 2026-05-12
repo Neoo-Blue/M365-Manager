@@ -850,6 +850,15 @@ function Test-AICommandAllowed {
 function Invoke-MarkCommands {
     param([string]$Response, [hashtable]$Config)
 
+    # Deprecation notice: this regex-RUN: path is now the FALLBACK for
+    # providers / models that don't support native tool calling. Phase 5
+    # Commit A's AIToolDispatch.ps1 + the ai-tools/ registry is the
+    # primary path. We emit one console warning per session.
+    if (-not $script:AIToolingDeprecationWarned) {
+        Write-Warn "[deprecated] Using regex RUN: extractor. Native tool calling preferred (provider lacked support, or capability cache says no)."
+        $script:AIToolingDeprecationWarned = $true
+    }
+
     $commands = Extract-Commands -Response $Response
     if ($commands.Count -eq 0) { return $null }
 
@@ -959,7 +968,20 @@ function Start-AIAssistant {
     $pd="$($config['Provider']) ($($config['Model']))"; if($pd.Length -gt 52){$pd=$pd.Substring(0,49)+"..."}
     Write-Host ("  " + $b.DV + "   $("{0,-52}" -f $pd)" + $b.DV) -ForegroundColor "Gray"
     Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor "Cyan"
-    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /privacy  /tools  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+
+    # Phase 5: pre-load the tool catalog and probe provider capability.
+    if (Get-Command Get-AIToolCatalog -ErrorAction SilentlyContinue) { Get-AIToolCatalog | Out-Null }
+    $useTooling = $false
+    if (Get-Command Test-ProviderToolSupport -ErrorAction SilentlyContinue) {
+        $useTooling = Test-ProviderToolSupport -Config $config
+    }
+    if ($useTooling) {
+        Write-InfoMsg ("Native tool calling enabled ({0} tools loaded)." -f ($script:AIToolCatalog | Measure-Object).Count)
+    } else {
+        Write-Warn "Native tool calling unavailable -- falling back to RUN: regex path."
+    }
+    Write-Host ""
 
     $chatHistory = @()
     $ctx = "Services auto-connect. Tenant: $($script:SessionState.TenantMode)"
@@ -988,6 +1010,80 @@ function Start-AIAssistant {
             Write-Host "  [cleared — $cleared privacy token(s) dropped]" -ForegroundColor "DarkGray"; Write-Host ""; continue
         }
         if ($cmd -eq '/context') { Write-Host ""; Write-StatusLine "Tenant" "$($script:SessionState.TenantMode) $(if($script:SessionState.TenantName){"($($script:SessionState.TenantName))"})" "White"; Write-StatusLine "Graph" $(if($script:SessionState.MgGraph){"Connected"}else{"Auto"}) $(if($script:SessionState.MgGraph){"Green"}else{"Yellow"}); Write-StatusLine "EXO" $(if($script:SessionState.ExchangeOnline){"Connected"}else{"Auto"}) $(if($script:SessionState.ExchangeOnline){"Green"}else{"Yellow"}); Write-StatusLine "SCC" $(if($script:SessionState.ComplianceCenter){"Connected"}else{"Auto"}) $(if($script:SessionState.ComplianceCenter){"Green"}else{"Yellow"}); Write-StatusLine "AI" "$($config['Provider'])/$($config['Model'])" "Cyan"; Write-Host ""; continue }
+        if ($cmd -eq '/tools') {
+            if (Get-Command Show-AIToolCatalog -ErrorAction SilentlyContinue) { Show-AIToolCatalog }
+            else { Write-Warn "Tool catalog module not loaded." }
+            continue
+        }
+
+        # ---- Phase 5: native tool-calling path ----
+        if ($useTooling -and (Get-Command Invoke-AIChatToolingTurn -ErrorAction SilentlyContinue)) {
+            $sendMsg = $userMsg
+            if ($chatHistory.Count -eq 0) { $sendMsg = "[CONTEXT: $ctx]`n`n$userMsg" }
+            $chatHistory += @{ role = 'user'; content = $sendMsg }
+            $hops = 0
+            $maxHops = 8
+            while ($hops -lt $maxHops) {
+                $hops++
+                Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline; Write-Host "thinking..." -ForegroundColor "DarkGray"
+                $turn = Invoke-AIChatToolingTurn -Config $config -Messages $chatHistory
+                try{$t=$Host.UI.RawUI.CursorPosition.Y-1;$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t;Write-Host(" "*80);$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t}catch{}
+
+                if ($turn.Error) {
+                    if ($turn.Error -eq 'ollama_no_tool_support') {
+                        Write-Warn "This Ollama model lacks tool support -- switching to RUN: regex fallback for this session."
+                        $useTooling = $false
+                        # Pop the user message we already added so the regex path takes it fresh
+                        $chatHistory = @($chatHistory | Select-Object -SkipLast 1)
+                        break
+                    }
+                    Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": [!] $($turn.Error)" -ForegroundColor $script:Colors.Error
+                    break
+                }
+                # Persist assistant turn into history in Anthropic-shaped form
+                # so subsequent tool_result blocks have somewhere to attach.
+                if ($turn.AssistantContent) {
+                    $chatHistory += @{ role = 'assistant'; content = $turn.AssistantContent }
+                }
+                if ($turn.Text) {
+                    Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline
+                    Write-MarkResponse $turn.Text
+                }
+                if ($turn.ToolUses.Count -eq 0) { break }
+                # Operator gate (Y/A/N) + dispatch
+                $results = New-Object System.Collections.ArrayList
+                $runAll = $false
+                foreach ($tu in $turn.ToolUses) {
+                    $toolDef = Get-AIToolByName -Name $tu.name
+                    $destFlag = if ($toolDef -and $toolDef.destructive) { '[DESTRUCTIVE] ' } else { '' }
+                    Write-Host ""
+                    Write-Host ("  Mark wants to call: " + $destFlag + $tu.name) -ForegroundColor Yellow
+                    foreach ($k in $tu.input.Keys) {
+                        Write-Host ("      {0}: {1}" -f $k, ($tu.input[$k])) -ForegroundColor DarkGray
+                    }
+                    $ans = if ($runAll) { 'y' } else {
+                        Write-Host "  [Y]es  [N]o  [A]ll  [Q]uit" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                        Read-Host
+                    }
+                    if ($ans -match '^[Aa]') { $runAll = $true; $ans = 'y' }
+                    if ($ans -match '^[Qq]') { break }
+                    if ($ans -notmatch '^[Yy]') {
+                        [void]$results.Add(@{ id = $tu.id; content = '{"ok":false,"error":"operator_declined"}'; isError = $true })
+                        continue
+                    }
+                    $inputHt = @{}; foreach ($k in $tu.input.Keys) { $inputHt[$k] = $tu.input[$k] }
+                    $out = Invoke-AIToolCall -ToolName $tu.name -Params $inputHt -Config $config
+                    $payload = (Format-AIToolResultPayload -Result $out -MaxBytes 4000)
+                    [void]$results.Add(@{ id = $tu.id; content = $payload; isError = (-not $out.ok) })
+                }
+                if ($results.Count -eq 0) { break }
+                $followup = Build-ToolResultMessage -Provider $config.Provider -ToolResults @($results)
+                if ($followup -is [array]) { $chatHistory += $followup } else { $chatHistory += $followup }
+            }
+            Write-Host ""
+            if ($chatHistory.Count -gt 60) { $chatHistory = $chatHistory[-60..-1] }
+            if ($useTooling) { continue }   # done; let outer while-loop ask next prompt
+        }
 
         $sendMsg = $userMsg
         if ($chatHistory.Count -eq 0) { $sendMsg = "[CONTEXT: $ctx]`n`n$userMsg" }

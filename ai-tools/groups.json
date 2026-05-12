@@ -1,0 +1,91 @@
+[
+  {
+    "name": "Get-MgGroup",
+    "description": "Look up a group by display name (use Search) or object id.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "GroupId":  { "type": "string", "description": "Object id of the group" },
+        "Search":   { "type": "string", "description": "Substring match on displayName" }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Add-MgGroupMember",
+    "description": "Add a user to a Graph group (security or M365).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "GroupId": { "type": "string", "description": "Group object id" },
+        "UserId":  { "type": "string", "description": "User object id" }
+      },
+      "required": ["GroupId","UserId"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Remove-MgGroupMember"
+  },
+  {
+    "name": "Remove-MgGroupMember",
+    "description": "Remove a user from a Graph group.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "GroupId": { "type": "string" },
+        "UserId":  { "type": "string" }
+      },
+      "required": ["GroupId","UserId"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Add-MgGroupMember"
+  },
+  {
+    "name": "Get-MgGroupMember",
+    "description": "List the members of a group.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "GroupId": { "type": "string" }
+      },
+      "required": ["GroupId"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Add-DistributionGroupMember",
+    "description": "Add a user to an Exchange Online distribution list. Identity is the DL's primary SMTP.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity": { "type": "string", "description": "DL primary SMTP or alias" },
+        "Member":   { "type": "string", "description": "User UPN" }
+      },
+      "required": ["Identity","Member"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Remove-DistributionGroupMember"
+  },
+  {
+    "name": "Remove-DistributionGroupMember",
+    "description": "Remove a user from a DL.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Identity": { "type": "string" },
+        "Member":   { "type": "string" }
+      },
+      "required": ["Identity","Member"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Add-DistributionGroupMember"
+  }
+]

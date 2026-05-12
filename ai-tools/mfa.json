@@ -1,0 +1,60 @@
+[
+  {
+    "name": "Get-UserAuthMethods",
+    "description": "List a user's registered authentication methods (Phase 2 MFAManager).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "User": { "type": "string", "description": "UPN or object id" }
+      },
+      "required": ["User"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Remove-AllAuthMethods",
+    "description": "Revoke every revocable auth method on a user (FullAccess methods only -- Password is left alone). LOCKS THE USER OUT.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "User": { "type": "string" }
+      },
+      "required": ["User"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": null
+  },
+  {
+    "name": "New-TemporaryAccessPass",
+    "description": "Issue a Temporary Access Pass to a user.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "User":             { "type": "string" },
+        "LifetimeMinutes":  { "type": "integer", "default": 60, "minimum": 1, "maximum": 480 },
+        "IsUsableOnce":     { "type": "boolean", "default": true }
+      },
+      "required": ["User"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-UsersWithNoMfa",
+    "description": "Compliance report: enumerate up to -Max users and return ones with no MFA registered.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Max": { "type": "integer", "default": 200 }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]

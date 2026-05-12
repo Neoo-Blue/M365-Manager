@@ -1,0 +1,70 @@
+[
+  {
+    "name": "Add-UserToTeam",
+    "description": "Add a user to a Microsoft Teams team as Member or Owner.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN":     { "type": "string" },
+        "TeamId":  { "type": "string", "description": "Group object id of the team" },
+        "AsOwner": { "type": "boolean", "default": false }
+      },
+      "required": ["UPN","TeamId"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Remove-UserFromTeam"
+  },
+  {
+    "name": "Remove-UserFromTeam",
+    "description": "Remove a user from a Teams team.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN":     { "type": "string" },
+        "TeamId":  { "type": "string" },
+        "AsOwner": { "type": "boolean", "default": false, "description": "true removes from owners, false from members" }
+      },
+      "required": ["UPN","TeamId"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Add-UserToTeam"
+  },
+  {
+    "name": "Set-TeamOwnership",
+    "description": "Promote a member to owner, or demote an owner to member.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN":       { "type": "string" },
+        "TeamId":    { "type": "string" },
+        "Direction": { "type": "string", "enum": ["Promote","Demote"] }
+      },
+      "required": ["UPN","TeamId","Direction"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Set-TeamOwnership"
+  },
+  {
+    "name": "Get-UserTeams",
+    "description": "List a user's joined teams with role (Member/Owner).",
+    "parameters": {
+      "type": "object",
+      "properties": { "UPN": { "type": "string" } },
+      "required": ["UPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-OrphanedTeams",
+    "description": "Tenant scan for teams with zero owners. Slow.",
+    "parameters": { "type": "object", "properties": {}, "required": [] },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]
