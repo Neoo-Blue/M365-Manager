@@ -30,6 +30,14 @@ $env:MSAL_BROKER_ENABLED = "0"
 powershell -ExecutionPolicy Bypass -NoProfile -File Main.ps1
 ```
 
+## Configuration & secrets
+
+Anything that may contain a secret (API keys, tokens) lives in `ai_config.json`, which is **gitignored** and DPAPI-encrypted on first save (per-user, per-machine — not portable).
+
+- `ai_config.example.json` is the template, safe to commit.
+- `ai_config.json` is created automatically on first run of the AI assistant (hidden option `99`). To pre-seed it manually, copy the example and run the assistant once — your plaintext key will be encrypted in place on first load.
+- Build artifacts (`M365Admin_Merged.ps1`, `M365Admin.exe`) and audit logs (`audit/`) are also gitignored.
+
 ## File Structure
 
 ```

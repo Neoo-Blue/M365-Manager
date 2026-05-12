@@ -1,0 +1,10 @@
+{
+  "_comment_provider": "One of: Ollama, Anthropic, OpenAI, AzureOpenAI, Custom",
+  "_comment_apikey":   "DPAPI-encrypted at rest after first save. Do NOT paste a real key here — run option 99 (AI Assistant) inside the tool to configure interactively, or copy this file to ai_config.json and replace REPLACE_ME.",
+  "_comment_portable": "ai_config.json is encrypted per-user and is NOT portable across machines or accounts.",
+
+  "Provider": "Anthropic",
+  "Endpoint": "https://api.anthropic.com/v1/messages",
+  "Model":    "claude-sonnet-4-20250514",
+  "ApiKey":   "REPLACE_ME"
+}
