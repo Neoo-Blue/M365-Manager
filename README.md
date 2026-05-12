@@ -111,13 +111,76 @@ Bulk operations accept `-WhatIf` independently — it flips `$script:PreviewMode
 
 Audit log location: `%LOCALAPPDATA%\M365Manager\audit\session-<ts>-<pid>.log` (Windows) or `~/.m365manager/audit/session-<ts>-<pid>.log` (POSIX, mode `0700`). Every line is tagged `MODE=PREVIEW` or `MODE=LIVE` — grep one or the other to filter. A sample preview log shape is at `docs/preview-sample.log`.
 
+## Audit & reporting
+
+A new "Audit & Reporting..." main-menu entry groups everything an operator might need after the fact. Five sub-entries:
+
+1. **Audit log viewer** — `Show-AuditLogViewer`. Loads every `session-*.log` (and optionally `mark-*.log`) under `%LOCALAPPDATA%\M365Manager\audit\`, normalizes the JSON-line and legacy human-readable shapes to one record format, and offers paged display with filters (UPN, date range, action type, event, mode, result, target substring). Export the current filter to CSV or single-file HTML.
+2. **Undo recent operation...** — see "Undo" below.
+3. **Sign-in lookup (Graph search)** — filter wizard over `/v1.0/auditLogs/signIns` (see "Sign-in lookup").
+4. **Sign-in lookup (recent activity for one user)** — UPN one-shot, last 30 days.
+5. **Unified audit log** — wraps `Search-UnifiedAuditLog`; health-checks ingestion is enabled first.
+
+The session log itself is now JSON-per-line. See `docs/audit-format.md` for the field reference. The viewer transparently handles both new JSONL and pre-Phase-2 human-readable lines.
+
+## Undo recent operations
+
+Reversible state changes (license assignment, group / DL membership, mailbox FullAccess + SendAs grants, calendar permissions, OOO, forwarding, sign-in block) write a `reverse` recipe into their audit entry: a stable type tag plus the operand hashtable needed to dispatch the inverse cmdlet. The "Undo recent operation..." menu walks the audit log, lists everything that's still reversible (success + reverse + not-already-reversed), and lets the operator pick a row to invert.
+
+`Invoke-Undo` runs the reverse through `Invoke-Action` so the reversal itself is audited and respects PREVIEW mode (you can stage an undo with `-WhatIf` before committing). On success, the original entry is marked reversed in `audit/undo-state.json` so it doesn't reappear.
+
+Destructive operations (user / mailbox / DL / group deletion, sign-in session revocation, shared-mailbox conversion, MFA method revocation, account creation) carry an explicit `noUndoReason` and are excluded from the undo list. If a reverse cmdlet fails because the target object no longer exists, the operator sees the underlying Graph / EXO error (the default chosen here is "fail clearly with the target id", not auto-mark-superseded).
+
+## Sign-in lookup
+
+`SignInLookup.ps1` wraps `GET /v1.0/auditLogs/signIns` (Microsoft Graph). Required scopes: `AuditLog.Read.All` + `Directory.Read.All`; missing scopes are surfaced as a clear warning before any query runs. Pagination through `@odata.nextLink` is automatic; Graph caps a page at 1000.
+
+Two surfaces:
+- Filter wizard (UPN, app, IP, country, risk level, CA status, success/failure-only, date range as `7d` / `24h` / `YYYY-MM-DD / YYYY-MM-DD`).
+- Recent-activity-for-one-user (last 30 days, single prompt).
+
+Output: paged table + on-demand CSV + single-file HTML with risk-tier row shading.
+
+## Unified audit log
+
+`UnifiedAuditLog.ps1` wraps `Search-UnifiedAuditLog` (EXO / Purview). Health-checks `Get-AdminAuditLogConfig` first — if `UnifiedAuditLogIngestionEnabled` is false, the viewer prints the exact enable command and aborts. Retention varies by license; the module surfaces a best-effort estimate (E5 → 365d, E3 → 180d, otherwise the generic "90 / 180 / 365") so the operator knows the floor.
+
+The wizard prompts for an operation **group** (Mail, File access, Identity, Groups, Compliance, Sharing) and lets you narrow to specific operations within it, then runs the query and offers CSV + HTML export.
+
+## MFA management
+
+New "MFA & Authentication..." main-menu entry plus `MFAManager.ps1`. Operations per-user:
+
+- **View methods** — table by type, color-coded by strength.
+- **Revoke specific method** — pick from list.
+- **Revoke all methods** — locks the user out until re-registration.
+- **Reset MFA** — revoke all + revoke sign-in sessions + issue a fresh single-use TAP (clipboard-delivered with the same scrub-on-Enter pattern as onboard).
+- **Issue Temporary Access Pass** — configurable lifetime (1 / 8 / 24 hours), one-time vs reusable.
+
+Four compliance views (each prompts for a scan cap; full-tenant scans are slow):
+- Users with only SMS / voice MFA.
+- Users with no MFA registered.
+- Users with an active TAP.
+- Users with FIDO2 keys.
+
+Bulk: `Invoke-BulkMfa -Path .csv [-WhatIf]` over a CSV with columns `UPN, Action` (`Revoke` / `Reset` / `IssueTAP`), optional `TAPLifetime` and `TAPUsableOnce`.
+
+Integration with existing flows:
+- Onboard / BulkOnboard's TAP issuance now delegates to `New-TemporaryAccessPass` — single source of truth, single audit trail.
+- Offboard / BulkOffboard adds a new Step 0 that calls `Remove-AllAuthMethods` before session revocation, so a hostile actor with the user's device cannot re-authenticate during the window between session revoke and account block.
+
 ## Tests
 
 ```powershell
 Invoke-Pester ./tests/
 ```
 
-Covers the privacy redaction layer (round-trip stability, provider classification, audit-log toggle, fixture file with realistic PII). No network or M365 connection required.
+Phase 2 adds three Pester suites alongside the privacy tests:
+- `tests/AuditViewer.Tests.ps1` — JSONL + legacy + AI line parsing, filter correctness, CSV/HTML export shape.
+- `tests/Undo.Tests.ps1` — dispatch-table coverage, target-hashtable round-trip, state-transitions (mocked sidecar so the test doesn't touch real machine state).
+- `tests/MFAManager.Tests.ps1` — method-type classification, compliance-view predicates against canned method sets.
+
+No network or M365 connection required for any test.
 
 ## File Structure
 
