@@ -16,14 +16,54 @@ function Start-Onboard {
     $replicateLicenses = @()
     $replicateGroups   = @()
 
-    $choice = Show-Menu -Title "How to provide user data?" -Options @(
-        "Parse from a text file",
-        "Enter manually",
-        "Replicate from an existing user"
-    ) -BackLabel "Cancel"
-    if ($choice -eq -1) { return }
+    # ---- Template selection (Phase 1) ----
+    # Offer a role template up front. If picked, skip the file/manual/
+    # replicate picker entirely -- the operator only fills user-specific
+    # fields and the template provides the rest.
+    $template = $null
+    $templateList = @(Get-OnboardTemplates)
+    if ($templateList.Count -gt 0 -and (Confirm-Action "Apply a role-based onboarding template?")) {
+        $labels = $templateList | ForEach-Object { "{0} -- {1}" -f $_.Name, $_.Description }
+        $tsel = Show-Menu -Title "Select Template" -Options $labels -BackLabel "Cancel (no template)"
+        if ($tsel -ge 0) {
+            try {
+                $template = Get-OnboardTemplate -Key $templateList[$tsel].Key
+                Write-Success "Template '$($template.name)' selected -- $($template.description)"
+            } catch {
+                Write-ErrorMsg "Could not load template: $_"; Pause-ForUser; return
+            }
+        }
+    }
 
     $userData = @{}
+    foreach ($f in $fields) { $userData[$f] = "" }
+    $choice = -1
+
+    if ($template) {
+        Write-SectionHeader "User Details"
+        $userData["FirstName"] = Read-UserInput "First name"
+        $userData["LastName"]  = Read-UserInput "Last name"
+        $defDisp = ("{0} {1}" -f $userData["FirstName"], $userData["LastName"]).Trim()
+        $valDN   = Read-UserInput "Display name (Enter for '$defDisp')"
+        $userData["DisplayName"]       = if ([string]::IsNullOrWhiteSpace($valDN)) { $defDisp } else { $valDN }
+        $userData["UserPrincipalName"] = Read-UserInput "User principal name (email)"
+        $userData["JobTitle"]          = Read-UserInput "Job title (optional)"
+        $userData["Manager"]           = Read-UserInput "Manager UPN (optional)"
+
+        $userData = Resolve-OnboardTemplate -Template $template -UserData $userData
+
+        Write-Host ""
+        Write-InfoMsg "Template '$($template.name)' applied. Review/edit any field before continuing:"
+        $userData = Edit-UserDataTable -Data $userData -FieldOrder $fields
+    }
+    else {
+        $choice = Show-Menu -Title "How to provide user data?" -Options @(
+            "Parse from a text file",
+            "Enter manually",
+            "Replicate from an existing user"
+        ) -BackLabel "Cancel"
+        if ($choice -eq -1) { return }
+    }
 
     if ($choice -eq 0) {
         $filePath = Read-UserInput "Enter full path to the text file"
@@ -168,7 +208,12 @@ function Start-Onboard {
     # ---- Licenses ----
     Write-SectionHeader "Step 2 - Assign Licenses"
     Start-Sleep -Seconds 5
-    if ($replicateLicenses.Count -gt 0) {
+    if ($template -and @($template.licenseSKUs).Count -gt 0) {
+        Apply-TemplateLicenses -UserId $newUser.Id -Template $template
+        $more = Read-UserInput "Add additional licenses? (y/n)"
+        if ($more -match '^[Yy]') { Select-AndAssignLicenses -UserId $newUser.Id }
+    }
+    elseif ($replicateLicenses.Count -gt 0) {
         foreach ($lic in $replicateLicenses) {
             if (Confirm-Action "Assign license '$(Format-LicenseLabel $lic.SkuPartNumber)'?") {
                 try { Set-MgUserLicense -UserId $newUser.Id -AddLicenses @(@{SkuId = $lic.SkuId}) -RemoveLicenses @() -ErrorAction Stop; Write-Success "'$(Get-SkuFriendlyName $lic.SkuPartNumber)' assigned." }
@@ -181,7 +226,12 @@ function Start-Onboard {
 
     # ---- Security Groups ----
     Write-SectionHeader "Step 3 - Assign Security Groups"
-    if ($replicateGroups.Count -gt 0) {
+    if ($template -and @($template.securityGroups).Count -gt 0) {
+        Apply-TemplateSecurityGroups -UserId $newUser.Id -Template $template
+        $more = Read-UserInput "Add additional groups? (y/n)"
+        if ($more -match '^[Yy]') { Search-AndAssignGroups -UserId $newUser.Id }
+    }
+    elseif ($replicateGroups.Count -gt 0) {
         foreach ($grp in $replicateGroups) {
             $gName = $grp.AdditionalProperties["displayName"]
             if (Confirm-Action "Add to group '$gName'?") {
@@ -193,6 +243,16 @@ function Start-Onboard {
         if ($more -match '^[Yy]') { Search-AndAssignGroups -UserId $newUser.Id }
     } else { Search-AndAssignGroups -UserId $newUser.Id }
 
+    # ---- Distribution Lists (template only) ----
+    if ($template -and @($template.distributionLists).Count -gt 0) {
+        Apply-TemplateDistributionLists -Upn $userData["UserPrincipalName"] -Template $template
+    }
+
+    # ---- Shared Mailboxes (template only) ----
+    if ($template -and @($template.sharedMailboxes).Count -gt 0) {
+        Apply-TemplateSharedMailboxes -Upn $userData["UserPrincipalName"] -Template $template
+    }
+
     # ---- Manager ----
     if ($userData["Manager"]) {
         Write-SectionHeader "Step 4 - Set Manager"
@@ -203,6 +263,11 @@ function Start-Onboard {
                 Write-Success "Manager set."
             }
         } catch { Write-Warn "Could not set manager: $_" }
+    }
+
+    # ---- Contractor expiry (template only) ----
+    if ($template -and $template.contractorExpiryDays) {
+        Apply-TemplateContractorExpiry -UserId $newUser.Id -Template $template
     }
 
     # ---- Password ----
@@ -286,4 +351,153 @@ function Search-AndAssignGroups {
             }
         }
     } catch { Write-ErrorMsg "Group error: $_" }
+}
+
+# ============================================================
+#  Apply-Template* — consume a Resolve-OnboardTemplate result to
+#  apply each piece of the role bundle. Each helper continues on
+#  per-item failure and logs a warning; the overall onboard does
+#  not abort. Unknown SKUs / groups / DLs / mailboxes are skipped
+#  with a warning per the templates/README.md trust-model.
+# ============================================================
+
+function Apply-TemplateLicenses {
+    param([Parameter(Mandatory)][string]$UserId, [Parameter(Mandatory)][hashtable]$Template)
+    $skus = @($Template['licenseSKUs'])
+    if ($skus.Count -eq 0) { return }
+    Write-InfoMsg "Applying $($skus.Count) license SKU(s) from template..."
+    try { $allSkus = @(Get-MgSubscribedSku -ErrorAction Stop) }
+    catch { Write-ErrorMsg "Cannot read tenant SKUs: $_"; return }
+
+    foreach ($skuPart in $skus) {
+        $sku = $allSkus | Where-Object { $_.SkuPartNumber -eq $skuPart } | Select-Object -First 1
+        if (-not $sku) {
+            Write-Warn "Skipping unknown SKU '$skuPart' (not in this tenant)."
+            continue
+        }
+        $free = ($sku.PrepaidUnits.Enabled - $sku.ConsumedUnits)
+        if ($free -le 0) {
+            Write-Warn "Skipping '$skuPart' -- no seats available."
+            continue
+        }
+        try {
+            Set-MgUserLicense -UserId $UserId -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @() -ErrorAction Stop | Out-Null
+            Write-Success "Assigned '$(Format-LicenseLabel $skuPart)'."
+        } catch {
+            Write-ErrorMsg "Failed to assign '$skuPart': $_"
+        }
+    }
+}
+
+function Apply-TemplateSecurityGroups {
+    param([Parameter(Mandatory)][string]$UserId, [Parameter(Mandatory)][hashtable]$Template)
+    $groups = @($Template['securityGroups'])
+    if ($groups.Count -eq 0) { return }
+    Write-InfoMsg "Applying $($groups.Count) security group(s) from template..."
+
+    foreach ($name in $groups) {
+        try {
+            $escaped = $name -replace "'", "''"
+            $grp = @(Get-MgGroup -Filter "displayName eq '$escaped'" -ConsistencyLevel eventual -ErrorAction Stop) | Select-Object -First 1
+            if (-not $grp) {
+                Write-Warn "Skipping unknown security group '$name'."
+                continue
+            }
+            New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $UserId -ErrorAction Stop | Out-Null
+            Write-Success "Added to '$name'."
+        } catch {
+            if ($_.Exception.Message -match 'already exist') {
+                Write-Warn "Already a member of '$name'."
+            } else {
+                Write-ErrorMsg "Failed for '$name': $_"
+            }
+        }
+    }
+}
+
+function Apply-TemplateDistributionLists {
+    param([Parameter(Mandatory)][string]$Upn, [Parameter(Mandatory)][hashtable]$Template)
+    $dls = @($Template['distributionLists'])
+    if ($dls.Count -eq 0) { return }
+    Write-SectionHeader "Step 3a - Distribution Lists (from template)"
+
+    foreach ($name in $dls) {
+        try {
+            $dl = Get-DistributionGroup -Identity $name -ErrorAction Stop
+            Add-DistributionGroupMember -Identity $dl.Identity -Member $Upn -BypassSecurityGroupManagerCheck -ErrorAction Stop | Out-Null
+            Write-Success "Added to DL '$name'."
+        } catch {
+            $msg = $_.Exception.Message
+            if ($msg -match 'already a member|already exists') {
+                Write-Warn "Already a member of DL '$name'."
+            } elseif ($msg -match "couldn't be found|not found|Couldn't find") {
+                Write-Warn "Skipping unknown DL '$name'."
+            } else {
+                Write-ErrorMsg "Failed for DL '$name': $_"
+            }
+        }
+    }
+}
+
+function Apply-TemplateSharedMailboxes {
+    param([Parameter(Mandatory)][string]$Upn, [Parameter(Mandatory)][hashtable]$Template)
+    $sms = @($Template['sharedMailboxes'])
+    if ($sms.Count -eq 0) { return }
+    Write-SectionHeader "Step 3b - Shared Mailboxes (from template)"
+
+    foreach ($sm in $sms) {
+        $id = if ($sm -is [hashtable]) { $sm['identity'] } else { $sm.identity }
+        $access = if ($sm -is [hashtable]) { $sm['access'] } else { $sm.access }
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+
+        try { Get-Mailbox -Identity $id -ErrorAction Stop | Out-Null }
+        catch { Write-Warn "Skipping unknown shared mailbox '$id'."; continue }
+
+        if ($access -eq 'Full' -or $access -eq 'FullSendAs') {
+            try {
+                Add-MailboxPermission -Identity $id -User $Upn -AccessRights FullAccess -AutoMapping $true -ErrorAction Stop | Out-Null
+                Write-Success "FullAccess on '$id' granted."
+            } catch {
+                if ($_.Exception.Message -match 'already exist|already a member') {
+                    Write-Warn "Already has FullAccess on '$id'."
+                } else { Write-ErrorMsg "FullAccess on '$id' failed: $_" }
+            }
+        }
+        if ($access -eq 'SendAs' -or $access -eq 'FullSendAs') {
+            try {
+                Add-RecipientPermission -Identity $id -Trustee $Upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop | Out-Null
+                Write-Success "SendAs on '$id' granted."
+            } catch {
+                if ($_.Exception.Message -match 'already exist|already a member') {
+                    Write-Warn "Already has SendAs on '$id'."
+                } else { Write-ErrorMsg "SendAs on '$id' failed: $_" }
+            }
+        }
+    }
+}
+
+function Apply-TemplateContractorExpiry {
+    <#
+        Records a planned end date in the user's employeeLeaveDateTime
+        attribute. NOTE: setting this property alone does NOT
+        automatically disable the account on that date. Doing the
+        actual disable requires either Microsoft Entra ID Governance
+        lifecycle workflows, an Identity Governance access review, or
+        a scheduled job that toggles accountEnabled. We log the
+        intent and continue.
+    #>
+    param([Parameter(Mandatory)][string]$UserId, [Parameter(Mandatory)][hashtable]$Template)
+    $days = [int]$Template['contractorExpiryDays']
+    if ($days -le 0) { return }
+    $when = (Get-Date).ToUniversalTime().AddDays($days)
+    $iso  = $when.ToString("yyyy-MM-ddTHH:mm:ssZ")
+    Write-SectionHeader "Step 4a - Contractor Expiry (from template)"
+    try {
+        Update-MgUser -UserId $UserId -BodyParameter @{ employeeLeaveDateTime = $iso } -ErrorAction Stop
+        Write-Success "employeeLeaveDateTime set to $iso (+$days days)."
+        Write-Warn "Auto-disable requires Entra lifecycle workflows or a scheduled task -- this only records the intent."
+    } catch {
+        Write-Warn "Could not set employeeLeaveDateTime: $_"
+        Write-InfoMsg "Manual fallback: Set-MgUser -UserId $UserId -EmployeeLeaveDateTime $iso"
+    }
 }
