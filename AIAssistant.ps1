@@ -282,6 +282,126 @@ function Limit-ResultsForAI {
 }
 
 # ============================================================
+#  AI Command Audit + Allow-list
+#  Every AI-proposed command is parsed via the PowerShell language
+#  parser and checked against $script:AICmdAllowList before any prompt
+#  is shown. Default-deny: anything not matched is rejected with no
+#  confirmation dialog. Each phase (PROPOSE / SKIP / REJECT / RUN /
+#  OK / ERROR) is written to a per-session log under
+#  $env:LOCALAPPDATA\M365Manager\audit\ (or ~/.m365manager/audit/ on
+#  non-Windows). Sensitive parameter values are redacted at log time.
+# ============================================================
+
+$script:AICmdAllowList = @(
+    # Microsoft Graph PowerShell SDK
+    '*-Mg*',
+    'Invoke-MgGraphRequest',
+
+    # Exchange Online — specific cmdlets the AI prompt teaches
+    'Get-Mailbox', 'Set-Mailbox',
+    'Get-EXOMailbox*', 'Get-MailboxStatistics',
+    'Get-MailboxPermission', 'Add-MailboxPermission', 'Remove-MailboxPermission',
+    'Get-MailboxFolderPermission', 'Add-MailboxFolderPermission',
+    'Remove-MailboxFolderPermission', 'Set-MailboxFolderPermission',
+    'Get-MailboxAutoReplyConfiguration', 'Set-MailboxAutoReplyConfiguration',
+    'Get-DistributionGroup', 'Get-DistributionGroupMember', 'Set-DistributionGroup',
+    'Add-DistributionGroupMember', 'Remove-DistributionGroupMember',
+    'Get-Recipient', 'Get-EXORecipient',
+    'Add-RecipientPermission', 'Remove-RecipientPermission',
+    'Get-UnifiedGroup', 'Get-UnifiedGroupLinks',
+
+    # Security & Compliance Center
+    'Get-ComplianceSearch', 'New-ComplianceSearch', 'Start-ComplianceSearch',
+    'Remove-ComplianceSearch', 'Get-ComplianceSearchAction',
+
+    # Pure pipeline / formatting — no side effects
+    'Select-Object', 'Where-Object', 'ForEach-Object', 'Sort-Object',
+    'Group-Object', 'Measure-Object',
+    'Format-Table', 'Format-List', 'Format-Wide', 'Out-String', 'Out-Default'
+)
+
+$script:AIAuditLogPath = $null
+
+function Get-AIAuditLogPath {
+    if ($script:AIAuditLogPath -and (Test-Path -LiteralPath (Split-Path $script:AIAuditLogPath -Parent))) {
+        return $script:AIAuditLogPath
+    }
+    $base = $null
+    if ($env:LOCALAPPDATA) { $base = Join-Path $env:LOCALAPPDATA 'M365Manager\audit' }
+    elseif ($env:HOME)     { $base = Join-Path $env:HOME '.m365manager/audit' }
+    else                   { $base = Join-Path (Get-Location).Path 'audit' }
+    try {
+        if (-not (Test-Path -LiteralPath $base)) {
+            New-Item -ItemType Directory -Path $base -Force | Out-Null
+        }
+    } catch { return $null }
+    $name = "mark-{0}-{1}.log" -f (Get-Date -Format 'yyyy-MM-dd_HHmmss'), $PID
+    $script:AIAuditLogPath = Join-Path $base $name
+    return $script:AIAuditLogPath
+}
+
+function Format-CommandForAudit {
+    param([string]$Command)
+    # Redact -ParamName <value> for sensitive parameter names. Value can be
+    # 'single-quoted', "double-quoted", or bareword/variable up to next whitespace.
+    $sensitive = 'Password|Credential|AccessToken|ClientSecret|AppSecret|ApiKey|Secret|Token'
+    return ($Command -replace "(-(?:$sensitive))\s+('[^']*'|""[^""]*""|\S+)", '$1 ***REDACTED***')
+}
+
+function Write-AIAuditEntry {
+    param([string]$EventType, [string]$Detail)
+    $path = Get-AIAuditLogPath
+    if (-not $path) { return }
+    $line = "[{0}] [{1}] {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $EventType, $Detail
+    try { Add-Content -LiteralPath $path -Value $line -ErrorAction Stop } catch {}
+}
+
+function Test-AICommandAllowed {
+    <#
+        Parses the proposed command via the PowerShell language parser and
+        rejects if (a) it has parse errors, (b) it contains no named
+        CommandAst, (c) any CommandAst's name does not match a glob in
+        $script:AICmdAllowList. Returns a hashtable:
+            Allowed  : bool
+            Reason   : string
+            Commands : array of cmdlet names that were inspected
+    #>
+    param([string]$Command)
+
+    $tokens = $null; $errs = $null
+    try {
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errs)
+    } catch {
+        return @{ Allowed=$false; Reason="parser exception: $($_.Exception.Message)"; Commands=@() }
+    }
+    if ($errs -and $errs.Count -gt 0) {
+        return @{ Allowed=$false; Reason="parse error: $($errs[0].Message)"; Commands=@() }
+    }
+
+    $cmdAsts = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+    if (-not $cmdAsts -or $cmdAsts.Count -eq 0) {
+        return @{ Allowed=$false; Reason="no command invocation found"; Commands=@() }
+    }
+
+    $found = @()
+    foreach ($c in $cmdAsts) {
+        $name = $c.GetCommandName()
+        if (-not $name) {
+            return @{ Allowed=$false; Reason="indirect or non-named invocation rejected"; Commands=$found }
+        }
+        $found += $name
+        $allowed = $false
+        foreach ($pattern in $script:AICmdAllowList) {
+            if ($name -like $pattern) { $allowed = $true; break }
+        }
+        if (-not $allowed) {
+            return @{ Allowed=$false; Reason="cmdlet '$name' not in allow-list"; Commands=$found }
+        }
+    }
+    return @{ Allowed=$true; Reason=""; Commands=$found }
+}
+
+# ============================================================
 #  Command Execution with [Y/N/A/E] and auto-fixes
 # ============================================================
 
@@ -294,7 +414,25 @@ function Invoke-MarkCommands {
     $results = @(); $runAll = $false
 
     foreach ($command in $commands) {
-        if (-not (Ensure-ServiceForCommand -Command $command)) { $results += "Command: $command`nError: Service connection failed."; continue }
+        $redacted = Format-CommandForAudit -Command $command
+
+        # ---- Default-deny: AST parse + allow-list (no Y/N prompt on reject) ----
+        $check = Test-AICommandAllowed -Command $command
+        if (-not $check.Allowed) {
+            Write-AIAuditEntry -EventType "REJECT" -Detail "$($check.Reason) | $redacted"
+            Write-Host ""
+            Write-ErrorMsg "Refused to run AI command: $($check.Reason)"
+            Write-Host "    $command" -ForegroundColor DarkGray
+            $results += "Command: $command`nError: rejected ($($check.Reason))"
+            continue
+        }
+        Write-AIAuditEntry -EventType "PROPOSE" -Detail $redacted
+
+        if (-not (Ensure-ServiceForCommand -Command $command)) {
+            Write-AIAuditEntry -EventType "ERROR" -Detail "service connection failed | $redacted"
+            $results += "Command: $command`nError: Service connection failed."
+            continue
+        }
 
         # Display command box
         Write-Host ""
@@ -327,13 +465,18 @@ function Invoke-MarkCommands {
                 }
                 else { $results += "[Skipped: $command]"; $confirmed = $true; $ans = "n" }
             }
-            if ($ans -match '^[Nn]') { continue }
+            if ($ans -match '^[Nn]') {
+                Write-AIAuditEntry -EventType "SKIP" -Detail $redacted
+                continue
+            }
         }
 
-        # ---- Execute ----
+        # ---- Execute via parsed ScriptBlock (no Invoke-Expression) ----
         Write-Host "  Executing..." -ForegroundColor $script:Colors.Info
+        Write-AIAuditEntry -EventType "RUN" -Detail $redacted
         try {
-            $output = Invoke-Expression $command 2>&1
+            $sb = [scriptblock]::Create($command)
+            $output = & $sb 2>&1
             $outputStr = ($output | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($outputStr)) { $outputStr = "(completed, no output)" }
             Write-Host "  Result:" -ForegroundColor $script:Colors.Success
@@ -341,9 +484,11 @@ function Invoke-MarkCommands {
             for ($i = 0; $i -lt $show; $i++) { Write-Host "    $($lines[$i])" -ForegroundColor White }
             if ($lines.Count -gt 25) { Write-Warn "($($lines.Count) lines, showing 25)" }
             $results += "Command: $command`nOutput: $outputStr"
+            Write-AIAuditEntry -EventType "OK" -Detail ("{0} line(s) | {1}" -f $lines.Count, $redacted)
         } catch {
             Write-ErrorMsg "Failed: $_"
             $results += "Command: $command`nError: $_"
+            Write-AIAuditEntry -EventType "ERROR" -Detail ("{0} | {1}" -f $_.Exception.Message, $redacted)
         }
     }
 
