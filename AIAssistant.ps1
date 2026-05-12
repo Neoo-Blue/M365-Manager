@@ -66,14 +66,84 @@ Set manager: Set-MgUserManagerByRef -UserId "UID" -BodyParameter @{"@odata.id"="
 "@
 
 # ============================================================
-#  Config
+#  Config — API key is DPAPI-encrypted at rest (per-user, per-machine).
+#  Stored values are prefixed:
+#     DPAPI:<hex>  → Windows DPAPI ciphertext (preferred)
+#     B64:<base64> → base64 fallback on non-Windows (NOT real encryption,
+#                    just obfuscation — flagged with a warning at save time)
+#     <anything else> → legacy plaintext, migrated on load
 # ============================================================
 
-function Get-AIConfig {
-    if (Test-Path $script:AIConfigPath) { try { return (Get-Content $script:AIConfigPath -Raw | ConvertFrom-Json) } catch { return $null } }
-    return $null
+function Protect-ApiKey {
+    param([string]$PlainKey)
+    if ([string]::IsNullOrWhiteSpace($PlainKey) -or $PlainKey -eq "none") { return $PlainKey }
+    if ($PlainKey -like "DPAPI:*" -or $PlainKey -like "B64:*") { return $PlainKey }
+    try {
+        $secure = ConvertTo-SecureString $PlainKey -AsPlainText -Force
+        $enc    = ConvertFrom-SecureString $secure
+        return "DPAPI:$enc"
+    } catch {
+        Write-Warn "DPAPI unavailable on this host; API key will be base64-obfuscated only (NOT encrypted). Reason: $_"
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($PlainKey)
+        return "B64:$([Convert]::ToBase64String($bytes))"
+    }
 }
-function Save-AIConfig { param([hashtable]$Config); $Config | ConvertTo-Json -Depth 5 | Out-File -FilePath $script:AIConfigPath -Encoding UTF8 -Force }
+
+function Unprotect-ApiKey {
+    param([string]$StoredKey)
+    if ([string]::IsNullOrWhiteSpace($StoredKey) -or $StoredKey -eq "none") { return $StoredKey }
+    if ($StoredKey -like "DPAPI:*") {
+        try {
+            $secure = ConvertTo-SecureString $StoredKey.Substring(6)
+            return [System.Net.NetworkCredential]::new("", $secure).Password
+        } catch {
+            throw "Failed to decrypt API key. Likely cause: config was encrypted by a different user account or on a different machine. Re-run AI setup (option 99 → /config)."
+        }
+    }
+    if ($StoredKey -like "B64:*") {
+        try {
+            return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($StoredKey.Substring(4)))
+        } catch { throw "Failed to decode API key (corrupt base64). Re-run AI setup." }
+    }
+    return $StoredKey  # legacy plaintext — caller is expected to re-save through Save-AIConfig to migrate
+}
+
+function Get-AIConfig {
+    if (-not (Test-Path $script:AIConfigPath)) { return $null }
+    $raw = $null
+    try { $raw = Get-Content $script:AIConfigPath -Raw | ConvertFrom-Json } catch { return $null }
+    if ($null -eq $raw) { return $null }
+
+    # Normalize to hashtable so callers don't need the PSCustomObject branch
+    $ht = @{}
+    foreach ($prop in $raw.PSObject.Properties) {
+        # Skip _comment_* documentation keys from the example file
+        if ($prop.Name -like "_comment*") { continue }
+        $ht[$prop.Name] = $prop.Value
+    }
+
+    # ---- Migrate legacy plaintext keys ----
+    if ($ht.ContainsKey("ApiKey")) {
+        $key = [string]$ht["ApiKey"]
+        if ($key -and $key -ne "none" -and $key -notlike "DPAPI:*" -and $key -notlike "B64:*" -and $key -ne "REPLACE_ME") {
+            Write-Warn "Plaintext API key detected in $($script:AIConfigPath). Encrypting in place..."
+            $ht["ApiKey"] = Protect-ApiKey -PlainKey $key
+            Save-AIConfig -Config $ht
+            Write-Success "API key encrypted (DPAPI, per-user, non-portable)."
+        }
+    }
+    return $ht
+}
+
+function Save-AIConfig {
+    param([hashtable]$Config)
+    $toSave = @{}
+    foreach ($k in $Config.Keys) { $toSave[$k] = $Config[$k] }
+    if ($toSave.ContainsKey("ApiKey")) {
+        $toSave["ApiKey"] = Protect-ApiKey -PlainKey ([string]$toSave["ApiKey"])
+    }
+    $toSave | ConvertTo-Json -Depth 5 | Out-File -FilePath $script:AIConfigPath -Encoding UTF8 -Force
+}
 
 function Setup-AIProvider {
     Write-SectionHeader "AI Assistant Setup"
@@ -105,7 +175,10 @@ function Setup-AIProvider {
 
 function Invoke-AIChat {
     param([hashtable]$Config,[array]$Messages)
-    $p=$Config["Provider"];$k=$Config["ApiKey"];$ep=$Config["Endpoint"];$m=$Config["Model"]
+    $p=$Config["Provider"]
+    try { $k = Unprotect-ApiKey -StoredKey ([string]$Config["ApiKey"]) }
+    catch { return "[!] $_" }
+    $ep=$Config["Endpoint"];$m=$Config["Model"]
     try {
         switch($p){
             "Ollama" { $body=@{model=$m;stream=$false;messages=@(@{role="system";content=$script:AISystemPrompt})+$Messages}|ConvertTo-Json -Depth 10; return (Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop).message.content }
