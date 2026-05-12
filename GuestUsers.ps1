@@ -154,15 +154,18 @@ function Send-GuestRecertEmail {
 <p style='color:#666;font-size:12px'>Sent automatically by M365 Manager.</p>
 </body></html>
 "@
+    if (Get-Command Send-Email -ErrorAction SilentlyContinue) {
+        return [bool] (Send-Email -To @($ManagerUPN) -Subject "[Recertify] Guest access for $($Guest.UPN)" -Body $body)
+    }
+    # Standalone fallback for non-Phase-4 environments.
     $message = @{
         message = @{
-            subject = "[Recertify] Guest access for $($Guest.UPN)"
-            body = @{ contentType = "HTML"; content = $body }
+            subject      = "[Recertify] Guest access for $($Guest.UPN)"
+            body         = @{ contentType = "HTML"; content = $body }
             toRecipients = @(@{ emailAddress = @{ address = $ManagerUPN } })
         }
         saveToSentItems = $true
     } | ConvertTo-Json -Depth 10
-
     return Invoke-Action `
         -Description ("Send guest-recertification email for {0} to manager {1}" -f $Guest.UPN, $ManagerUPN) `
         -ActionType 'SendGuestRecertEmail' `
