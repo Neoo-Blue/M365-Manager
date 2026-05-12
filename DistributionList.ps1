@@ -46,13 +46,33 @@ function Edit-DistributionListMembers {
     if ($action -eq 0) {
         $dl = Find-DistributionList; if ($null -eq $dl) { Pause-ForUser; return }
         if (Confirm-Action "Add to '$($dl.DisplayName)'?") {
-            try { Add-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -ErrorAction Stop; Write-Success "Added." }
-            catch { if ($_.Exception.Message -match "already") { Write-Warn "Already a member." } else { Write-ErrorMsg "$_" } }
+            $ok = Invoke-Action -Description ("Add {0} to DL '{1}'" -f $upn, $dl.DisplayName) -Action {
+                try { Add-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -ErrorAction Stop; $true }
+                catch { if ($_.Exception.Message -match 'already') { 'already' } else { throw } }
+            }
+            if (-not (Get-PreviewMode)) {
+                if ($ok -eq 'already') { Write-Warn "Already a member." }
+                elseif ($ok)           { Write-Success "Added." }
+            }
         }
         $pc = Show-Menu -Title "Send permissions?" -Options @("Send As","Send on Behalf","Both","None") -BackLabel "Skip"
         if ($pc -ne -1 -and $pc -ne 3) {
-            if ($pc -eq 0 -or $pc -eq 2) { if (Confirm-Action "Grant Send As?") { try { Add-RecipientPermission -Identity $dl.PrimarySmtpAddress -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } } }
-            if ($pc -eq 1 -or $pc -eq 2) { if (Confirm-Action "Grant Send on Behalf?") { try { Set-DistributionGroup -Identity $dl.PrimarySmtpAddress -GrantSendOnBehalfTo @{Add=$upn} -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } } }
+            if ($pc -eq 0 -or $pc -eq 2) {
+                if (Confirm-Action "Grant Send As?") {
+                    $ok = Invoke-Action -Description ("Grant {0} SendAs on DL '{1}'" -f $upn, $dl.DisplayName) -Action {
+                        Add-RecipientPermission -Identity $dl.PrimarySmtpAddress -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Granted." }
+                }
+            }
+            if ($pc -eq 1 -or $pc -eq 2) {
+                if (Confirm-Action "Grant Send on Behalf?") {
+                    $ok = Invoke-Action -Description ("Grant {0} SendOnBehalf on DL '{1}'" -f $upn, $dl.DisplayName) -Action {
+                        Set-DistributionGroup -Identity $dl.PrimarySmtpAddress -GrantSendOnBehalfTo @{Add=$upn} -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Granted." }
+                }
+            }
         }
     } else {
         Write-InfoMsg "Finding DL memberships..."
@@ -65,7 +85,15 @@ function Edit-DistributionListMembers {
             if ($memberOf.Count -eq 0) { Write-InfoMsg "Not in any DLs."; Pause-ForUser; return }
             $labels = $memberOf | ForEach-Object { "$($_.DisplayName) ($($_.PrimarySmtpAddress))" }
             $sel = Show-MultiSelect -Title "Remove from" -Options $labels
-            foreach ($idx in $sel) { $dl = $memberOf[$idx]; if (Confirm-Action "Remove from '$($dl.DisplayName)'?") { try { Remove-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -Confirm:$false -ErrorAction Stop; Write-Success "Removed." } catch { Write-ErrorMsg "$_" } } }
+            foreach ($idx in $sel) {
+                $dl = $memberOf[$idx]
+                if (Confirm-Action "Remove from '$($dl.DisplayName)'?") {
+                    $ok = Invoke-Action -Description ("Remove {0} from DL '{1}'" -f $upn, $dl.DisplayName) -Action {
+                        Remove-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -Confirm:$false -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed." }
+                }
+            }
         } catch { Write-ErrorMsg "$_" }
     }
     Pause-ForUser
@@ -81,12 +109,25 @@ function Edit-DistributionListProperties {
     Write-StatusLine "Hidden" "$($dl.HiddenFromAddressListsEnabled)" "White"
 
     $ec = Show-Menu -Title "Edit" -Options @("Change name","Change description","Change owner","Toggle sender auth","Toggle hidden") -BackLabel "Done"
+    $dlId = $dl.PrimarySmtpAddress
+    $dlName = $dl.DisplayName
     switch ($ec) {
-        0 { $v = Read-UserInput "New name"; if ($v -and (Confirm-Action "Rename?")) { try { Set-DistributionGroup -Identity $dl.PrimarySmtpAddress -DisplayName $v; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
-        1 { $v = Read-UserInput "New description (or 'clear')"; if (Confirm-Action "Update?") { try { Set-DistributionGroup -Identity $dl.PrimarySmtpAddress -Description $(if ($v -eq 'clear') {""} else {$v}); Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
-        2 { $v = Read-UserInput "New owner email"; if ($v -and (Confirm-Action "Set owner?")) { try { Set-DistributionGroup -Identity $dl.PrimarySmtpAddress -ManagedBy $v; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
-        3 { $nv = -not $dl.RequireSenderAuthenticationEnabled; if (Confirm-Action "Set to $nv?") { try { Set-DistributionGroup -Identity $dl.PrimarySmtpAddress -RequireSenderAuthenticationEnabled $nv; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
-        4 { $nv = -not $dl.HiddenFromAddressListsEnabled; if (Confirm-Action "Set hidden to $nv?") { try { Set-DistributionGroup -Identity $dl.PrimarySmtpAddress -HiddenFromAddressListsEnabled $nv; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
+        0 { $v = Read-UserInput "New name"; if ($v -and (Confirm-Action "Rename?")) {
+                $ok = Invoke-Action -Description ("Rename DL '{0}' -> '{1}'" -f $dlName, $v) -Action { Set-DistributionGroup -Identity $dlId -DisplayName $v -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
+        1 { $v = Read-UserInput "New description (or 'clear')"; if (Confirm-Action "Update?") {
+                $nv = if ($v -eq 'clear') { "" } else { $v }
+                $ok = Invoke-Action -Description ("Update DL '{0}' description" -f $dlName) -Action { Set-DistributionGroup -Identity $dlId -Description $nv -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
+        2 { $v = Read-UserInput "New owner email"; if ($v -and (Confirm-Action "Set owner?")) {
+                $ok = Invoke-Action -Description ("Set DL '{0}' owner -> {1}" -f $dlName, $v) -Action { Set-DistributionGroup -Identity $dlId -ManagedBy $v -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
+        3 { $nv = -not $dl.RequireSenderAuthenticationEnabled; if (Confirm-Action "Set to $nv?") {
+                $ok = Invoke-Action -Description ("Set DL '{0}' RequireSenderAuthenticationEnabled = {1}" -f $dlName, $nv) -Action { Set-DistributionGroup -Identity $dlId -RequireSenderAuthenticationEnabled $nv -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
+        4 { $nv = -not $dl.HiddenFromAddressListsEnabled; if (Confirm-Action "Set hidden to $nv?") {
+                $ok = Invoke-Action -Description ("Set DL '{0}' HiddenFromAddressListsEnabled = {1}" -f $dlName, $nv) -Action { Set-DistributionGroup -Identity $dlId -HiddenFromAddressListsEnabled $nv -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
     }
     Pause-ForUser
 }
@@ -96,8 +137,12 @@ function Remove-DistributionListFlow {
     Write-Warn "Irreversible!"
     if (Confirm-Action "DELETE '$($dl.DisplayName)'?") {
         $check = Read-UserInput "Type the DL email to confirm"
-        if ($check -eq $dl.PrimarySmtpAddress) { try { Remove-DistributionGroup -Identity $dl.PrimarySmtpAddress -Confirm:$false; Write-Success "Deleted." } catch { Write-ErrorMsg "$_" } }
-        else { Write-Warn "Mismatch. Cancelled." }
+        if ($check -eq $dl.PrimarySmtpAddress) {
+            $ok = Invoke-Action -Description ("DELETE DL '{0}' <{1}>" -f $dl.DisplayName, $dl.PrimarySmtpAddress) -Action {
+                Remove-DistributionGroup -Identity $dl.PrimarySmtpAddress -Confirm:$false -ErrorAction Stop; $true
+            }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Deleted." }
+        } else { Write-Warn "Mismatch. Cancelled." }
     }
     Pause-ForUser
 }
@@ -126,7 +171,12 @@ function Add-DLMembersLoop {
                     if ($sel -eq -1) { continue }; $f[$sel]
                 }
             }
-            if (Confirm-Action "Add '$($tu.DisplayName)'?") { Add-DistributionGroupMember -Identity $Id -Member $tu.UserPrincipalName -ErrorAction Stop; Write-Success "Added." }
+            if (Confirm-Action "Add '$($tu.DisplayName)'?") {
+                $ok = Invoke-Action -Description ("Add {0} to DL '{1}'" -f $tu.UserPrincipalName, $Name) -Action {
+                    Add-DistributionGroupMember -Identity $Id -Member $tu.UserPrincipalName -ErrorAction Stop; $true
+                }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Added." }
+            }
         } catch { if ($_.Exception.Message -match "already") { Write-Warn "Already a member." } else { Write-ErrorMsg "$_" } }
     }
 }

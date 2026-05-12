@@ -45,15 +45,19 @@ function Start-Offboard {
     # Step 1: Revoke sessions
     Write-SectionHeader "Step 1 - Revoke All Sessions"
     if (Confirm-Action "Revoke all sessions for $upn?") {
-        try { Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; Write-Success "Sessions revoked." }
-        catch { Write-ErrorMsg "Failed: $_" }
+        $ok = Invoke-Action -Description ("Revoke sign-in sessions for {0}" -f $upn) -Action {
+            Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; $true
+        }
+        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Sessions revoked." }
     }
 
     # Step 2: Block sign-in
     Write-SectionHeader "Step 2 - Block Sign-In"
     if (Confirm-Action "Block sign-in for $upn?") {
-        try { Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; Write-Success "Sign-in blocked." }
-        catch { Write-ErrorMsg "Failed: $_" }
+        $ok = Invoke-Action -Description ("Block sign-in for {0}" -f $upn) -Action {
+            Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; $true
+        }
+        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Sign-in blocked." }
     }
 
     # Step 3: OOO
@@ -61,10 +65,10 @@ function Start-Offboard {
     if ([string]::IsNullOrWhiteSpace($userData["OOOMessage"])) { $userData["OOOMessage"] = Read-UserInput "Enter OOO message (or 'skip')" }
     if ($userData["OOOMessage"] -ne 'skip' -and $userData["OOOMessage"]) {
         if (Confirm-Action "Set auto-reply?" "Message: $($userData['OOOMessage'])") {
-            try {
-                Set-MailboxAutoReplyConfiguration -Identity $upn -AutoReplyState Enabled -InternalMessage $userData["OOOMessage"] -ExternalMessage $userData["OOOMessage"] -ErrorAction Stop
-                Write-Success "OOO set."
-            } catch { Write-ErrorMsg "Failed: $_" }
+            $ok = Invoke-Action -Description ("Set OOO auto-reply for {0}" -f $upn) -Action {
+                Set-MailboxAutoReplyConfiguration -Identity $upn -AutoReplyState Enabled -InternalMessage $userData["OOOMessage"] -ExternalMessage $userData["OOOMessage"] -ErrorAction Stop; $true
+            }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "OOO set." }
         }
     }
 
@@ -73,16 +77,20 @@ function Start-Offboard {
     if ([string]::IsNullOrWhiteSpace($userData["ForwardingEmail"])) { $userData["ForwardingEmail"] = Read-UserInput "Forwarding email (or 'skip')" }
     if ($userData["ForwardingEmail"] -ne 'skip' -and $userData["ForwardingEmail"]) {
         $fwdEmail = $userData["ForwardingEmail"]
-        try { $fwdUser = Get-MgUser -UserId $fwdEmail -ErrorAction Stop; Write-Success "Target found: $($fwdUser.DisplayName)" }
-        catch { Write-Warn "'$fwdEmail' not found in tenant."; if (-not (Confirm-Action "Use anyway?")) { $fwdEmail = $null } }
+        if (-not (Get-PreviewMode)) {
+            try { $fwdUser = Get-MgUser -UserId $fwdEmail -ErrorAction Stop; Write-Success "Target found: $($fwdUser.DisplayName)" }
+            catch { Write-Warn "'$fwdEmail' not found in tenant."; if (-not (Confirm-Action "Use anyway?")) { $fwdEmail = $null } }
+        }
 
         if ($fwdEmail) {
             $dc = Show-Menu -Title "Delivery option" -Options @("Forward only","Forward and keep copy") -BackLabel "Skip"
             if ($dc -ne -1) {
                 $keepCopy = ($dc -eq 1)
                 if (Confirm-Action "Set forwarding to $fwdEmail (keep copy: $keepCopy)?") {
-                    try { Set-Mailbox -Identity $upn -ForwardingSmtpAddress "smtp:$fwdEmail" -DeliverToMailboxAndForward $keepCopy -ErrorAction Stop; Write-Success "Forwarding set." }
-                    catch { Write-ErrorMsg "Failed: $_" }
+                    $ok = Invoke-Action -Description ("Set forwarding {0} -> {1} (keep copy: {2})" -f $upn, $fwdEmail, $keepCopy) -Action {
+                        Set-Mailbox -Identity $upn -ForwardingSmtpAddress "smtp:$fwdEmail" -DeliverToMailboxAndForward $keepCopy -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Forwarding set." }
                 }
             }
         }
@@ -91,8 +99,10 @@ function Start-Offboard {
     # Step 5: Shared mailbox
     Write-SectionHeader "Step 5 - Convert to Shared Mailbox"
     if (Confirm-Action "Convert $upn to Shared Mailbox?") {
-        try { Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; Write-Success "Converted." }
-        catch { Write-ErrorMsg "Failed: $_" }
+        $ok = Invoke-Action -Description ("Convert {0} to Shared Mailbox" -f $upn) -Action {
+            Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; $true
+        }
+        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Converted." }
     }
 
     # Step 6: Grant access
@@ -113,13 +123,29 @@ function Start-Offboard {
                     }
                 }
                 if (Confirm-Action "Grant Full Access to $($au.DisplayName)?") {
-                    try { Add-MailboxPermission -Identity $upn -User $au.UserPrincipalName -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; Write-Success "Full Access granted." }
-                    catch { Write-ErrorMsg "Failed: $_" }
+                    $ok = Invoke-Action -Description ("Grant {0} FullAccess on {1}" -f $au.UserPrincipalName, $upn) -Action {
+                        Add-MailboxPermission -Identity $upn -User $au.UserPrincipalName -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Full Access granted." }
                 }
                 $pc = Show-Menu -Title "Send permissions for $($au.DisplayName)?" -Options @("Send As","Send on Behalf","Both","None") -BackLabel "Skip"
                 if ($pc -ne -1 -and $pc -ne 3) {
-                    if ($pc -eq 0 -or $pc -eq 2) { if (Confirm-Action "Grant Send As?") { try { Add-RecipientPermission -Identity $upn -Trustee $au.UserPrincipalName -AccessRights SendAs -Confirm:$false -ErrorAction Stop; Write-Success "Send As granted." } catch { Write-ErrorMsg "$_" } } }
-                    if ($pc -eq 1 -or $pc -eq 2) { if (Confirm-Action "Grant Send on Behalf?") { try { Set-Mailbox -Identity $upn -GrantSendOnBehalfTo @{Add = $au.UserPrincipalName} -ErrorAction Stop; Write-Success "Send on Behalf granted." } catch { Write-ErrorMsg "$_" } } }
+                    if ($pc -eq 0 -or $pc -eq 2) {
+                        if (Confirm-Action "Grant Send As?") {
+                            $ok = Invoke-Action -Description ("Grant {0} SendAs on {1}" -f $au.UserPrincipalName, $upn) -Action {
+                                Add-RecipientPermission -Identity $upn -Trustee $au.UserPrincipalName -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
+                            }
+                            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Send As granted." }
+                        }
+                    }
+                    if ($pc -eq 1 -or $pc -eq 2) {
+                        if (Confirm-Action "Grant Send on Behalf?") {
+                            $ok = Invoke-Action -Description ("Grant {0} SendOnBehalf on {1}" -f $au.UserPrincipalName, $upn) -Action {
+                                Set-Mailbox -Identity $upn -GrantSendOnBehalfTo @{Add = $au.UserPrincipalName} -ErrorAction Stop; $true
+                            }
+                            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Send on Behalf granted." }
+                        }
+                    }
                 }
             } catch { Write-ErrorMsg "Error: $_" }
             $more = Read-UserInput "Grant access to another user? (y/n)"
@@ -162,8 +188,10 @@ function Start-Offboard {
                         Write-Warn "$friendly is group-assigned. Skipping (remove user from the group instead)."
                         continue
                     }
-                    try { Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; Write-Success "Removed: $friendly" }
-                    catch { Write-ErrorMsg "Failed to remove $friendly : $_" }
+                    $ok = Invoke-Action -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $upn) -Action {
+                        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed: $friendly" }
                 }
             }
         }

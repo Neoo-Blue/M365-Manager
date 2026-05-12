@@ -172,9 +172,15 @@ function Invoke-BulkOnboard {
         Write-ErrorMsg "CSV not found: $Path"; return
     }
 
-    $dryRun = $WhatIf.IsPresent
     Write-SectionHeader "Bulk Onboard -- $(Split-Path $Path -Leaf)"
-    if ($dryRun) { Write-Warn "Dry-run / preview mode -- no tenant changes will be made." }
+
+    # -WhatIf temporarily forces preview mode for the body of this call,
+    # restored on exit. Session mode is otherwise honored as-is.
+    $previousMode = Get-PreviewMode
+    if ($WhatIf.IsPresent -and -not $previousMode) { Set-PreviewMode -Enabled $true }
+    $dryRun = Get-PreviewMode
+    if ($dryRun) { Write-Warn "PREVIEW mode -- no tenant changes will be made." }
+    try {
 
     # ---- Parse ----
     $rows = $null
@@ -246,31 +252,24 @@ function Invoke-BulkOnboard {
         $tpl = $null
         if ($r['__TemplateKey']) { $tpl = $validation.TemplateCache[$r['__TemplateKey']] }
 
-        if ($dryRun) {
-            Write-Host ("  [PREVIEW] Would create: {0,-40} display='{1}'" -f $upn, $r['DisplayName']) -ForegroundColor Yellow
-            if ($tpl) {
-                Write-Host ("  [PREVIEW]    Template: {0}" -f $tpl.name) -ForegroundColor Yellow
-                if (@($tpl.licenseSKUs).Count -gt 0)       { Write-Host ("  [PREVIEW]    Licenses: {0}" -f ($tpl.licenseSKUs -join ', ')) -ForegroundColor Yellow }
-                if (@($tpl.securityGroups).Count -gt 0)    { Write-Host ("  [PREVIEW]    SGs:      {0}" -f ($tpl.securityGroups -join ', ')) -ForegroundColor Yellow }
-                if (@($tpl.distributionLists).Count -gt 0) { Write-Host ("  [PREVIEW]    DLs:      {0}" -f ($tpl.distributionLists -join ', ')) -ForegroundColor Yellow }
-                if (@($tpl.sharedMailboxes).Count -gt 0)   { Write-Host ("  [PREVIEW]    SMs:      {0}" -f ((@($tpl.sharedMailboxes) | ForEach-Object { "$($_.identity)($($_.access))" }) -join ', ')) -ForegroundColor Yellow }
-            }
-            $entry.Status = 'Preview'
-            $entry.Reason = 'Dry-run, no tenant call made'
-            [void]$results.Add([PSCustomObject]$entry)
-            continue
-        }
-
         try {
             $body = New-BulkOnboardBody -Row $r -Template $tpl
             $password = if (-not [string]::IsNullOrWhiteSpace($r['Password'])) { $entry.GeneratedPassword = 'provided'; $r['Password'] } else { $entry.GeneratedPassword = 'generated'; New-BulkOnboardPassword }
             $body['PasswordProfile'] = @{ ForceChangePasswordNextSignIn = $true; Password = $password }
 
-            $newUser = New-MgUser -BodyParameter $body -ErrorAction Stop
-            Write-Success "Created: $upn"
+            $stubUser = [PSCustomObject]@{
+                Id                = "preview-$([guid]::NewGuid())"
+                UserPrincipalName = $upn
+                DisplayName       = $body.DisplayName
+            }
+            $newUser = Invoke-Action -Description ("Create user {0}" -f $upn) -Critical -StubReturn $stubUser -Action {
+                New-MgUser -BodyParameter $body -ErrorAction Stop
+            }
+            if ($null -eq $newUser) { throw "New-MgUser returned no user object." }
+            if (-not $dryRun) { Write-Success "Created: $upn" }
 
             if ($tpl) {
-                Start-Sleep -Seconds 3   # tenant propagation before applying licenses
+                if (-not $dryRun) { Start-Sleep -Seconds 3 }   # tenant propagation before applying licenses
                 Apply-TemplateLicenses          -UserId $newUser.Id -Template $tpl
                 Apply-TemplateSecurityGroups    -UserId $newUser.Id -Template $tpl
                 if (@($tpl.distributionLists).Count -gt 0) { Apply-TemplateDistributionLists -Upn $upn -Template $tpl }
@@ -280,9 +279,11 @@ function Invoke-BulkOnboard {
 
             if ($r['Manager']) {
                 try {
-                    $mgr = Get-MgUser -UserId $r['Manager'] -ErrorAction Stop
-                    Set-MgUserManagerByRef -UserId $newUser.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/users/$($mgr.Id)" } -ErrorAction Stop
-                    Write-Success "Manager set: $($mgr.UserPrincipalName)"
+                    $mgr = if ($dryRun) { [PSCustomObject]@{ Id = "preview-mgr"; UserPrincipalName = $r['Manager']; DisplayName = $r['Manager'] } } else { Get-MgUser -UserId $r['Manager'] -ErrorAction Stop }
+                    Invoke-Action -Description ("Set manager of {0} to {1}" -f $upn, $r['Manager']) -Action {
+                        Set-MgUserManagerByRef -UserId $newUser.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/users/$($mgr.Id)" } -ErrorAction Stop
+                    } | Out-Null
+                    if (-not $dryRun) { Write-Success "Manager set: $($mgr.UserPrincipalName)" }
                 } catch {
                     Write-Warn "Manager '$($r['Manager'])' could not be set for $upn -- $($_.Exception.Message)"
                     $entry.Reason = ("ManagerWarn: {0}" -f $_.Exception.Message)
@@ -290,17 +291,19 @@ function Invoke-BulkOnboard {
             }
 
             if ($r['IssueTAP'] -and $r['IssueTAP'] -match '^(?i:true|yes|1|y)$') {
-                try {
+                $tapResp = Invoke-Action -Description ("Issue Temporary Access Pass for {0} (60 min, single-use)" -f $upn) -Action {
                     $tapBody = @{ lifetimeInMinutes = 60; isUsableOnce = $true } | ConvertTo-Json -Compress
-                    $tapResp = Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/users/$($newUser.Id)/authentication/temporaryAccessPassMethods" -Body $tapBody -ContentType 'application/json' -ErrorAction Stop
+                    Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/users/$($newUser.Id)/authentication/temporaryAccessPassMethods" -Body $tapBody -ContentType 'application/json' -ErrorAction Stop
+                }
+                if ($tapResp -and $tapResp.temporaryAccessPass) {
                     $entry.TAP = [string]$tapResp.temporaryAccessPass
-                    Write-Success "TAP issued for $upn (one-time, 60 min)."
-                } catch {
-                    Write-Warn "TAP issue failed for $upn -- $($_.Exception.Message)"
+                    if (-not $dryRun) { Write-Success "TAP issued for $upn (one-time, 60 min)." }
+                } elseif ($dryRun) {
+                    $entry.TAP = '<preview>'
                 }
             }
 
-            $entry.Status = 'Success'
+            $entry.Status = if ($dryRun) { 'Preview' } else { 'Success' }
         } catch {
             $entry.Status = 'Failed'
             $entry.Reason = $_.Exception.Message
@@ -322,15 +325,19 @@ function Invoke-BulkOnboard {
         Write-ErrorMsg "Could not write result CSV: $_"
     }
 
-    $succeeded = @($results | Where-Object { $_.Status -eq 'Success' }).Count
-    $failed    = @($results | Where-Object { $_.Status -eq 'Failed'  }).Count
-    $preview   = @($results | Where-Object { $_.Status -eq 'Preview' }).Count
-    Write-Host ""
-    Write-Host "  Bulk onboard summary:" -ForegroundColor White
-    Write-StatusLine "Succeeded" $succeeded "Green"
-    Write-StatusLine "Failed"    $failed    $(if ($failed -gt 0) { 'Red' } else { 'Gray' })
-    if ($preview -gt 0) { Write-StatusLine "Preview" $preview "Yellow" }
-    Write-Host ""
+        $succeeded = @($results | Where-Object { $_.Status -eq 'Success' }).Count
+        $failed    = @($results | Where-Object { $_.Status -eq 'Failed'  }).Count
+        $preview   = @($results | Where-Object { $_.Status -eq 'Preview' }).Count
+        Write-Host ""
+        Write-Host "  Bulk onboard summary:" -ForegroundColor White
+        Write-StatusLine "Succeeded" $succeeded "Green"
+        Write-StatusLine "Failed"    $failed    $(if ($failed -gt 0) { 'Red' } else { 'Gray' })
+        if ($preview -gt 0) { Write-StatusLine "Preview" $preview "Yellow" }
+        Write-Host ""
+    }
+    finally {
+        Set-PreviewMode -Enabled $previousMode
+    }
 }
 
 function Start-BulkOnboard {

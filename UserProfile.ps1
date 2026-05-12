@@ -118,15 +118,19 @@ function Start-UserProfileManagement {
                             }
                         }
                         if (Confirm-Action "Set manager to $($nm.DisplayName)?") {
-                            Set-MgUserManagerByRef -UserId $user.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/users/$($nm.Id)" } -ErrorAction Stop
-                            Write-Success "Manager set."
+                            $ok = Invoke-Action -Description ("Set manager of {0} to {1}" -f $user.UserPrincipalName, $nm.UserPrincipalName) -Action {
+                                Set-MgUserManagerByRef -UserId $user.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/users/$($nm.Id)" } -ErrorAction Stop; $true
+                            }
+                            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Manager set." }
                         }
                     } catch { Write-ErrorMsg "Failed: $_" }
                 }
             } elseif ($ma -eq 1) {
                 if (Confirm-Action "Remove manager?") {
-                    try { Remove-MgUserManagerByRef -UserId $user.Id -ErrorAction Stop; Write-Success "Removed." }
-                    catch { Write-ErrorMsg "Failed: $_" }
+                    $ok = Invoke-Action -Description ("Remove manager from {0}" -f $user.UserPrincipalName) -Action {
+                        Remove-MgUserManagerByRef -UserId $user.Id -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed." }
                 }
             }
             Pause-ForUser; continue
@@ -144,11 +148,11 @@ function Start-UserProfileManagement {
                 $newVal = Read-UserInput "New value (or 'clear')"
                 if ($newVal -eq 'clear') { $newVal = "" }
                 if (Confirm-Action "Update '$label'?" "Old: $(if ($curVal) { $curVal } else { '(empty)' })`nNew: $(if ($newVal) { $newVal } else { '(cleared)' })") {
-                    try {
-                        $body = @{}; $body[$prop] = if ([string]::IsNullOrWhiteSpace($newVal)) { $null } else { $newVal }
-                        Update-MgUser -UserId $user.Id -BodyParameter $body -ErrorAction Stop
-                        Write-Success "'$label' updated."
-                    } catch { Write-ErrorMsg "Failed: $_" }
+                    $body = @{}; $body[$prop] = if ([string]::IsNullOrWhiteSpace($newVal)) { $null } else { $newVal }
+                    $ok = Invoke-Action -Description ("Update {0}.{1} -> {2}" -f $user.UserPrincipalName, $prop, $newVal) -Action {
+                        Update-MgUser -UserId $user.Id -BodyParameter $body -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "'$label' updated." }
                 }
             } else { Write-ErrorMsg "Invalid number." }
             Pause-ForUser; continue

@@ -64,19 +64,17 @@ function Start-ArchiveManagement {
     else {
         # ---- Enable archive ----
         if (Confirm-Action "Enable archive mailbox for $upn and start archiving immediately?") {
-            try {
-                Enable-Mailbox -Identity $upn -Archive -ErrorAction Stop
-                Write-Success "Archive mailbox enabled for $upn."
-
-                # Start managed folder assistant to begin archiving immediately
-                Write-InfoMsg "Starting Managed Folder Assistant to initiate archiving..."
-                Start-ManagedFolderAssistant -Identity $upn -ErrorAction Stop
-                Write-Success "Managed Folder Assistant started. Archiving will begin processing."
-
-            } catch {
-                Write-ErrorMsg "Failed to enable archive: $_"
-                Pause-ForUser; return
+            $ok1 = Invoke-Action -Description ("Enable archive mailbox for {0}" -f $upn) -Action {
+                Enable-Mailbox -Identity $upn -Archive -ErrorAction Stop; $true
             }
+            if ($ok1 -and -not (Get-PreviewMode)) { Write-Success "Archive mailbox enabled for $upn." }
+            if (-not $ok1 -and -not (Get-PreviewMode)) { Pause-ForUser; return }
+
+            Write-InfoMsg "Starting Managed Folder Assistant to initiate archiving..."
+            $ok2 = Invoke-Action -Description ("Start Managed Folder Assistant on {0}" -f $upn) -Action {
+                Start-ManagedFolderAssistant -Identity $upn -ErrorAction Stop; $true
+            }
+            if ($ok2 -and -not (Get-PreviewMode)) { Write-Success "Managed Folder Assistant started. Archiving will begin processing." }
 
             # Offer to set retention policy
             $setPolicy = Show-Menu -Title "Set a retention policy?" -Options @(
@@ -118,12 +116,16 @@ function Set-ArchiveRetentionPolicy {
         $chosenPolicy = $policies[$sel]
 
         if (Confirm-Action "Apply retention policy '$($chosenPolicy.Name)' to $UPN?") {
-            Set-Mailbox -Identity $UPN -RetentionPolicy $chosenPolicy.Name -ErrorAction Stop
-            Write-Success "Retention policy '$($chosenPolicy.Name)' applied."
+            $ok1 = Invoke-Action -Description ("Apply retention policy '{0}' to {1}" -f $chosenPolicy.Name, $UPN) -Action {
+                Set-Mailbox -Identity $UPN -RetentionPolicy $chosenPolicy.Name -ErrorAction Stop; $true
+            }
+            if ($ok1 -and -not (Get-PreviewMode)) { Write-Success "Retention policy '$($chosenPolicy.Name)' applied." }
 
             Write-InfoMsg "Starting Managed Folder Assistant to process immediately..."
-            Start-ManagedFolderAssistant -Identity $UPN -ErrorAction Stop
-            Write-Success "Managed Folder Assistant started."
+            $ok2 = Invoke-Action -Description ("Start Managed Folder Assistant on {0}" -f $UPN) -Action {
+                Start-ManagedFolderAssistant -Identity $UPN -ErrorAction Stop; $true
+            }
+            if ($ok2 -and -not (Get-PreviewMode)) { Write-Success "Managed Folder Assistant started." }
         }
     }
     catch {

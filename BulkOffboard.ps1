@@ -95,9 +95,12 @@ function Invoke-BulkOffboard {
         Write-ErrorMsg "CSV not found: $Path"; return
     }
 
-    $dryRun = $WhatIf.IsPresent
     Write-SectionHeader "Bulk Offboard -- $(Split-Path $Path -Leaf)"
-    if ($dryRun) { Write-Warn "Dry-run / preview mode -- no tenant changes will be made." }
+    $previousMode = Get-PreviewMode
+    if ($WhatIf.IsPresent -and -not $previousMode) { Set-PreviewMode -Enabled $true }
+    $dryRun = Get-PreviewMode
+    if ($dryRun) { Write-Warn "PREVIEW mode -- no tenant changes will be made." }
+    try {
 
     $rows = $null
     try { $rows = @(Import-Csv -LiteralPath $Path) }
@@ -175,49 +178,41 @@ function Invoke-BulkOffboard {
             OneDriveHandoff     = if ($handoffOd) { "TODO (Phase 3): handoff to $handoffOd" } else { '' }
         }
 
-        if ($dryRun) {
-            Write-Host ("  [PREVIEW] Would offboard: {0,-40}" -f $upn) -ForegroundColor Yellow
-            Write-Host ("  [PREVIEW]    revoke sessions, block sign-in") -ForegroundColor Yellow
-            if ($oooMsg)      { Write-Host ("  [PREVIEW]    set OOO: '$oooMsg'") -ForegroundColor Yellow }
-            if ($forwardTo)   { Write-Host ("  [PREVIEW]    forward to: $forwardTo") -ForegroundColor Yellow }
-            if ($convertShared){ Write-Host ("  [PREVIEW]    convert mailbox to Shared") -ForegroundColor Yellow }
-            if ($removeGroups){ Write-Host ("  [PREVIEW]    remove from all groups + remove direct licenses") -ForegroundColor Yellow }
-            if ($handoffOd)   { Write-Host ("  [PREVIEW]    OneDrive handoff to $handoffOd (Phase 3 -- not yet implemented)") -ForegroundColor Yellow }
-            $entry.Status = 'Preview'
-            $entry.Reason = 'Dry-run, no tenant call made'
-            [void]$results.Add([PSCustomObject]$entry)
-            continue
+        $stepErrors = @()
+        $stepOk = {
+            param([string]$Description, [scriptblock]$Body)
+            $result = $null
+            try {
+                $result = Invoke-Action -Description $Description -Action $Body
+                return $true
+            } catch {
+                $stepErrors += ("{0}: {1}" -f $Description, $_.Exception.Message)
+                return $false
+            }
         }
 
-        $stepErrors = @()
-
         # Step 1 — Revoke sessions
-        try {
-            Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop
-            $entry.SessionsRevoked = $true
-        } catch { $stepErrors += "RevokeSessions: $($_.Exception.Message)" }
+        if (Invoke-Action -Description ("Revoke sign-in sessions for {0}" -f $upn) -Action {
+            Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; $true
+        }) { $entry.SessionsRevoked = $true } elseif (-not $dryRun) { $stepErrors += "RevokeSessions failed" }
 
         # Step 2 — Block sign-in
-        try {
-            Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop
-            $entry.SignInBlocked = $true
-        } catch { $stepErrors += "BlockSignIn: $($_.Exception.Message)" }
+        if (Invoke-Action -Description ("Block sign-in for {0}" -f $upn) -Action {
+            Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; $true
+        }) { $entry.SignInBlocked = $true } elseif (-not $dryRun) { $stepErrors += "BlockSignIn failed" }
 
         # Step 3 — OOO
         if (-not [string]::IsNullOrWhiteSpace($oooMsg)) {
-            try {
-                Set-MailboxAutoReplyConfiguration -Identity $upn -AutoReplyState Enabled `
-                    -InternalMessage $oooMsg -ExternalMessage $oooMsg -ErrorAction Stop
-                $entry.OOOSet = $true
-            } catch { $stepErrors += "OOO: $($_.Exception.Message)" }
+            if (Invoke-Action -Description ("Set out-of-office auto-reply on {0}" -f $upn) -Action {
+                Set-MailboxAutoReplyConfiguration -Identity $upn -AutoReplyState Enabled -InternalMessage $oooMsg -ExternalMessage $oooMsg -ErrorAction Stop; $true
+            }) { $entry.OOOSet = $true } elseif (-not $dryRun) { $stepErrors += "OOO failed" }
         }
 
         # Step 4 — Forwarding
         if (-not [string]::IsNullOrWhiteSpace($forwardTo)) {
-            try {
-                Set-Mailbox -Identity $upn -ForwardingSmtpAddress ("smtp:{0}" -f $forwardTo) -DeliverToMailboxAndForward $true -ErrorAction Stop
-                $entry.ForwardingSet = $true
-            } catch { $stepErrors += "Forwarding: $($_.Exception.Message)" }
+            if (Invoke-Action -Description ("Set forwarding {0} -> {1} (keep copy)" -f $upn, $forwardTo) -Action {
+                Set-Mailbox -Identity $upn -ForwardingSmtpAddress ("smtp:{0}" -f $forwardTo) -DeliverToMailboxAndForward $true -ErrorAction Stop; $true
+            }) { $entry.ForwardingSet = $true } elseif (-not $dryRun) { $stepErrors += "Forwarding failed" }
         }
 
         # Step 5 — Remove from all groups (must run BEFORE license removal,
@@ -230,58 +225,64 @@ function Invoke-BulkOffboard {
                     $gid = $g.Id
                     $gtype = $g.AdditionalProperties['@odata.type']
                     if ($gtype -ne '#microsoft.graph.group') { continue }
-                    try {
-                        Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$gid/members/$($user.Id)/`$ref" -ErrorAction Stop
-                        $entry.GroupsRemoved++
-                    } catch {
-                        # role-assignable, dynamic, etc. — just log
-                        $stepErrors += "GroupRemove($($g.AdditionalProperties['displayName'])): $($_.Exception.Message)"
+                    $gname = $g.AdditionalProperties['displayName']
+                    $ok = Invoke-Action -Description ("Remove {0} from group '{1}'" -f $upn, $gname) -Action {
+                        Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$gid/members/$($user.Id)/`$ref" -ErrorAction Stop; $true
                     }
+                    if ($ok) { $entry.GroupsRemoved++ }
                 }
             } catch { $stepErrors += "GroupEnumerate: $($_.Exception.Message)" }
         }
 
         # Step 6 — Remove direct licenses
-        try {
-            $lics = @(Get-MgUserLicenseDetail -UserId $user.Id -ErrorAction Stop)
-            $fullUser = $null
-            try { $fullUser = Get-MgUser -UserId $user.Id -Property "LicenseAssignmentStates" -ErrorAction Stop } catch {}
-            $assignInfo = @{}
-            if ($fullUser -and $fullUser.LicenseAssignmentStates) {
-                foreach ($s in $fullUser.LicenseAssignmentStates) {
-                    $sid = "$($s.SkuId)"; $ai = @{ Direct = $false; Groups = @() }
-                    if ($assignInfo.ContainsKey($sid)) { $ai = $assignInfo[$sid] }
-                    if ($null -eq $s.AssignedByGroup -or $s.AssignedByGroup -eq "") { $ai.Direct = $true } else { $ai.Groups += $s.AssignedByGroup }
-                    $assignInfo[$sid] = $ai
+        if (-not $dryRun) {
+            try {
+                $lics = @(Get-MgUserLicenseDetail -UserId $user.Id -ErrorAction Stop)
+                $fullUser = $null
+                try { $fullUser = Get-MgUser -UserId $user.Id -Property "LicenseAssignmentStates" -ErrorAction Stop } catch {}
+                $assignInfo = @{}
+                if ($fullUser -and $fullUser.LicenseAssignmentStates) {
+                    foreach ($s in $fullUser.LicenseAssignmentStates) {
+                        $sid = "$($s.SkuId)"; $ai = @{ Direct = $false; Groups = @() }
+                        if ($assignInfo.ContainsKey($sid)) { $ai = $assignInfo[$sid] }
+                        if ($null -eq $s.AssignedByGroup -or $s.AssignedByGroup -eq "") { $ai.Direct = $true } else { $ai.Groups += $s.AssignedByGroup }
+                        $assignInfo[$sid] = $ai
+                    }
                 }
-            }
-            foreach ($lic in $lics) {
-                $sid = "$($lic.SkuId)"
-                if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) {
-                    continue  # group-assigned only — leave alone
+                foreach ($lic in $lics) {
+                    $sid = "$($lic.SkuId)"
+                    if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) {
+                        continue  # group-assigned only -- leave alone
+                    }
+                    $sku = $lic.SkuPartNumber
+                    $ok = Invoke-Action -Description ("Remove license '{0}' from {1}" -f $sku, $upn) -Action {
+                        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
+                    }
+                    if ($ok) { $entry.LicensesRemoved++ }
                 }
-                try {
-                    Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop | Out-Null
-                    $entry.LicensesRemoved++
-                } catch { $stepErrors += "RemoveLicense($($lic.SkuPartNumber)): $($_.Exception.Message)" }
-            }
-        } catch { $stepErrors += "LicensesEnumerate: $($_.Exception.Message)" }
+            } catch { $stepErrors += "LicensesEnumerate: $($_.Exception.Message)" }
+        } else {
+            Invoke-Action -Description ("Remove direct-assigned licenses from {0}" -f $upn) -Action { } | Out-Null
+        }
 
         # Step 7 — Convert to shared
         if ($convertShared) {
-            try {
-                Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop
-                $entry.ConvertedToShared = $true
-            } catch { $stepErrors += "ConvertShared: $($_.Exception.Message)" }
+            if (Invoke-Action -Description ("Convert {0} to Shared Mailbox" -f $upn) -Action {
+                Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; $true
+            }) { $entry.ConvertedToShared = $true } elseif (-not $dryRun) { $stepErrors += "ConvertShared failed" }
         }
 
         # Step 8 — OneDrive handoff (TODO Phase 3)
         if (-not [string]::IsNullOrWhiteSpace($handoffOd)) {
             Write-Warn "OneDrive handoff for $upn -> $handoffOd queued (TODO Phase 3)."
+            Write-AuditEntry -EventType 'TODO' -Detail ("OneDriveHandoff {0} -> {1}" -f $upn, $handoffOd)
             $stepErrors += "OneDriveHandoff: NOT_IMPLEMENTED (Phase 3 deliverable)"
         }
 
-        if ($stepErrors.Count -gt 0) {
+        if ($dryRun) {
+            $entry.Status = 'Preview'
+            $entry.Reason = 'Dry-run, no tenant call made'
+        } elseif ($stepErrors.Count -gt 0) {
             $entry.Status = 'PartialSuccess'
             $entry.Reason = ($stepErrors -join ' | ')
             Write-Warn ("Offboard for $upn finished with {0} issue(s)." -f $stepErrors.Count)
@@ -303,17 +304,21 @@ function Invoke-BulkOffboard {
         Write-ErrorMsg "Could not write result CSV: $_"
     }
 
-    $succeeded = @($results | Where-Object { $_.Status -eq 'Success'        }).Count
-    $partial   = @($results | Where-Object { $_.Status -eq 'PartialSuccess' }).Count
-    $failed    = @($results | Where-Object { $_.Status -eq 'Failed'         }).Count
-    $preview   = @($results | Where-Object { $_.Status -eq 'Preview'        }).Count
-    Write-Host ""
-    Write-Host "  Bulk offboard summary:" -ForegroundColor White
-    Write-StatusLine "Succeeded"      $succeeded "Green"
-    Write-StatusLine "Partial success" $partial   $(if ($partial -gt 0) { 'Yellow' } else { 'Gray' })
-    Write-StatusLine "Failed"          $failed    $(if ($failed  -gt 0) { 'Red'    } else { 'Gray' })
-    if ($preview -gt 0) { Write-StatusLine "Preview" $preview "Yellow" }
-    Write-Host ""
+        $succeeded = @($results | Where-Object { $_.Status -eq 'Success'        }).Count
+        $partial   = @($results | Where-Object { $_.Status -eq 'PartialSuccess' }).Count
+        $failed    = @($results | Where-Object { $_.Status -eq 'Failed'         }).Count
+        $preview   = @($results | Where-Object { $_.Status -eq 'Preview'        }).Count
+        Write-Host ""
+        Write-Host "  Bulk offboard summary:" -ForegroundColor White
+        Write-StatusLine "Succeeded"      $succeeded "Green"
+        Write-StatusLine "Partial success" $partial   $(if ($partial -gt 0) { 'Yellow' } else { 'Gray' })
+        Write-StatusLine "Failed"          $failed    $(if ($failed  -gt 0) { 'Red'    } else { 'Gray' })
+        if ($preview -gt 0) { Write-StatusLine "Preview" $preview "Yellow" }
+        Write-Host ""
+    }
+    finally {
+        Set-PreviewMode -Enabled $previousMode
+    }
 }
 
 function Start-BulkOffboard {

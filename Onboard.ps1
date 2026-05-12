@@ -178,32 +178,38 @@ function Start-Onboard {
     $details = "UPN: $($userData['UserPrincipalName'])`nName: $($userData['DisplayName'])`nDept: $($userData['Department'])"
     if (-not (Confirm-Action "Create this user account?" $details)) { Pause-ForUser; return }
 
-    try {
-        $body = @{
-            AccountEnabled    = $true
-            DisplayName       = $userData["DisplayName"]
-            GivenName         = $userData["FirstName"]
-            Surname           = $userData["LastName"]
-            UserPrincipalName = $userData["UserPrincipalName"]
-            MailNickname      = $mailNick
-            UsageLocation     = $userData["UsageLocation"]
-            PasswordProfile   = @{ ForceChangePasswordNextSignIn = $true; Password = $password }
-        }
-        if ($userData["JobTitle"])       { $body["JobTitle"]       = $userData["JobTitle"] }
-        if ($userData["Department"])     { $body["Department"]     = $userData["Department"] }
-        if ($userData["CompanyName"])    { $body["CompanyName"]    = $userData["CompanyName"] }
-        if ($userData["OfficeLocation"]) { $body["OfficeLocation"] = $userData["OfficeLocation"] }
-        if ($userData["StreetAddress"])  { $body["StreetAddress"]  = $userData["StreetAddress"] }
-        if ($userData["City"])           { $body["City"]           = $userData["City"] }
-        if ($userData["State"])          { $body["State"]          = $userData["State"] }
-        if ($userData["PostalCode"])     { $body["PostalCode"]     = $userData["PostalCode"] }
-        if ($userData["Country"])        { $body["Country"]        = $userData["Country"] }
-        if ($userData["MobilePhone"])    { $body["MobilePhone"]    = $userData["MobilePhone"] }
-        if ($userData["BusinessPhone"])  { $body["BusinessPhones"] = @($userData["BusinessPhone"]) }
+    $body = @{
+        AccountEnabled    = $true
+        DisplayName       = $userData["DisplayName"]
+        GivenName         = $userData["FirstName"]
+        Surname           = $userData["LastName"]
+        UserPrincipalName = $userData["UserPrincipalName"]
+        MailNickname      = $mailNick
+        UsageLocation     = $userData["UsageLocation"]
+        PasswordProfile   = @{ ForceChangePasswordNextSignIn = $true; Password = $password }
+    }
+    if ($userData["JobTitle"])       { $body["JobTitle"]       = $userData["JobTitle"] }
+    if ($userData["Department"])     { $body["Department"]     = $userData["Department"] }
+    if ($userData["CompanyName"])    { $body["CompanyName"]    = $userData["CompanyName"] }
+    if ($userData["OfficeLocation"]) { $body["OfficeLocation"] = $userData["OfficeLocation"] }
+    if ($userData["StreetAddress"])  { $body["StreetAddress"]  = $userData["StreetAddress"] }
+    if ($userData["City"])           { $body["City"]           = $userData["City"] }
+    if ($userData["State"])          { $body["State"]          = $userData["State"] }
+    if ($userData["PostalCode"])     { $body["PostalCode"]     = $userData["PostalCode"] }
+    if ($userData["Country"])        { $body["Country"]        = $userData["Country"] }
+    if ($userData["MobilePhone"])    { $body["MobilePhone"]    = $userData["MobilePhone"] }
+    if ($userData["BusinessPhone"])  { $body["BusinessPhones"] = @($userData["BusinessPhone"]) }
 
-        $newUser = New-MgUser -BodyParameter $body -ErrorAction Stop
-        Write-Success "Account created: $($userData['UserPrincipalName'])"
-    } catch { Write-ErrorMsg "Failed to create account: $_"; Pause-ForUser; return }
+    $stubUser = [PSCustomObject]@{
+        Id                = "preview-$([guid]::NewGuid())"
+        UserPrincipalName = $userData['UserPrincipalName']
+        DisplayName       = $userData['DisplayName']
+    }
+    $newUser = Invoke-Action -Description ("Create user {0}" -f $userData['UserPrincipalName']) -Critical -StubReturn $stubUser -Action {
+        New-MgUser -BodyParameter $body -ErrorAction Stop
+    }
+    if (-not $newUser) { Write-ErrorMsg "Failed to create account."; Pause-ForUser; return }
+    if (-not (Get-PreviewMode)) { Write-Success "Account created: $($userData['UserPrincipalName'])" }
 
     # ---- Licenses ----
     Write-SectionHeader "Step 2 - Assign Licenses"
@@ -216,8 +222,10 @@ function Start-Onboard {
     elseif ($replicateLicenses.Count -gt 0) {
         foreach ($lic in $replicateLicenses) {
             if (Confirm-Action "Assign license '$(Format-LicenseLabel $lic.SkuPartNumber)'?") {
-                try { Set-MgUserLicense -UserId $newUser.Id -AddLicenses @(@{SkuId = $lic.SkuId}) -RemoveLicenses @() -ErrorAction Stop; Write-Success "'$(Get-SkuFriendlyName $lic.SkuPartNumber)' assigned." }
-                catch { Write-ErrorMsg "Failed: $_" }
+                $ok = Invoke-Action -Description ("Assign license '{0}' to {1}" -f $lic.SkuPartNumber, $userData['UserPrincipalName']) -Action {
+                    Set-MgUserLicense -UserId $newUser.Id -AddLicenses @(@{SkuId = $lic.SkuId}) -RemoveLicenses @() -ErrorAction Stop; $true
+                }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "'$(Get-SkuFriendlyName $lic.SkuPartNumber)' assigned." }
             }
         }
         $more = Read-UserInput "Add additional licenses? (y/n)"
@@ -235,8 +243,17 @@ function Start-Onboard {
         foreach ($grp in $replicateGroups) {
             $gName = $grp.AdditionalProperties["displayName"]
             if (Confirm-Action "Add to group '$gName'?") {
-                try { New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $newUser.Id -ErrorAction Stop; Write-Success "Added to '$gName'." }
-                catch { if ($_.Exception.Message -match "already exist") { Write-Warn "Already a member." } else { Write-ErrorMsg "Failed: $_" } }
+                $ok = Invoke-Action -Description ("Add {0} to security group '{1}'" -f $userData['UserPrincipalName'], $gName) -Action {
+                    try {
+                        New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $newUser.Id -ErrorAction Stop; $true
+                    } catch {
+                        if ($_.Exception.Message -match 'already exist') { 'already' } else { throw }
+                    }
+                }
+                if (-not (Get-PreviewMode)) {
+                    if ($ok -eq 'already') { Write-Warn "Already a member." }
+                    elseif ($ok)           { Write-Success "Added to '$gName'." }
+                }
             }
         }
         $more = Read-UserInput "Add additional groups? (y/n)"
@@ -257,10 +274,12 @@ function Start-Onboard {
     if ($userData["Manager"]) {
         Write-SectionHeader "Step 4 - Set Manager"
         try {
-            $mgr = Get-MgUser -UserId $userData["Manager"] -ErrorAction Stop
+            $mgr = if (Get-PreviewMode) { [PSCustomObject]@{ Id = "preview-mgr"; DisplayName = $userData["Manager"]; UserPrincipalName = $userData["Manager"] } } else { Get-MgUser -UserId $userData["Manager"] -ErrorAction Stop }
             if (Confirm-Action "Set manager to $($mgr.DisplayName)?") {
-                Set-MgUserManagerByRef -UserId $newUser.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/users/$($mgr.Id)" } -ErrorAction Stop
-                Write-Success "Manager set."
+                $ok = Invoke-Action -Description ("Set manager of {0} to {1}" -f $userData['UserPrincipalName'], $mgr.UserPrincipalName) -Action {
+                    Set-MgUserManagerByRef -UserId $newUser.Id -BodyParameter @{ "@odata.id" = "https://graph.microsoft.com/v1.0/users/$($mgr.Id)" } -ErrorAction Stop; $true
+                }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Manager set." }
             }
         } catch { Write-Warn "Could not set manager: $_" }
     }
@@ -327,8 +346,10 @@ function Select-AndAssignLicenses {
             $sku = $available[$idx]
             if ($sku.Free -le 0) { Write-Warn "$(Get-SkuFriendlyName $sku.SkuPartNumber) has no seats."; continue }
             if (Confirm-Action "Assign '$(Get-SkuFriendlyName $sku.SkuPartNumber)'?") {
-                Set-MgUserLicense -UserId $UserId -AddLicenses @(@{SkuId = $sku.SkuId}) -RemoveLicenses @() -ErrorAction Stop
-                Write-Success "'$(Get-SkuFriendlyName $sku.SkuPartNumber)' assigned."
+                $ok = Invoke-Action -Description ("Assign license '{0}' to user {1}" -f $sku.SkuPartNumber, $UserId) -Action {
+                    Set-MgUserLicense -UserId $UserId -AddLicenses @(@{SkuId = $sku.SkuId}) -RemoveLicenses @() -ErrorAction Stop; $true
+                }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "'$(Get-SkuFriendlyName $sku.SkuPartNumber)' assigned." }
             }
         }
     } catch { Write-ErrorMsg "License error: $_" }
@@ -346,8 +367,17 @@ function Search-AndAssignGroups {
         foreach ($gi in $gSel) {
             $grp = $groups[$gi]
             if (Confirm-Action "Add to '$($grp.DisplayName)'?") {
-                try { New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $UserId -ErrorAction Stop; Write-Success "Added." }
-                catch { if ($_.Exception.Message -match "already exist") { Write-Warn "Already a member." } else { Write-ErrorMsg "Failed: $_" } }
+                $ok = Invoke-Action -Description ("Add user {0} to security group '{1}'" -f $UserId, $grp.DisplayName) -Action {
+                    try {
+                        New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $UserId -ErrorAction Stop; $true
+                    } catch {
+                        if ($_.Exception.Message -match 'already exist') { 'already' } else { throw }
+                    }
+                }
+                if (-not (Get-PreviewMode)) {
+                    if ($ok -eq 'already') { Write-Warn "Already a member." }
+                    elseif ($ok)           { Write-Success "Added." }
+                }
             }
         }
     } catch { Write-ErrorMsg "Group error: $_" }
@@ -366,26 +396,32 @@ function Apply-TemplateLicenses {
     $skus = @($Template['licenseSKUs'])
     if ($skus.Count -eq 0) { return }
     Write-InfoMsg "Applying $($skus.Count) license SKU(s) from template..."
-    try { $allSkus = @(Get-MgSubscribedSku -ErrorAction Stop) }
-    catch { Write-ErrorMsg "Cannot read tenant SKUs: $_"; return }
+
+    $allSkus = @()
+    if (-not (Get-PreviewMode)) {
+        try { $allSkus = @(Get-MgSubscribedSku -ErrorAction Stop) }
+        catch { Write-ErrorMsg "Cannot read tenant SKUs: $_"; return }
+    }
 
     foreach ($skuPart in $skus) {
-        $sku = $allSkus | Where-Object { $_.SkuPartNumber -eq $skuPart } | Select-Object -First 1
-        if (-not $sku) {
-            Write-Warn "Skipping unknown SKU '$skuPart' (not in this tenant)."
-            continue
+        if (-not (Get-PreviewMode)) {
+            $sku = $allSkus | Where-Object { $_.SkuPartNumber -eq $skuPart } | Select-Object -First 1
+            if (-not $sku) {
+                Write-Warn "Skipping unknown SKU '$skuPart' (not in this tenant)."
+                continue
+            }
+            $free = ($sku.PrepaidUnits.Enabled - $sku.ConsumedUnits)
+            if ($free -le 0) {
+                Write-Warn "Skipping '$skuPart' -- no seats available."
+                continue
+            }
+        } else {
+            $sku = [PSCustomObject]@{ SkuId = "preview-sku-$skuPart"; SkuPartNumber = $skuPart }
         }
-        $free = ($sku.PrepaidUnits.Enabled - $sku.ConsumedUnits)
-        if ($free -le 0) {
-            Write-Warn "Skipping '$skuPart' -- no seats available."
-            continue
+        $ok = Invoke-Action -Description ("Assign license '{0}' to user {1}" -f $skuPart, $UserId) -Action {
+            Set-MgUserLicense -UserId $UserId -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @() -ErrorAction Stop; $true
         }
-        try {
-            Set-MgUserLicense -UserId $UserId -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @() -ErrorAction Stop | Out-Null
-            Write-Success "Assigned '$(Format-LicenseLabel $skuPart)'."
-        } catch {
-            Write-ErrorMsg "Failed to assign '$skuPart': $_"
-        }
+        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Assigned '$(Format-LicenseLabel $skuPart)'." }
     }
 }
 
@@ -396,21 +432,28 @@ function Apply-TemplateSecurityGroups {
     Write-InfoMsg "Applying $($groups.Count) security group(s) from template..."
 
     foreach ($name in $groups) {
-        try {
-            $escaped = $name -replace "'", "''"
-            $grp = @(Get-MgGroup -Filter "displayName eq '$escaped'" -ConsistencyLevel eventual -ErrorAction Stop) | Select-Object -First 1
-            if (-not $grp) {
-                Write-Warn "Skipping unknown security group '$name'."
-                continue
+        $grp = $null
+        if (-not (Get-PreviewMode)) {
+            try {
+                $escaped = $name -replace "'", "''"
+                $grp = @(Get-MgGroup -Filter "displayName eq '$escaped'" -ConsistencyLevel eventual -ErrorAction Stop) | Select-Object -First 1
+                if (-not $grp) {
+                    Write-Warn "Skipping unknown security group '$name'."; continue
+                }
+            } catch { Write-Warn "Lookup for '$name' failed: $_"; continue }
+        } else {
+            $grp = [PSCustomObject]@{ Id = "preview-grp-$name"; DisplayName = $name }
+        }
+        $ok = Invoke-Action -Description ("Add user {0} to security group '{1}'" -f $UserId, $name) -Action {
+            try {
+                New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $UserId -ErrorAction Stop; $true
+            } catch {
+                if ($_.Exception.Message -match 'already exist') { 'already' } else { throw }
             }
-            New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $UserId -ErrorAction Stop | Out-Null
-            Write-Success "Added to '$name'."
-        } catch {
-            if ($_.Exception.Message -match 'already exist') {
-                Write-Warn "Already a member of '$name'."
-            } else {
-                Write-ErrorMsg "Failed for '$name': $_"
-            }
+        }
+        if (-not (Get-PreviewMode)) {
+            if ($ok -eq 'already') { Write-Warn "Already a member of '$name'." }
+            elseif ($ok)           { Write-Success "Added to '$name'." }
         }
     }
 }
@@ -422,19 +465,29 @@ function Apply-TemplateDistributionLists {
     Write-SectionHeader "Step 3a - Distribution Lists (from template)"
 
     foreach ($name in $dls) {
-        try {
-            $dl = Get-DistributionGroup -Identity $name -ErrorAction Stop
-            Add-DistributionGroupMember -Identity $dl.Identity -Member $Upn -BypassSecurityGroupManagerCheck -ErrorAction Stop | Out-Null
-            Write-Success "Added to DL '$name'."
-        } catch {
-            $msg = $_.Exception.Message
-            if ($msg -match 'already a member|already exists') {
-                Write-Warn "Already a member of DL '$name'."
-            } elseif ($msg -match "couldn't be found|not found|Couldn't find") {
-                Write-Warn "Skipping unknown DL '$name'."
-            } else {
-                Write-ErrorMsg "Failed for DL '$name': $_"
+        $dlId = $name
+        if (-not (Get-PreviewMode)) {
+            try {
+                $dl = Get-DistributionGroup -Identity $name -ErrorAction Stop
+                $dlId = $dl.Identity
+            } catch {
+                $msg = $_.Exception.Message
+                if ($msg -match "couldn't be found|not found|Couldn't find") {
+                    Write-Warn "Skipping unknown DL '$name'."; continue
+                }
+                Write-ErrorMsg "Lookup for DL '$name' failed: $_"; continue
             }
+        }
+        $ok = Invoke-Action -Description ("Add {0} to distribution list '{1}'" -f $Upn, $name) -Action {
+            try {
+                Add-DistributionGroupMember -Identity $dlId -Member $Upn -BypassSecurityGroupManagerCheck -ErrorAction Stop; $true
+            } catch {
+                if ($_.Exception.Message -match 'already a member|already exists') { 'already' } else { throw }
+            }
+        }
+        if (-not (Get-PreviewMode)) {
+            if ($ok -eq 'already') { Write-Warn "Already a member of DL '$name'." }
+            elseif ($ok)           { Write-Success "Added to DL '$name'." }
         }
     }
 }
@@ -450,27 +503,35 @@ function Apply-TemplateSharedMailboxes {
         $access = if ($sm -is [hashtable]) { $sm['access'] } else { $sm.access }
         if ([string]::IsNullOrWhiteSpace($id)) { continue }
 
-        try { Get-Mailbox -Identity $id -ErrorAction Stop | Out-Null }
-        catch { Write-Warn "Skipping unknown shared mailbox '$id'."; continue }
+        if (-not (Get-PreviewMode)) {
+            try { Get-Mailbox -Identity $id -ErrorAction Stop | Out-Null }
+            catch { Write-Warn "Skipping unknown shared mailbox '$id'."; continue }
+        }
 
         if ($access -eq 'Full' -or $access -eq 'FullSendAs') {
-            try {
-                Add-MailboxPermission -Identity $id -User $Upn -AccessRights FullAccess -AutoMapping $true -ErrorAction Stop | Out-Null
-                Write-Success "FullAccess on '$id' granted."
-            } catch {
-                if ($_.Exception.Message -match 'already exist|already a member') {
-                    Write-Warn "Already has FullAccess on '$id'."
-                } else { Write-ErrorMsg "FullAccess on '$id' failed: $_" }
+            $ok = Invoke-Action -Description ("Grant {0} FullAccess on shared mailbox '{1}'" -f $Upn, $id) -Action {
+                try {
+                    Add-MailboxPermission -Identity $id -User $Upn -AccessRights FullAccess -AutoMapping $true -ErrorAction Stop; $true
+                } catch {
+                    if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+                }
+            }
+            if (-not (Get-PreviewMode)) {
+                if ($ok -eq 'already') { Write-Warn "Already has FullAccess on '$id'." }
+                elseif ($ok)           { Write-Success "FullAccess on '$id' granted." }
             }
         }
         if ($access -eq 'SendAs' -or $access -eq 'FullSendAs') {
-            try {
-                Add-RecipientPermission -Identity $id -Trustee $Upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop | Out-Null
-                Write-Success "SendAs on '$id' granted."
-            } catch {
-                if ($_.Exception.Message -match 'already exist|already a member') {
-                    Write-Warn "Already has SendAs on '$id'."
-                } else { Write-ErrorMsg "SendAs on '$id' failed: $_" }
+            $ok = Invoke-Action -Description ("Grant {0} SendAs on shared mailbox '{1}'" -f $Upn, $id) -Action {
+                try {
+                    Add-RecipientPermission -Identity $id -Trustee $Upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
+                } catch {
+                    if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+                }
+            }
+            if (-not (Get-PreviewMode)) {
+                if ($ok -eq 'already') { Write-Warn "Already has SendAs on '$id'." }
+                elseif ($ok)           { Write-Success "SendAs on '$id' granted." }
             }
         }
     }
@@ -478,13 +539,9 @@ function Apply-TemplateSharedMailboxes {
 
 function Apply-TemplateContractorExpiry {
     <#
-        Records a planned end date in the user's employeeLeaveDateTime
-        attribute. NOTE: setting this property alone does NOT
-        automatically disable the account on that date. Doing the
-        actual disable requires either Microsoft Entra ID Governance
-        lifecycle workflows, an Identity Governance access review, or
-        a scheduled job that toggles accountEnabled. We log the
-        intent and continue.
+        Records a planned end date in employeeLeaveDateTime. This alone
+        does NOT disable the account on that date -- needs Entra
+        lifecycle workflows or a scheduled job. We log the intent.
     #>
     param([Parameter(Mandatory)][string]$UserId, [Parameter(Mandatory)][hashtable]$Template)
     $days = [int]$Template['contractorExpiryDays']
@@ -492,12 +549,11 @@ function Apply-TemplateContractorExpiry {
     $when = (Get-Date).ToUniversalTime().AddDays($days)
     $iso  = $when.ToString("yyyy-MM-ddTHH:mm:ssZ")
     Write-SectionHeader "Step 4a - Contractor Expiry (from template)"
-    try {
-        Update-MgUser -UserId $UserId -BodyParameter @{ employeeLeaveDateTime = $iso } -ErrorAction Stop
+    $ok = Invoke-Action -Description ("Set employeeLeaveDateTime for user {0} to {1} (+{2} days)" -f $UserId, $iso, $days) -Action {
+        Update-MgUser -UserId $UserId -BodyParameter @{ employeeLeaveDateTime = $iso } -ErrorAction Stop; $true
+    }
+    if ($ok -and -not (Get-PreviewMode)) {
         Write-Success "employeeLeaveDateTime set to $iso (+$days days)."
         Write-Warn "Auto-disable requires Entra lifecycle workflows or a scheduled task -- this only records the intent."
-    } catch {
-        Write-Warn "Could not set employeeLeaveDateTime: $_"
-        Write-InfoMsg "Manual fallback: Set-MgUser -UserId $UserId -EmployeeLeaveDateTime $iso"
     }
 }

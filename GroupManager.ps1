@@ -168,16 +168,14 @@ function BulkRemove-UserMemberships {
     foreach ($idx in $selected) {
         $grp = $filtered[$idx]
         if (Confirm-Action "Remove from '$($grp.Name)' ($($grp.Type))?") {
-            try {
+            $ok = Invoke-Action -Description ("Remove {0} from group '{1}' ({2})" -f $user.UserPrincipalName, $grp.Name, $grp.Type) -Action {
                 if ($grp.Source -eq "Graph") {
-                    Remove-MgGroupMemberByRef -GroupId $grp.Id -DirectoryObjectId $user.Id -ErrorAction Stop
-                    Write-Success "Removed from '$($grp.Name)'."
+                    Remove-MgGroupMemberByRef -GroupId $grp.Id -DirectoryObjectId $user.Id -ErrorAction Stop; $true
+                } elseif ($grp.Source -eq "EXO") {
+                    Remove-DistributionGroupMember -Identity $grp.Email -Member $user.UserPrincipalName -Confirm:$false -ErrorAction Stop; $true
                 }
-                elseif ($grp.Source -eq "EXO") {
-                    Remove-DistributionGroupMember -Identity $grp.Email -Member $user.UserPrincipalName -Confirm:$false -ErrorAction Stop
-                    Write-Success "Removed from '$($grp.Name)'."
-                }
-            } catch { Write-ErrorMsg "Failed to remove from '$($grp.Name)': $_" }
+            }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed from '$($grp.Name)'." }
         }
     }
 
@@ -217,12 +215,13 @@ function BulkAdd-UserToGroups {
                     foreach ($i in $sel) {
                         $g = $gGroups[$i]
                         if (Confirm-Action "Add to '$($g.DisplayName)'?") {
-                            try {
-                                New-MgGroupMember -GroupId $g.Id -DirectoryObjectId $user.Id -ErrorAction Stop
-                                Write-Success "Added to '$($g.DisplayName)'."
-                            } catch {
-                                if ($_.Exception.Message -match "already exist") { Write-Warn "Already a member." }
-                                else { Write-ErrorMsg "Failed: $_" }
+                            $ok = Invoke-Action -Description ("Add {0} to group '{1}'" -f $user.UserPrincipalName, $g.DisplayName) -Action {
+                                try { New-MgGroupMember -GroupId $g.Id -DirectoryObjectId $user.Id -ErrorAction Stop; $true }
+                                catch { if ($_.Exception.Message -match 'already exist') { 'already' } else { throw } }
+                            }
+                            if (-not (Get-PreviewMode)) {
+                                if ($ok -eq 'already') { Write-Warn "Already a member." }
+                                elseif ($ok)           { Write-Success "Added to '$($g.DisplayName)'." }
                             }
                         }
                     }
@@ -240,12 +239,13 @@ function BulkAdd-UserToGroups {
                     foreach ($i in $sel) {
                         $dl = $dls[$i]
                         if (Confirm-Action "Add to '$($dl.DisplayName)'?") {
-                            try {
-                                Add-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $user.UserPrincipalName -ErrorAction Stop
-                                Write-Success "Added to '$($dl.DisplayName)'."
-                            } catch {
-                                if ($_.Exception.Message -match "already") { Write-Warn "Already a member." }
-                                else { Write-ErrorMsg "Failed: $_" }
+                            $ok = Invoke-Action -Description ("Add {0} to DL '{1}'" -f $user.UserPrincipalName, $dl.DisplayName) -Action {
+                                try { Add-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $user.UserPrincipalName -ErrorAction Stop; $true }
+                                catch { if ($_.Exception.Message -match 'already') { 'already' } else { throw } }
+                            }
+                            if (-not (Get-PreviewMode)) {
+                                if ($ok -eq 'already') { Write-Warn "Already a member." }
+                                elseif ($ok)           { Write-Success "Added to '$($dl.DisplayName)'." }
                             }
                         }
                     }
@@ -417,15 +417,14 @@ function Invoke-FullReplaceReplicate {
 
     # Remove first
     foreach ($grp in $toRemove) {
-        try {
+        $ok = Invoke-Action -Description ("Remove {0} from group '{1}' ({2})" -f $Target.UserPrincipalName, $grp.Name, $grp.Type) -Action {
             if ($grp.Source -eq "Graph") {
-                Remove-MgGroupMemberByRef -GroupId $grp.Id -DirectoryObjectId $Target.Id -ErrorAction Stop
-                Write-Success "Removed from '$($grp.Name)'."
+                Remove-MgGroupMemberByRef -GroupId $grp.Id -DirectoryObjectId $Target.Id -ErrorAction Stop; $true
             } elseif ($grp.Source -eq "EXO") {
-                Remove-DistributionGroupMember -Identity $grp.Email -Member $Target.UserPrincipalName -Confirm:$false -ErrorAction Stop
-                Write-Success "Removed from '$($grp.Name)'."
+                Remove-DistributionGroupMember -Identity $grp.Email -Member $Target.UserPrincipalName -Confirm:$false -ErrorAction Stop; $true
             }
-        } catch { Write-ErrorMsg "Failed to remove from '$($grp.Name)': $_" }
+        }
+        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed from '$($grp.Name)'." }
     }
 
     # Then add
@@ -441,20 +440,19 @@ function Invoke-FullReplaceReplicate {
 function Add-UserToGroup {
     param([string]$UserId, [string]$UserUPN, [PSCustomObject]$Group)
 
-    try {
-        if ($Group.Source -eq "Graph") {
-            New-MgGroupMember -GroupId $Group.Id -DirectoryObjectId $UserId -ErrorAction Stop
-            Write-Success "Added to '$($Group.Name)'."
+    $ok = Invoke-Action -Description ("Add {0} to group '{1}' ({2})" -f $UserUPN, $Group.Name, $Group.Type) -Action {
+        try {
+            if ($Group.Source -eq "Graph") {
+                New-MgGroupMember -GroupId $Group.Id -DirectoryObjectId $UserId -ErrorAction Stop; $true
+            } elseif ($Group.Source -eq "EXO") {
+                Add-DistributionGroupMember -Identity $Group.Email -Member $UserUPN -ErrorAction Stop; $true
+            }
+        } catch {
+            if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
         }
-        elseif ($Group.Source -eq "EXO") {
-            Add-DistributionGroupMember -Identity $Group.Email -Member $UserUPN -ErrorAction Stop
-            Write-Success "Added to '$($Group.Name)'."
-        }
-    } catch {
-        if ($_.Exception.Message -match "already exist|already a member") {
-            Write-Warn "Already a member of '$($Group.Name)'."
-        } else {
-            Write-ErrorMsg "Failed to add to '$($Group.Name)': $_"
-        }
+    }
+    if (-not (Get-PreviewMode)) {
+        if ($ok -eq 'already') { Write-Warn "Already a member of '$($Group.Name)'." }
+        elseif ($ok)           { Write-Success "Added to '$($Group.Name)'." }
     }
 }
