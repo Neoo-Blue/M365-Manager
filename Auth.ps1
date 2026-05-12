@@ -331,6 +331,79 @@ function Select-TenantMode {
 }
 
 # ============================================================
+#  Startup Session Cleanup
+# ============================================================
+
+function Clear-StartupSession {
+    <#
+        Ensure the tool starts with a clean slate.
+        Runs at every launch to defeat two scenarios:
+          1. User launched inside a PowerShell host that already had an
+             active Connect-MgGraph / Connect-ExchangeOnline / Connect-IPPSSession
+             — those sessions would otherwise silently leak into this tool.
+          2. A stale on-disk token cache from a previous run causes a
+             surprise auto-login to the wrong tenant/account.
+        Does NOT touch the shared MSAL cache under
+        $env:LOCALAPPDATA\.IdentityService — that is used by other Microsoft
+        apps on this machine and clearing it would sign the user out of them.
+    #>
+    Write-SectionHeader "Clearing Previous Session"
+
+    # ---- In-process Graph ----
+    if (Get-Command Disconnect-MgGraph -ErrorAction SilentlyContinue) {
+        try {
+            $existing = $null
+            if (Get-Command Get-MgContext -ErrorAction SilentlyContinue) {
+                $existing = Get-MgContext -ErrorAction SilentlyContinue
+            }
+            Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+            if ($existing) { Write-InfoMsg "Stale Graph session ($($existing.Account)) cleared." }
+        } catch {}
+    }
+
+    # ---- In-process Exchange Online / IPPSSession ----
+    if (Get-Command Disconnect-ExchangeOnline -ErrorAction SilentlyContinue) {
+        try {
+            $exoConns = $null
+            if (Get-Command Get-ConnectionInformation -ErrorAction SilentlyContinue) {
+                $exoConns = @(Get-ConnectionInformation -ErrorAction SilentlyContinue)
+            }
+            Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            if ($exoConns -and $exoConns.Count -gt 0) {
+                Write-InfoMsg "$($exoConns.Count) stale EXO/SCC session(s) cleared."
+            }
+        } catch {}
+    }
+
+    # ---- On-disk Graph SDK token cache ----
+    # The Microsoft.Graph PS SDK persists tokens here when ContextScope=CurrentUser.
+    # Wiping it forces a fresh interactive login on the next Connect-Graph call.
+    if ($env:USERPROFILE) {
+        $cachePath = Join-Path $env:USERPROFILE ".graph"
+        if (Test-Path $cachePath) {
+            try {
+                Remove-Item -Path $cachePath -Recurse -Force -ErrorAction Stop
+                Write-InfoMsg "Graph SDK token cache cleared ($cachePath)."
+            } catch {
+                Write-Warn "Could not clear Graph token cache: $_"
+            }
+        }
+    }
+
+    # ---- Reset in-memory state (defensive — module-load already initialized it) ----
+    $script:SessionState.MgGraph          = $false
+    $script:SessionState.ExchangeOnline   = $false
+    $script:SessionState.ComplianceCenter = $false
+    $script:SessionState.PartnerConnected = $false
+    $script:SessionState.TenantMode       = "Direct"
+    $script:SessionState.TenantId         = $null
+    $script:SessionState.TenantName       = $null
+    $script:SessionState.TenantDomain     = $null
+
+    Write-Success "Starting with a clean session."
+}
+
+# ============================================================
 #  Full Session Cleanup (for tenant switch)
 # ============================================================
 
