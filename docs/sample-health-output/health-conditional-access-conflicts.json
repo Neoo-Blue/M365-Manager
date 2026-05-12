@@ -1,0 +1,20 @@
+{
+  "checkName": "conditional-access-conflicts",
+  "startedAtUtc": "2026-05-12T09:00:00Z",
+  "completedAtUtc": "2026-05-12T09:00:05Z",
+  "status": "findings",
+  "findingCount": 2,
+  "note": "",
+  "findings": [
+    {
+      "kind": "disabled-critical",
+      "name": "Require MFA for admins (DISABLED)",
+      "state": "disabled",
+      "policyId": "00000000-0000-0000-0000-000000000abc"
+    },
+    {
+      "kind": "no-legacy-auth-block",
+      "note": "No enabled CA policy blocks exchangeActiveSync/other client app types."
+    }
+  ]
+}

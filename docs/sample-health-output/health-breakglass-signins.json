@@ -1,0 +1,9 @@
+{
+  "checkName": "breakglass-signins",
+  "startedAtUtc": "2026-05-12T08:00:00Z",
+  "completedAtUtc": "2026-05-12T08:00:03Z",
+  "status": "clean",
+  "findingCount": 0,
+  "note": "",
+  "findings": []
+}

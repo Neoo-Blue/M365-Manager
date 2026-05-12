@@ -217,11 +217,111 @@ See `docs/offboard-flow.md` for the diagram and the per-step Graph / EXO / SPO c
 
 Bulk CSV columns extended in this phase: `TeamsSuccessor`, `RevokeShares` (default true), `NotifyManager` (default true). Updated sample at `templates/bulk-offboard-sample.csv`.
 
+## License optimizer
+
+`LicenseOptimizer.ps1` (top-level menu slot 19 "License & Cost...") fetches the four Microsoft Graph activity reports (`getOffice365ActiveUserDetail`, `getMailboxUsageDetail`, `getTeamsUserActivityUserDetail`, `getOneDriveUsageAccountDetail`), cross-joins with `Get-MgSubscribedSku` + `Get-MgUserLicenseDetail`, and produces four buckets of recommendations:
+
+- **Inactive licensed users** — has a license, no service activity in the last 60 days. **Default threshold: 60 days.**
+- **License hoarders** — on 2+ SKUs from the same family (e.g. `SPE_E3` + `ENTERPRISEPACK` is redundant — the M365 SKU already includes the O365 one).
+- **Paid + unassigned** — purchased seats sitting idle, per SKU.
+- **Downgrade candidates** — E5 / SPB users whose last activity (any service) is older than 60 days, ranked by estimated monthly savings if dropped to E3.
+
+`Get-LicenseUtilizationReport` renders a single-file HTML dashboard at `<auditDir>/license-utilization-<ts>.html` with summary tiles + top-25 tables per bucket. Cost estimates come from `templates/license-prices.json` — placeholder list prices in USD; **override in place with your EA / MCA rates** for accurate figures.
+
+Remediation: `Invoke-LicenseRemediation -Path .csv [-WhatIf]` accepts CSV `UPN, SKU, Action (Remove|Downgrade), TargetSKU?`. Each Remove and Downgrade routes through `Invoke-Action` with the existing `RemoveLicense <-> AssignLicense` reverse pair, so the Undo menu rolls them back cleanly. Sample at `templates/license-remediation-sample.csv`.
+
+Required Graph scope: `Reports.Read.All`. If Graph reports come back with de-identified hash UPNs, the module detects it on the first fetch and surfaces the exact admin-center steps to turn concealment off (Settings → Org settings → Services → Reports).
+
+## Scheduled health checks
+
+`Scheduler.ps1` + the `health-checks/` directory provide unattended posture monitoring. Top-level menu slot 20 "Scheduled Health Checks...".
+
+```powershell
+New-ScheduledHealthCheck -Name MfaGapsDaily -Script health-checks/health-mfa-gaps.ps1 `
+    -Schedule 'Daily 09:00' -Output email -NotifyOn findings
+```
+
+Schedule forms accepted: `Daily HH:MM`, `Weekly Mon HH:MM`, `Monthly 1 HH:MM`, `Hourly`, `cron <expr>`. Windows uses `Register-ScheduledTask`; macOS / Linux edits the user's `crontab` (each entry marked with a `# m365mgr-<Name>` comment so removal stays clean).
+
+Shipped checks:
+
+- `health-license-usage.ps1` — Phase 4 optimizer.
+- `health-mfa-gaps.ps1` — no-MFA + only-phone compliance.
+- `health-stale-guests.ps1` — 90-day stale-guest report.
+- `health-orphaned-teams.ps1` — orphan + SPOF Teams.
+- `health-conditional-access-conflicts.ps1` — disabled critical policies / all-users with large exclusions / missing legacy-auth block.
+- `health-breakglass-signins.ps1` — 24-hour activity check on every registered break-glass account.
+
+Each emits a `health-result-<name>-<ts>.json` next to the audit log with `status` ∈ `clean | findings | failure`. `Get-HealthResults` surfaces the latest per check in the menu.
+
+**Default output**: file + email to `SecurityTeamRecipients` on `findings`. Tune with `-Output` / `-NotifyOn`.
+
+**Non-interactive contract**: every check runs with `-NonInteractive` which flips a session flag in `UI.ps1`. `Read-UserInput` returns empty, `Confirm-Action` returns `$false` (DECLINE — a scheduled run never silently auto-approves), `Show-Menu` returns -1, `Pause-ForUser` is a no-op. See `docs/scheduled-checks.md` for the credential model (`Register-SchedulerCredential` stores a DPAPI-protected `{TenantId, AppId, encryptedSecret}` triple).
+
+## Break-glass accounts
+
+`BreakGlass.ps1` owns the local registry of emergency-access accounts (`<stateDir>/breakglass-accounts.json`) plus the per-account posture predicates Microsoft recommends. Surfaced from Audit & Reporting → "Break-glass accounts...".
+
+Posture warnings (`Test-BreakGlassPosture`):
+
+- `accountDisabled` — break-glass must be enabled to be useful.
+- `passwordAge` — `lastPasswordChangeDateTime` older than **180 days**.
+- `recentSignIn` — last sign-in within 30 days (normal state is near-zero use).
+- `noFido2` — no FIDO2 key registered.
+- `noMfaRegistered` — no strong factor at all.
+- `caRiskyInclude` — enabled CA policy with MFA / block grant controls that includes this account (or All users) without excluding it.
+
+`Invoke-QuarterlyBreakGlassAttestation` runs the posture check on every registered account, emails the attestation contact via the Notifications framework, and stamps `LastAttestedAt`. Sign-off is captured manually.
+
+See `docs/breakglass-best-practices.md` for the Microsoft-recommended cadence and the mapping of each recommendation to a `Test-BreakGlassPosture` warning.
+
+## Notifications
+
+`Notifications.ps1` is the single dispatcher every email / Teams notification goes through. Three exit channels:
+
+- `Send-Email` — Graph `/me/sendMail` or `/users/{id}/sendMail`.
+- `Send-TeamsWebhook` — POST to an incoming-webhook URL. URLs are DPAPI-protected at rest (via the generic `Protect-Secret` / `Unprotect-Secret` helpers, which extend Phase 0.5's API-key encryption).
+- `Send-Notification` — severity-routed dispatcher.
+
+Configuration lives in `ai_config.json` under `Notifications`:
+
+```json
+"Notifications": {
+  "DefaultEmailFrom":         "",
+  "SecurityTeamRecipients":   [],
+  "OperationsTeamRecipients": [],
+  "TeamsWebhookSecurity":     "",
+  "TeamsWebhookOperations":   "",
+  "DryRunNotifications":      false
+}
+```
+
+Severity routing in `Send-Notification`:
+
+| Severity | Email recipients                              | Teams webhook       | Importance |
+|----------|-----------------------------------------------|---------------------|------------|
+| Critical | SecurityTeamRecipients                        | TeamsWebhookSecurity | High       |
+| Warning  | SecurityTeamRecipients + OperationsTeamRecipients (de-duped) | TeamsWebhookSecurity | Normal |
+| Info     | OperationsTeamRecipients                      | TeamsWebhookOperations | Normal |
+
+`DryRunNotifications = true` makes every channel log to the audit log (event=`NOTIFY_DRYRUN`, result=`preview`) without firing — useful for testing scheduled health checks. Surfaced from Audit & Reporting → "Notifications setup / test...". `Test-NotificationChannels` sends a `[TEST]`-tagged ping to every configured channel.
+
+**Privacy contract**: notification recipient addresses are never passed through the AI privacy redaction layer — they're legitimate destinations, not data leaks. The AI's `Convert-ToSafePayload` only ever sees outbound chat payloads, never notification destinations, so the exemption is automatic; the README documents the contract for any future AI-driven flow that might compose a notification.
+
+The three Phase 3 notifiers (`Send-OneDriveHandoffSummary`, `Send-OffboardManagerSummary`, `Send-GuestRecertEmail`) all delegate to `Send-Email` when `Notifications.ps1` is loaded, with a Get-Command-guarded fallback to the original `/me/sendMail` path. This means a tenant that hasn't configured the Notifications block yet still gets the same emails — they just don't honor `DryRunNotifications`.
+
 ## Tests
 
 ```powershell
 Invoke-Pester ./tests/
 ```
+
+Phase 4 adds four more Pester suites alongside the Phase 1 / 2 / 3 ones:
+
+- `tests/LicenseOptimizer.Tests.ps1` — anonymized-username detection, license-family overlap, savings math.
+- `tests/Scheduler.Tests.ps1` — schedule parsing (Daily / Weekly / Monthly / Hourly / cron), cron-expression conversion, non-interactive flag propagation, credential round-trip with mocked path.
+- `tests/BreakGlass.Tests.ps1` — registry round-trip with mocked path, idempotent register, posture predicates against canned timestamps.
+- `tests/Notifications.Tests.ps1` — `Protect-Secret` round-trip, severity → theme / importance mapping, DryRun short-circuit (no Graph / REST calls), severity → recipient routing via mocked dispatcher.
 
 Phase 3 adds four more Pester suites alongside the Phase 1 / 2 ones:
 - `tests/OneDriveManager.Tests.ps1` — recent-files cutoff math, URL parsing, retention end-date math.

@@ -1,0 +1,13 @@
+{
+  "checkName": "stale-guests",
+  "startedAtUtc": "2026-05-12T09:00:00Z",
+  "completedAtUtc": "2026-05-12T09:00:51Z",
+  "status": "findings",
+  "findingCount": 12,
+  "note": "",
+  "findings": [
+    {"UPN":"alice_vendor.com#EXT#@contoso.onmicrosoft.com","DisplayName":"Alice (Vendor)","DaysSinceSignIn":312,"Domains":"vendor.com"},
+    {"UPN":"bob_partner.io#EXT#@contoso.onmicrosoft.com","DisplayName":"Bob (Partner)","DaysSinceSignIn":189,"Domains":"partner.io"},
+    {"UPN":"never.signed.in_old.com#EXT#@contoso.onmicrosoft.com","DisplayName":"Ghost","DaysSinceSignIn":9999,"Domains":"old.com"}
+  ]
+}

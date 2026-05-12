@@ -1,0 +1,15 @@
+{
+  "checkName": "license-usage",
+  "startedAtUtc": "2026-05-12T09:00:00Z",
+  "completedAtUtc": "2026-05-12T09:01:47Z",
+  "status": "findings",
+  "findingCount": 27,
+  "note": "",
+  "findings": {
+    "inactiveCount": 14,
+    "hoarderCount": 4,
+    "paidUnassignedRows": 6,
+    "downgradeCount": 3,
+    "dashboardPath": "C:\\Users\\admin\\AppData\\Local\\M365Manager\\audit\\license-utilization-20260512-090147.html"
+  }
+}
