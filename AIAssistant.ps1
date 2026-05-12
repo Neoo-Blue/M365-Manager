@@ -1007,7 +1007,7 @@ function Start-AIAssistant {
     $pd="$($config['Provider']) ($($config['Model']))"; if($pd.Length -gt 52){$pd=$pd.Substring(0,49)+"..."}
     Write-Host ("  " + $b.DV + "   $("{0,-52}" -f $pd)" + $b.DV) -ForegroundColor "Gray"
     Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor "Cyan"
-    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /privacy  /tools  /plan  /noplan  /cost  /costs  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+    Write-Host ""; Write-Host "  /help  /config  /tools  /plan  /noplan  /cost  /costs  /list  /load  /save  /ephemeral  /export  /quit" -ForegroundColor "DarkGray"; Write-Host ""
 
     # Phase 5: pre-load the tool catalog and probe provider capability.
     if (Get-Command Get-AIToolCatalog -ErrorAction SilentlyContinue) { Get-AIToolCatalog | Out-Null }
@@ -1037,8 +1037,28 @@ function Start-AIAssistant {
         if ([string]::IsNullOrWhiteSpace($userMsg)) { continue }
 
         $cmd = $userMsg.Trim().ToLower()
-        if ($cmd -match '^/(quit|exit|back)$') { Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": See you!" -ForegroundColor White; Write-Host ""; $chatting=$false; continue }
-        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /privacy /clear /context /tools /plan /noplan /cost /costs /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -match '^/(quit|exit|back)$') {
+            # Auto-save unless /ephemeral
+            if ((Get-Command Save-AISession -ErrorAction SilentlyContinue) -and $chatHistory.Count -gt 0 -and -not (Get-AISessionCurrent).Ephemeral) {
+                $sid = Save-AISession -Config $config -History $chatHistory
+                if ($sid) { Write-Host "  [auto-saved as $sid]" -ForegroundColor DarkGray }
+            }
+            Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": See you!" -ForegroundColor White; Write-Host ""; $chatting=$false; continue
+        }
+        if ($cmd -eq '/help') {
+            Write-Host ""
+            Write-Host "  /config /models /privacy /clear /context /tools" -ForegroundColor "DarkGray"
+            Write-Host "  /plan /noplan          plan-mode controls" -ForegroundColor "DarkGray"
+            Write-Host "  /cost /costs           cost summary / history" -ForegroundColor "DarkGray"
+            Write-Host "  /list /load <id>       saved sessions" -ForegroundColor "DarkGray"
+            Write-Host "  /save [title]          persist this chat" -ForegroundColor "DarkGray"
+            Write-Host "  /rename <id> <title>   rename" -ForegroundColor "DarkGray"
+            Write-Host "  /delete <id>           delete" -ForegroundColor "DarkGray"
+            Write-Host "  /ephemeral             do not auto-save on quit" -ForegroundColor "DarkGray"
+            Write-Host "  /export <id> [path]    redacted JSON for sharing" -ForegroundColor "DarkGray"
+            Write-Host "  /quit                  exit" -ForegroundColor "DarkGray"
+            Write-Host ""; continue
+        }
         if ($cmd -eq '/cost') {
             if (Get-Command Show-AICostSummary -ErrorAction SilentlyContinue) { Show-AICostSummary }
             else { Write-Warn "Cost tracker not loaded." }
@@ -1047,6 +1067,52 @@ function Start-AIAssistant {
         if ($cmd -eq '/costs') {
             if (Get-Command Show-AICostHistory -ErrorAction SilentlyContinue) { Show-AICostHistory }
             else { Write-Warn "Cost tracker not loaded." }
+            continue
+        }
+        if ($cmd -eq '/list') {
+            if (Get-Command Show-AISessionList -ErrorAction SilentlyContinue) { Show-AISessionList }
+            else { Write-Warn "Session store not loaded." }
+            continue
+        }
+        if ($cmd -like '/load *') {
+            if (-not (Get-Command Load-AISession -ErrorAction SilentlyContinue)) { Write-Warn "Session store not loaded."; continue }
+            $target = $userMsg.Substring(6).Trim()
+            $loaded = Load-AISession -IdOrPrefix $target
+            if (-not $loaded) { Write-Warn "No session matches '$target'."; continue }
+            $chatHistory = @($loaded.History)
+            Write-InfoMsg ("Loaded session '{0}' ({1} message(s), {2:N4} USD)." -f $loaded.Title, $loaded.History.Count, $loaded.CostUsd)
+            continue
+        }
+        if ($cmd -eq '/save' -or $cmd -like '/save *') {
+            if (-not (Get-Command Save-AISession -ErrorAction SilentlyContinue)) { Write-Warn "Session store not loaded."; continue }
+            $title = if ($cmd.Length -gt 5) { $userMsg.Substring(6).Trim() } else { $null }
+            $sid = Save-AISession -Config $config -History $chatHistory -Title $title -Force
+            if ($sid) { Write-InfoMsg ("Saved session '{0}' ({1})." -f $script:AISessionCurrent.Title, $sid) }
+            continue
+        }
+        if ($cmd -like '/rename *') {
+            $parts = $userMsg.Substring(8).Trim() -split '\s+', 2
+            if ($parts.Count -ne 2) { Write-Warn "Usage: /rename <id-or-prefix> <new title>"; continue }
+            if (Rename-AISession -IdOrPrefix $parts[0] -NewTitle $parts[1]) { Write-InfoMsg "Renamed." }
+            continue
+        }
+        if ($cmd -like '/delete *') {
+            $target = $userMsg.Substring(8).Trim()
+            if (Remove-AISession -IdOrPrefix $target) { Write-InfoMsg "Deleted '$target'." }
+            continue
+        }
+        if ($cmd -eq '/ephemeral') {
+            Set-AISessionEphemeral -On $true
+            Write-InfoMsg "Ephemeral mode ON -- this chat will NOT be auto-saved on /quit."
+            continue
+        }
+        if ($cmd -like '/export *' -or $cmd -eq '/export') {
+            $rest = if ($cmd.Length -gt 8) { $userMsg.Substring(8).Trim() } else { '' }
+            $parts = $rest -split '\s+', 2
+            $idArg = if ($parts.Count -ge 1 -and $parts[0]) { $parts[0] } else { $script:AISessionCurrent.Id }
+            $dest  = if ($parts.Count -ge 2) { $parts[1] } else { $null }
+            if (-not $idArg) { Write-Warn "Usage: /export <id-or-prefix> [destination-path]"; continue }
+            Export-AISession -IdOrPrefix $idArg -DestinationPath $dest | Out-Null
             continue
         }
         if ($cmd -eq '/plan') {
