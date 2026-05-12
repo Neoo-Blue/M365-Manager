@@ -46,10 +46,16 @@ function Edit-DistributionListMembers {
     if ($action -eq 0) {
         $dl = Find-DistributionList; if ($null -eq $dl) { Pause-ForUser; return }
         if (Confirm-Action "Add to '$($dl.DisplayName)'?") {
-            $ok = Invoke-Action -Description ("Add {0} to DL '{1}'" -f $upn, $dl.DisplayName) -Action {
-                try { Add-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -ErrorAction Stop; $true }
-                catch { if ($_.Exception.Message -match 'already') { 'already' } else { throw } }
-            }
+            $ok = Invoke-Action `
+                -Description ("Add {0} to DL '{1}'" -f $upn, $dl.DisplayName) `
+                -ActionType 'AddToDistributionList' `
+                -Target @{ upn = $upn; dlIdentity = [string]$dl.PrimarySmtpAddress; dlName = [string]$dl.DisplayName } `
+                -ReverseType 'RemoveFromDistributionList' `
+                -ReverseDescription ("Remove {0} from DL '{1}'" -f $upn, $dl.DisplayName) `
+                -Action {
+                    try { Add-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -ErrorAction Stop; $true }
+                    catch { if ($_.Exception.Message -match 'already') { 'already' } else { throw } }
+                }
             if (-not (Get-PreviewMode)) {
                 if ($ok -eq 'already') { Write-Warn "Already a member." }
                 elseif ($ok)           { Write-Success "Added." }
@@ -88,9 +94,15 @@ function Edit-DistributionListMembers {
             foreach ($idx in $sel) {
                 $dl = $memberOf[$idx]
                 if (Confirm-Action "Remove from '$($dl.DisplayName)'?") {
-                    $ok = Invoke-Action -Description ("Remove {0} from DL '{1}'" -f $upn, $dl.DisplayName) -Action {
-                        Remove-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -Confirm:$false -ErrorAction Stop; $true
-                    }
+                    $ok = Invoke-Action `
+                        -Description ("Remove {0} from DL '{1}'" -f $upn, $dl.DisplayName) `
+                        -ActionType 'RemoveFromDistributionList' `
+                        -Target @{ upn = $upn; dlIdentity = [string]$dl.PrimarySmtpAddress; dlName = [string]$dl.DisplayName } `
+                        -ReverseType 'AddToDistributionList' `
+                        -ReverseDescription ("Re-add {0} to DL '{1}'" -f $upn, $dl.DisplayName) `
+                        -Action {
+                            Remove-DistributionGroupMember -Identity $dl.PrimarySmtpAddress -Member $upn -Confirm:$false -ErrorAction Stop; $true
+                        }
                     if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed." }
                 }
             }
@@ -138,9 +150,12 @@ function Remove-DistributionListFlow {
     if (Confirm-Action "DELETE '$($dl.DisplayName)'?") {
         $check = Read-UserInput "Type the DL email to confirm"
         if ($check -eq $dl.PrimarySmtpAddress) {
-            $ok = Invoke-Action -Description ("DELETE DL '{0}' <{1}>" -f $dl.DisplayName, $dl.PrimarySmtpAddress) -Action {
-                Remove-DistributionGroup -Identity $dl.PrimarySmtpAddress -Confirm:$false -ErrorAction Stop; $true
-            }
+            $ok = Invoke-Action `
+                -Description ("DELETE DL '{0}' <{1}>" -f $dl.DisplayName, $dl.PrimarySmtpAddress) `
+                -ActionType 'DeleteDistributionList' `
+                -Target @{ dlIdentity = [string]$dl.PrimarySmtpAddress; dlName = [string]$dl.DisplayName } `
+                -NoUndoReason 'Distribution-list deletion is irreversible.' `
+                -Action { Remove-DistributionGroup -Identity $dl.PrimarySmtpAddress -Confirm:$false -ErrorAction Stop; $true }
             if ($ok -and -not (Get-PreviewMode)) { Write-Success "Deleted." }
         } else { Write-Warn "Mismatch. Cancelled." }
     }

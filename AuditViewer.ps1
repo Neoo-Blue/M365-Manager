@@ -441,12 +441,14 @@ function Start-AuditReportingMenu {
     while ($true) {
         $opts = @(
             "Audit log viewer (filter / page / export)",
+            "Undo recent operation...",
             "Reporting (existing reports menu)"
         )
         $sel = Show-Menu -Title "Audit & Reporting" -Options $opts -BackLabel "Back to Main Menu"
         switch ($sel) {
             0  { Show-AuditLogViewer }
-            1  { if (Get-Command Start-ReportingMenu -ErrorAction SilentlyContinue) { Start-ReportingMenu } else { Write-Warn "Reporting menu unavailable."; Pause-ForUser } }
+            1  { if (Get-Command Start-UndoMenu -ErrorAction SilentlyContinue) { Start-UndoMenu } else { Write-Warn "Undo menu unavailable."; Pause-ForUser } }
+            2  { if (Get-Command Start-ReportingMenu -ErrorAction SilentlyContinue) { Start-ReportingMenu } else { Write-Warn "Reporting menu unavailable."; Pause-ForUser } }
             -1 { return }
         }
     }

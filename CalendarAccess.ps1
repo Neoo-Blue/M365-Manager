@@ -37,15 +37,21 @@ function Start-CalendarAccessManagement {
         $accessMap = @("Reviewer","Editor","Author","Contributor"); $ar = $accessMap[$pl]
 
         if (Confirm-Action "Grant $ar to $($tu.DisplayName) on $($owner.DisplayName) calendar?") {
-            $ok = Invoke-Action -Description ("Grant {0} {1} on {2} calendar" -f $tu.UserPrincipalName, $ar, $owner.UserPrincipalName) -Action {
-                try {
-                    Add-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; $true
-                } catch {
-                    if ($_.Exception.Message -match 'already exists') {
-                        Set-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; 'updated'
-                    } else { throw }
+            $ok = Invoke-Action `
+                -Description ("Grant {0} {1} on {2} calendar" -f $tu.UserPrincipalName, $ar, $owner.UserPrincipalName) `
+                -ActionType 'GrantCalendarAccess' `
+                -Target @{ calendar = [string]$calId; user = $tu.UserPrincipalName; rights = [string]$ar } `
+                -ReverseType 'RevokeCalendarAccess' `
+                -ReverseDescription ("Revoke {0}'s access on {1} calendar" -f $tu.UserPrincipalName, $owner.UserPrincipalName) `
+                -Action {
+                    try {
+                        Add-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; $true
+                    } catch {
+                        if ($_.Exception.Message -match 'already exists') {
+                            Set-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; 'updated'
+                        } else { throw }
+                    }
                 }
-            }
             if (-not (Get-PreviewMode)) {
                 if ($ok -eq 'updated') { Write-Success "Updated to: $ar" }
                 elseif ($ok)           { Write-Success "Granted: $ar" }

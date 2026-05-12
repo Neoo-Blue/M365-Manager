@@ -56,9 +56,15 @@ function Edit-SecurityGroupMembers {
             foreach ($idx in $selected) {
                 $m = $members[$idx]
                 if (Confirm-Action "Remove '$($m.AdditionalProperties['displayName'])'?") {
-                    $ok = Invoke-Action -Description ("Remove {0} from group '{1}'" -f $m.AdditionalProperties['userPrincipalName'], $group.DisplayName) -Action {
-                        Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $m.Id -ErrorAction Stop; $true
-                    }
+                    $ok = Invoke-Action `
+                        -Description ("Remove {0} from group '{1}'" -f $m.AdditionalProperties['userPrincipalName'], $group.DisplayName) `
+                        -ActionType 'RemoveFromGroup' `
+                        -Target @{ userId = [string]$m.Id; userUpn = [string]$m.AdditionalProperties['userPrincipalName']; groupId = [string]$group.Id; groupName = [string]$group.DisplayName } `
+                        -ReverseType 'AddToGroup' `
+                        -ReverseDescription ("Re-add {0} to group '{1}'" -f $m.AdditionalProperties['userPrincipalName'], $group.DisplayName) `
+                        -Action {
+                            Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $m.Id -ErrorAction Stop; $true
+                        }
                     if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed." }
                 }
             }
@@ -98,9 +104,12 @@ function Remove-SecurityGroupFlow {
     if (Confirm-Action "DELETE '$($group.DisplayName)'?") {
         $check = Read-UserInput "Type the group name to confirm"
         if ($check -eq $group.DisplayName) {
-            $ok = Invoke-Action -Description ("DELETE security group '{0}'" -f $group.DisplayName) -Action {
-                Remove-MgGroup -GroupId $group.Id -ErrorAction Stop; $true
-            }
+            $ok = Invoke-Action `
+                -Description ("DELETE security group '{0}'" -f $group.DisplayName) `
+                -ActionType 'DeleteSecurityGroup' `
+                -Target @{ groupId = [string]$group.Id; groupName = [string]$group.DisplayName } `
+                -NoUndoReason 'Security group deletion is irreversible (cannot reconstruct membership history).' `
+                -Action { Remove-MgGroup -GroupId $group.Id -ErrorAction Stop; $true }
             if ($ok -and -not (Get-PreviewMode)) { Write-Success "Deleted." }
         } else { Write-Warn "Name mismatch. Cancelled." }
     }
@@ -145,10 +154,16 @@ function Add-MembersLoop {
                 }
             }
             if (Confirm-Action "Add '$($tu.DisplayName)' to '$GroupName'?") {
-                $ok = Invoke-Action -Description ("Add {0} to security group '{1}'" -f $tu.UserPrincipalName, $GroupName) -Action {
-                    try { New-MgGroupMember -GroupId $GroupId -DirectoryObjectId $tu.Id -ErrorAction Stop; $true }
-                    catch { if ($_.Exception.Message -match 'already exist') { 'already' } else { throw } }
-                }
+                $ok = Invoke-Action `
+                    -Description ("Add {0} to security group '{1}'" -f $tu.UserPrincipalName, $GroupName) `
+                    -ActionType 'AddToGroup' `
+                    -Target @{ userId = [string]$tu.Id; userUpn = $tu.UserPrincipalName; groupId = [string]$GroupId; groupName = [string]$GroupName } `
+                    -ReverseType 'RemoveFromGroup' `
+                    -ReverseDescription ("Remove {0} from security group '{1}'" -f $tu.UserPrincipalName, $GroupName) `
+                    -Action {
+                        try { New-MgGroupMember -GroupId $GroupId -DirectoryObjectId $tu.Id -ErrorAction Stop; $true }
+                        catch { if ($_.Exception.Message -match 'already exist') { 'already' } else { throw } }
+                    }
                 if (-not (Get-PreviewMode)) {
                     if ($ok -eq 'already') { Write-Warn "Already a member." }
                     elseif ($ok)           { Write-Success "Added." }
