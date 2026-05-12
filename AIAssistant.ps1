@@ -686,6 +686,24 @@ $script:PrivacySystemPromptAddendum = @"
 PRIVACY NOTE: Values like <UPN_1>, <GUID_3>, <TENANT>, <NAME_2>, <SECRET_4>, <JWT_1>, <THUMB_1> are opaque placeholders. Preserve them verbatim in any command you propose. Do NOT invent or substitute real-looking values. If a value you need has not been provided, ask the operator rather than guessing.
 "@
 
+$script:PlanningSystemPromptAddendum = @"
+
+
+PLANNING: For tasks that need 3+ tool calls, OR any sequence of destructive operations, you SHOULD first call the special meta-tool 'submit_plan' to propose the full plan. The operator approves, edits, or rejects the plan before any step runs. Single-tool reads (Get-* / List-*) do NOT need a plan. The plan's steps[].tool field must exactly match a real tool name from the catalog (not 'submit_plan' / 'ask_operator'). Use 'dependsOn' to express ordering. Mark each step's 'destructive' field truthfully so the operator sees risk. If the operator asked you to '/plan' in their last message, ALWAYS submit_plan first. If they asked '/noplan', skip planning and call tools directly.
+"@
+
+$script:PlanForceSystemPromptAddendum = @"
+
+
+PLAN MODE FORCED: The operator typed /plan. For this turn you MUST call submit_plan first (do not call any other tool directly). Build a complete plan of every tool call needed to accomplish the operator's request, then stop and wait for approval.
+"@
+
+$script:NoPlanSystemPromptAddendum = @"
+
+
+PLAN MODE SKIPPED: The operator typed /noplan. Do NOT call submit_plan; call the actual tools directly even if the task involves multiple steps.
+"@
+
 # ============================================================
 #  AI Command Audit + Allow-list
 #  Every AI-proposed command is parsed via the PowerShell language
@@ -968,7 +986,7 @@ function Start-AIAssistant {
     $pd="$($config['Provider']) ($($config['Model']))"; if($pd.Length -gt 52){$pd=$pd.Substring(0,49)+"..."}
     Write-Host ("  " + $b.DV + "   $("{0,-52}" -f $pd)" + $b.DV) -ForegroundColor "Gray"
     Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor "Cyan"
-    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /privacy  /tools  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /privacy  /tools  /plan  /noplan  /quit" -ForegroundColor "DarkGray"; Write-Host ""
 
     # Phase 5: pre-load the tool catalog and probe provider capability.
     if (Get-Command Get-AIToolCatalog -ErrorAction SilentlyContinue) { Get-AIToolCatalog | Out-Null }
@@ -999,7 +1017,21 @@ function Start-AIAssistant {
 
         $cmd = $userMsg.Trim().ToLower()
         if ($cmd -match '^/(quit|exit|back)$') { Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": See you!" -ForegroundColor White; Write-Host ""; $chatting=$false; continue }
-        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /privacy /clear /context /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /privacy /clear /context /tools /plan /noplan /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -eq '/plan') {
+            if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) {
+                Set-AIPlanMode -Mode 'force'
+                Write-InfoMsg "Plan mode forced for next prompt -- Mark will submit_plan before executing tools."
+            } else { Write-Warn "Planner module not loaded." }
+            Write-Host ""; continue
+        }
+        if ($cmd -eq '/noplan') {
+            if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) {
+                Set-AIPlanMode -Mode 'skip'
+                Write-InfoMsg "Plan mode skipped for next prompt -- Mark will call tools directly."
+            } else { Write-Warn "Planner module not loaded." }
+            Write-Host ""; continue
+        }
         if ($cmd -eq '/config') { $nc=Setup-AIProvider; if($nc){$config=$nc}else{$r=Get-AIConfig;if($r){if($r -is [PSCustomObject]){$ht=@{};$r.PSObject.Properties|ForEach-Object{$ht[$_.Name]=$_.Value};$config=$ht}else{$config=$r}}}; Write-Host ""; continue }
         if ($cmd -eq '/models') { if($config["Provider"] -eq "Ollama"){try{$ms=Invoke-RestMethod -Uri "$($config['Endpoint'])/api/tags" -Method GET -TimeoutSec 5;Write-Host "";foreach($m in $ms.models){$c=if($m.name -eq $config["Model"]){"<< current"}else{""};Write-Host "    $($m.name) ($([math]::Round($m.size/1MB))MB) $c" -ForegroundColor White}}catch{Write-ErrorMsg "Cannot reach Ollama."}}else{Write-InfoMsg "/models is for Ollama."}; Write-Host ""; continue }
         if ($cmd -eq '/privacy') { Show-PrivacyMenu -Config $config; $r=Get-AIConfig; if($r){$config=$r}; Write-Host ""; continue }
@@ -1053,7 +1085,53 @@ function Start-AIAssistant {
                 # Operator gate (Y/A/N) + dispatch
                 $results = New-Object System.Collections.ArrayList
                 $runAll = $false
+                # ---- Auto-plan: if AI returned >= threshold tool_uses on first hop
+                # and didn't already submit_plan, nudge into plan mode for the *next*
+                # turn. We don't synthesize a plan locally; we tell the AI to revise.
+                $threshold = if ($script:AIAutoPlanThreshold) { [int]$script:AIAutoPlanThreshold } else { 3 }
+                $hasSubmitPlan = $false
+                foreach ($tu in $turn.ToolUses) { if ($tu.name -eq 'submit_plan') { $hasSubmitPlan = $true; break } }
+                if ($hops -eq 1 -and -not $hasSubmitPlan -and $turn.ToolUses.Count -ge $threshold -and (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) -and (Get-AIPlanMode) -ne 'skip') {
+                    Write-Warn ("Mark proposed {0} tool calls on first turn (>= {1}). Routing through plan mode." -f $turn.ToolUses.Count, $threshold)
+                    Set-AIPlanMode -Mode 'force'
+                    foreach ($tu in $turn.ToolUses) {
+                        [void]$results.Add(@{ id = $tu.id; content = '{"ok":false,"error":"auto_plan_required","note":"Operator requires submit_plan first for tasks needing >= ' + $threshold + ' tool calls."}'; isError = $true })
+                    }
+                } else {
                 foreach ($tu in $turn.ToolUses) {
+                    # ---- submit_plan intercept -- route to planner approval flow
+                    if ($tu.name -eq 'submit_plan' -and (Get-Command Invoke-AIPlanApprovalFlow -ErrorAction SilentlyContinue)) {
+                        Write-Host ""
+                        $flow = Invoke-AIPlanApprovalFlow -PlanInput $tu.input -Config $config
+                        # Reset plan-mode latch once a plan has been processed
+                        if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) { Set-AIPlanMode -Mode 'auto' }
+                        $body = @{ ok = ($flow.Status -ne 'rejected'); status = $flow.Status }
+                        if ($flow.Result) {
+                            $body.executed  = $flow.Result.Executed
+                            $body.succeeded = $flow.Result.Succeeded
+                            $body.failed    = $flow.Result.Failed
+                            $body.skipped   = $flow.Result.Skipped
+                            $body.steps     = @($flow.Result.StepResults | ForEach-Object {
+                                @{ id = $_.id; tool = $_.tool; status = $_.status; error = $_.error }
+                            })
+                        }
+                        if ($flow.ValidationErrors) { $body.validationErrors = @($flow.ValidationErrors) }
+                        if ($flow.Reason) { $body.reason = $flow.Reason }
+                        $payload = ($body | ConvertTo-Json -Depth 8 -Compress)
+                        [void]$results.Add(@{ id = $tu.id; content = $payload; isError = ($flow.Status -eq 'rejected') })
+                        continue
+                    }
+                    # ---- ask_operator intercept -- prompt the human directly
+                    if ($tu.name -eq 'ask_operator') {
+                        $q = [string]$tu.input.question
+                        Write-Host ""
+                        Write-Host "  Mark asks: $q" -ForegroundColor Cyan
+                        Write-Host "  You" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                        $ansText = Read-Host
+                        $payload = (@{ ok = $true; answer = $ansText } | ConvertTo-Json -Compress)
+                        [void]$results.Add(@{ id = $tu.id; content = $payload; isError = $false })
+                        continue
+                    }
                     $toolDef = Get-AIToolByName -Name $tu.name
                     $destFlag = if ($toolDef -and $toolDef.destructive) { '[DESTRUCTIVE] ' } else { '' }
                     Write-Host ""
@@ -1076,12 +1154,15 @@ function Start-AIAssistant {
                     $payload = (Format-AIToolResultPayload -Result $out -MaxBytes 4000)
                     [void]$results.Add(@{ id = $tu.id; content = $payload; isError = (-not $out.ok) })
                 }
+                }
                 if ($results.Count -eq 0) { break }
                 $followup = Build-ToolResultMessage -Provider $config.Provider -ToolResults @($results)
                 if ($followup -is [array]) { $chatHistory += $followup } else { $chatHistory += $followup }
             }
             Write-Host ""
             if ($chatHistory.Count -gt 60) { $chatHistory = $chatHistory[-60..-1] }
+            # Reset the /plan or /noplan latch so it only applies to one prompt.
+            if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) { Set-AIPlanMode -Mode 'auto' }
             if ($useTooling) { continue }   # done; let outer while-loop ask next prompt
         }
 

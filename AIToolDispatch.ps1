@@ -428,6 +428,10 @@ function Invoke-AIChatToolingTurn {
 
     $systemPrompt = $script:AISystemPrompt
     if ($fullRedact) { $systemPrompt += $script:PrivacySystemPromptAddendum }
+    if ($script:PlanningSystemPromptAddendum) { $systemPrompt += $script:PlanningSystemPromptAddendum }
+    $planModeNow = if (Get-Command Get-AIPlanMode -ErrorAction SilentlyContinue) { Get-AIPlanMode } else { 'auto' }
+    if     ($planModeNow -eq 'force' -and $script:PlanForceSystemPromptAddendum) { $systemPrompt += $script:PlanForceSystemPromptAddendum }
+    elseif ($planModeNow -eq 'skip'  -and $script:NoPlanSystemPromptAddendum)    { $systemPrompt += $script:NoPlanSystemPromptAddendum }
 
     $body = $null; $headers = $null; $uri = $endpoint; $usage = $null
     $rawAssistantContent = @()
