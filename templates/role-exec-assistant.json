@@ -1,0 +1,18 @@
+{
+  "_comment": "EXAMPLE — Exec Assistant onboarding with delegate access patterns. Adjust shared mailboxes to match your execs' actual mailbox addresses.",
+  "name": "Executive Assistant",
+  "description": "EA onboarding: E3, exec calendar/shared mailbox delegate access",
+  "usageLocation": "US",
+  "licenseSKUs": ["SPE_E3"],
+  "securityGroups": ["SG-EA", "SG-Travel-Booking"],
+  "distributionLists": ["DL-All-Employees", "DL-Exec-Staff"],
+  "sharedMailboxes": [
+    { "identity": "ceo@contoso.com",  "access": "FullSendAs" },
+    { "identity": "cto@contoso.com",  "access": "FullSendAs" },
+    { "identity": "exec-cal@contoso.com", "access": "Full" }
+  ],
+  "teams": ["Exec Office", "Exec Calendars"],
+  "oneDrive": { "quotaGB": 1024, "provisionImmediately": true },
+  "defaults": { "Department": "Executive Office", "OfficeLocation": "" },
+  "contractorExpiryDays": null
+}

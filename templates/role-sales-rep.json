@@ -1,0 +1,17 @@
+{
+  "_comment": "EXAMPLE — replace SKUs and group names with your tenant's real values. Run Get-MgSubscribedSku to list your SKUs. Group / DL names must match Get-MgGroup / Get-DistributionGroup output exactly.",
+  "name": "Sales Rep",
+  "description": "Standard Sales onboarding: E3 + Power BI Pro, Sales SGs, sales-inbox access",
+  "usageLocation": "US",
+  "licenseSKUs": ["SPE_E3", "POWER_BI_PRO"],
+  "securityGroups": ["SG-Sales", "SG-CRM-Users"],
+  "distributionLists": ["DL-All-Sales", "DL-All-Employees"],
+  "sharedMailboxes": [
+    { "identity": "sales-inbox@contoso.com", "access": "Full" },
+    { "identity": "support@contoso.com",    "access": "SendAs" }
+  ],
+  "teams": ["Sales Team", "Pipeline Reviews"],
+  "oneDrive": { "quotaGB": 1024, "provisionImmediately": true },
+  "defaults": { "Department": "Sales", "OfficeLocation": "" },
+  "contractorExpiryDays": null
+}

@@ -69,7 +69,7 @@ if (-not $ScriptRoot) {
 # ---- Load all modules ----
 $loadErrors = @()
 $modules = @(
-    "UI.ps1","Auth.ps1","Onboard.ps1","Offboard.ps1","License.ps1",
+    "UI.ps1","Auth.ps1","Templates.ps1","Onboard.ps1","Offboard.ps1","License.ps1",
     "Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
     "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
     "Reports.ps1","eDiscovery.ps1","GroupManager.ps1","AIAssistant.ps1"

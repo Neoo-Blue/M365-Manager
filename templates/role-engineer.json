@@ -1,0 +1,16 @@
+{
+  "_comment": "EXAMPLE — replace with your tenant's real SKUs and group names.",
+  "name": "Engineer",
+  "description": "Engineering onboarding: E5, eng SGs, dev tooling DLs",
+  "usageLocation": "US",
+  "licenseSKUs": ["SPE_E5"],
+  "securityGroups": ["SG-Engineering", "SG-Source-Read", "SG-CI-Users"],
+  "distributionLists": ["DL-All-Engineering", "DL-All-Employees"],
+  "sharedMailboxes": [
+    { "identity": "oncall@contoso.com", "access": "Full" }
+  ],
+  "teams": ["Engineering", "Platform Channel"],
+  "oneDrive": { "quotaGB": 1024, "provisionImmediately": true },
+  "defaults": { "Department": "Engineering", "OfficeLocation": "" },
+  "contractorExpiryDays": null
+}

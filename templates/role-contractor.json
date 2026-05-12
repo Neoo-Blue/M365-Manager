@@ -1,0 +1,14 @@
+{
+  "_comment": "EXAMPLE — Contractor template. contractorExpiryDays sets accountExpires N days from creation. Tweak the SKU; many tenants use E1 or F3 for non-employee accounts.",
+  "name": "Contractor",
+  "description": "External contractor: E1 + minimal access, account auto-expires",
+  "usageLocation": "US",
+  "licenseSKUs": ["STANDARDPACK"],
+  "securityGroups": ["SG-Contractors", "SG-Restricted-Access"],
+  "distributionLists": ["DL-All-Employees"],
+  "sharedMailboxes": [],
+  "teams": [],
+  "oneDrive": { "quotaGB": 100, "provisionImmediately": false },
+  "defaults": { "Department": "External", "OfficeLocation": "Remote" },
+  "contractorExpiryDays": 90
+}
