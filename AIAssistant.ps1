@@ -61,7 +61,7 @@ Add license: Set-MgUserLicense -UserId "ID" -AddLicenses @(@{SkuId="GUID"}) -Rem
 Remove license: Set-MgUserLicense -UserId "ID" -AddLicenses @() -RemoveLicenses @("GUID") -ErrorAction Stop
 Calendar perms: Get-MailboxFolderPermission -Identity "user:\Calendar" -ErrorAction Stop
 Add calendar: Add-MailboxFolderPermission -Identity "user:\Calendar" -User "user2" -AccessRights Editor -ErrorAction Stop
-Create user: New-MgUser -BodyParameter @{DisplayName="Name";GivenName="First";Surname="Last";UserPrincipalName="upn@domain.com";MailNickname="nick";AccountEnabled=`$true;PasswordProfile=@{Password="TempP@ss!";ForceChangePasswordNextSignIn=`$true};UsageLocation="US";JobTitle="Title";Department="Dept"} -ErrorAction Stop
+Create user: New-MgUser -BodyParameter @{DisplayName="Name";GivenName="First";Surname="Last";UserPrincipalName="upn@domain.com";MailNickname="nick";AccountEnabled=`$true;PasswordProfile=@{Password="<GENERATED_TEMP_PASSWORD>";ForceChangePasswordNextSignIn=`$true};UsageLocation="US";JobTitle="Title";Department="Dept"} -ErrorAction Stop
 Set manager: Set-MgUserManagerByRef -UserId "UID" -BodyParameter @{"@odata.id"="https://graph.microsoft.com/v1.0/users/MANAGER_ID"} -ErrorAction Stop
 "@
 
