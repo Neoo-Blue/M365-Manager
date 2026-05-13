@@ -172,6 +172,8 @@ function Filter-AuditEntries {
           Mode       : LIVE | PREVIEW
           Result     : success | failure | preview | info
           Target     : substring on description / target values
+          Tenant     : matches tenant.name, tenant.id, or tenant.domain
+                       (Phase 6 -- structured tenant field)
     #>
     param([array]$Entries, [hashtable]$Filter)
     if (-not $Filter -or $Filter.Count -eq 0) { return $Entries }
@@ -185,6 +187,11 @@ function Filter-AuditEntries {
         if ($Filter.ActionType -and $e.actionType -and ($e.actionType -notlike $Filter.ActionType)) { return $false }
         if ($Filter.ActionType -and -not $e.actionType) { return $false }
         if ($Filter.Result     -and $e.result     -and ($e.result    -ne $Filter.Result))       { return $false }
+        if ($Filter.Tenant) {
+            $t = $e.tenant
+            $tStr = if ($t -is [string]) { $t } elseif ($t) { "$($t.name) $($t.id) $($t.domain)" } else { '' }
+            if ($tStr -notmatch [regex]::Escape($Filter.Tenant)) { return $false }
+        }
         if (-not (Test-AuditEntryMatchesUser   -Entry $e -Upn $Filter.User))        { return $false }
         if (-not (Test-AuditEntryMatchesTarget -Entry $e -TargetText $Filter.Target)) { return $false }
         return $true

@@ -44,9 +44,20 @@ function Get-AuditLogPath {
     if ($createdNow -and -not $onWindows -and (Get-Command chmod -ErrorAction SilentlyContinue)) {
         try { & chmod 700 $base 2>$null | Out-Null } catch {}
     }
-    $name = "session-{0}-{1}.log" -f (Get-Date -Format 'yyyy-MM-dd_HHmmss'), $PID
+    $tenantSlug = ''
+    if ($script:SessionState -and $script:SessionState.TenantName -and $script:SessionState.TenantName -ne 'Own Tenant') {
+        $tenantSlug = '-' + (($script:SessionState.TenantName -replace '[^A-Za-z0-9]+','_').ToLower())
+    }
+    $name = "session-{0}-{1}{2}.log" -f (Get-Date -Format 'yyyy-MM-dd_HHmmss'), $PID, $tenantSlug
     $script:AuditLogPath = Join-Path $base $name
     return $script:AuditLogPath
+}
+
+function Reset-AuditLogPath {
+    <# Phase 6: called by Switch-Tenant so audit entries land in a
+       tenant-suffixed file after the switch, not in the prior
+       tenant's session log. #>
+    $script:AuditLogPath = $null
 }
 
 function Get-AuditLogDirectory {
@@ -89,11 +100,18 @@ function Write-AuditEntry {
     if (-not $EntryId) { $EntryId = New-AuditEntryId }
     $modeTag = if ($script:PreviewMode) { 'PREVIEW' } else { 'LIVE' }
 
+    # Phase 6: structured tenant fingerprint -- every entry records
+    # the human name + the AAD GUID so cross-tenant audit forensics
+    # can match either field cleanly. Legacy callers that only had
+    # a domain still land that value under .tenant.domain.
     $tenant = $null
     if ($script:SessionState) {
-        if ($script:SessionState.TenantDomain) { $tenant = $script:SessionState.TenantDomain }
-        elseif ($script:SessionState.TenantId) { $tenant = $script:SessionState.TenantId }
-        elseif ($script:SessionState.TenantName) { $tenant = $script:SessionState.TenantName }
+        $tenant = [ordered]@{
+            name   = [string]$script:SessionState.TenantName
+            id     = [string]$script:SessionState.TenantId
+            domain = [string]$script:SessionState.TenantDomain
+            mode   = [string]$script:SessionState.TenantMode
+        }
     }
 
     $record = [ordered]@{

@@ -1015,7 +1015,7 @@ function Start-AIAssistant {
     $pd="$($config['Provider']) ($($config['Model']))"; if($pd.Length -gt 52){$pd=$pd.Substring(0,49)+"..."}
     Write-Host ("  " + $b.DV + "   $("{0,-52}" -f $pd)" + $b.DV) -ForegroundColor "Gray"
     Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor "Cyan"
-    Write-Host ""; Write-Host "  /help  /about  /tools  /plan  /noplan  /dryrun  /cost  /costs  /list  /load  /save  /ephemeral  /export  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+    Write-Host ""; Write-Host "  /help  /about  /tenants  /tenant <name>  /tools  /plan  /noplan  /dryrun  /cost  /costs  /list  /load  /save  /quit" -ForegroundColor "DarkGray"; Write-Host ""
 
     # Phase 5: pre-load the tool catalog and probe provider capability.
     if (Get-Command Get-AIToolCatalog -ErrorAction SilentlyContinue) { Get-AIToolCatalog | Out-Null }
@@ -1057,6 +1057,8 @@ function Start-AIAssistant {
             Write-Host ""
             Write-Host "  /config /models /privacy /clear /context /tools" -ForegroundColor "DarkGray"
             Write-Host "  /about                 diagnostic snapshot" -ForegroundColor "DarkGray"
+            Write-Host "  /tenants               list registered tenants" -ForegroundColor "DarkGray"
+            Write-Host "  /tenant <name>         switch tenant context" -ForegroundColor "DarkGray"
             Write-Host "  /plan /noplan          plan-mode controls" -ForegroundColor "DarkGray"
             Write-Host "  /dryrun                toggle PREVIEW (no tenant changes)" -ForegroundColor "DarkGray"
             Write-Host "  /cost /costs           cost summary / history" -ForegroundColor "DarkGray"
@@ -1119,6 +1121,18 @@ function Start-AIAssistant {
         if ($cmd -eq '/about') {
             if (Get-Command Show-AIAbout -ErrorAction SilentlyContinue) { Show-AIAbout -Config $config }
             else { Write-Warn "AIUx module not loaded." }
+            continue
+        }
+        if ($cmd -eq '/tenants') {
+            if (Get-Command Show-TenantRegistry -ErrorAction SilentlyContinue) { Show-TenantRegistry }
+            else { Write-Warn "Tenant registry not loaded." }
+            continue
+        }
+        if ($cmd -like '/tenant *') {
+            if (-not (Get-Command Switch-Tenant -ErrorAction SilentlyContinue)) { Write-Warn "TenantSwitch not loaded."; continue }
+            $name = $userMsg.Substring(8).Trim()
+            if (-not $name) { Write-Warn "Usage: /tenant <name>"; continue }
+            Switch-Tenant -Name $name | Out-Null
             continue
         }
         if ($cmd -eq '/dryrun') {
