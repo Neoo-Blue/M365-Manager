@@ -70,6 +70,7 @@ if (-not $ScriptRoot) {
 $loadErrors = @()
 $modules = @(
     "UI.ps1","Auth.ps1","Audit.ps1","Preview.ps1","Templates.ps1",
+    "Notifications.ps1","TenantRegistry.ps1",
     "Onboard.ps1","BulkOnboard.ps1","Offboard.ps1","BulkOffboard.ps1",
     "License.ps1","Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
     "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
@@ -77,7 +78,7 @@ $modules = @(
     "AuditViewer.ps1","Undo.ps1","SignInLookup.ps1","UnifiedAuditLog.ps1",
     "MFAManager.ps1","OneDriveManager.ps1","TeamsManager.ps1","SharePoint.ps1",
     "GuestUsers.ps1","LicenseOptimizer.ps1","Scheduler.ps1","BreakGlass.ps1",
-    "Notifications.ps1","AICostTracker.ps1","AISessionStore.ps1","AIUx.ps1","AIToolDispatch.ps1","AIPlanner.ps1","AIAssistant.ps1"
+    "AICostTracker.ps1","AISessionStore.ps1","AIUx.ps1","AIToolDispatch.ps1","AIPlanner.ps1","AIAssistant.ps1"
 )
 
 foreach ($mod in $modules) {
@@ -141,6 +142,11 @@ function Start-M365Admin {
         Write-Host "  Goodbye!" -ForegroundColor $script:Colors.Title
         return
     }
+
+    # ---- Phase 6: first-run migration. Offer to register the current
+    #      interactive tenant as a profile so future runs can /tenant
+    #      switch without re-walking the partner-center picker.
+    if (Get-Command Test-FirstRunMigration -ErrorAction SilentlyContinue) { Test-FirstRunMigration }
 
     Write-AuditBanner
 
