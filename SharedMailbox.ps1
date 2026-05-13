@@ -105,9 +105,12 @@ function Remove-SharedMailboxFlow {
     if (Confirm-Action "DELETE '$($box.DisplayName)'?") {
         $check = Read-UserInput "Type email to confirm"
         if ($check -eq $box.PrimarySmtpAddress) {
-            $ok = Invoke-Action -Description ("DELETE shared mailbox '{0}' <{1}>" -f $box.DisplayName, $box.PrimarySmtpAddress) -Action {
-                Remove-Mailbox -Identity $box.PrimarySmtpAddress -Confirm:$false -ErrorAction Stop; $true
-            }
+            $ok = Invoke-Action `
+                -Description ("DELETE shared mailbox '{0}' <{1}>" -f $box.DisplayName, $box.PrimarySmtpAddress) `
+                -ActionType 'DeleteMailbox' `
+                -Target @{ mailbox = [string]$box.PrimarySmtpAddress; displayName = [string]$box.DisplayName } `
+                -NoUndoReason 'Mailbox deletion is irreversible; restoration requires backup/recovery.' `
+                -Action { Remove-Mailbox -Identity $box.PrimarySmtpAddress -Confirm:$false -ErrorAction Stop; $true }
             if ($ok -and -not (Get-PreviewMode)) { Write-Success "Deleted." }
         } else { Write-Warn "Mismatch." }
     }
@@ -143,13 +146,25 @@ function Add-SharedMailboxAccessLoop { param([string]$Id, [string]$Name)
                     $sel = Show-Menu -Title "Select" -Options ($f | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }) -BackLabel "Cancel"; if ($sel -eq -1) { continue }; $f[$sel] } }
             $upn = $tu.UserPrincipalName
             if (Confirm-Action "Grant Full Access to $($tu.DisplayName)?") {
-                $ok = Invoke-Action -Description ("Grant {0} FullAccess on '{1}'" -f $upn, $Name) -Action { Add-MailboxPermission -Identity $Id -User $upn -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; $true }
+                $ok = Invoke-Action `
+                    -Description ("Grant {0} FullAccess on '{1}'" -f $upn, $Name) `
+                    -ActionType 'GrantMailboxFullAccess' `
+                    -Target @{ mailbox = [string]$Id; user = $upn } `
+                    -ReverseType 'RevokeMailboxFullAccess' `
+                    -ReverseDescription ("Revoke {0} FullAccess on '{1}'" -f $upn, $Name) `
+                    -Action { Add-MailboxPermission -Identity $Id -User $upn -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; $true }
                 if ($ok -and -not (Get-PreviewMode)) { Write-Success "Granted." }
             }
             $pc = Show-Menu -Title "Send permissions?" -Options @("Send As","Send on Behalf","Both","None") -BackLabel "Skip"
             if ($pc -ne -1 -and $pc -ne 3) {
                 if ($pc -eq 0 -or $pc -eq 2) { if (Confirm-Action "Send As?") {
-                    $ok = Invoke-Action -Description ("Grant {0} SendAs on '{1}'" -f $upn, $Name) -Action { Add-RecipientPermission -Identity $Id -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true }
+                    $ok = Invoke-Action `
+                        -Description ("Grant {0} SendAs on '{1}'" -f $upn, $Name) `
+                        -ActionType 'GrantMailboxSendAs' `
+                        -Target @{ mailbox = [string]$Id; user = $upn } `
+                        -ReverseType 'RevokeMailboxSendAs' `
+                        -ReverseDescription ("Revoke {0} SendAs on '{1}'" -f $upn, $Name) `
+                        -Action { Add-RecipientPermission -Identity $Id -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true }
                     if ($ok -and -not (Get-PreviewMode)) { Write-Success "Granted." } } }
                 if ($pc -eq 1 -or $pc -eq 2) { if (Confirm-Action "Send on Behalf?") {
                     $ok = Invoke-Action -Description ("Grant {0} SendOnBehalf on '{1}'" -f $upn, $Name) -Action { Set-Mailbox -Identity $Id -GrantSendOnBehalfTo @{Add=$upn} -ErrorAction Stop; $true }

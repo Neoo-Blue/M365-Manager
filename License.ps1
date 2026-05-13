@@ -107,9 +107,15 @@ function Start-LicenseManagement {
                     continue
                 }
                 if (Confirm-Action "Assign '$(Get-SkuFriendlyName $sku.SkuPartNumber)' to $($user.UserPrincipalName)?") {
-                    $ok = Invoke-Action -Description ("Assign license '{0}' to {1}" -f $sku.SkuPartNumber, $user.UserPrincipalName) -Action {
-                        Set-MgUserLicense -UserId $user.Id -AddLicenses @(@{SkuId = $sku.SkuId}) -RemoveLicenses @() -ErrorAction Stop; $true
-                    }
+                    $ok = Invoke-Action `
+                        -Description ("Assign license '{0}' to {1}" -f $sku.SkuPartNumber, $user.UserPrincipalName) `
+                        -ActionType 'AssignLicense' `
+                        -Target @{ userId = [string]$user.Id; userUpn = $user.UserPrincipalName; skuId = [string]$sku.SkuId; skuPart = [string]$sku.SkuPartNumber } `
+                        -ReverseType 'RemoveLicense' `
+                        -ReverseDescription ("Remove license '{0}' from {1}" -f $sku.SkuPartNumber, $user.UserPrincipalName) `
+                        -Action {
+                            Set-MgUserLicense -UserId $user.Id -AddLicenses @(@{SkuId = $sku.SkuId}) -RemoveLicenses @() -ErrorAction Stop; $true
+                        }
                     if ($ok -and -not (Get-PreviewMode)) { Write-Success "$(Get-SkuFriendlyName $sku.SkuPartNumber) assigned." }
                 }
             }
@@ -166,16 +172,22 @@ function Start-LicenseManagement {
             }
 
             if (Confirm-Action "Remove '$friendlyName' from $($user.UserPrincipalName)?") {
-                $ok = Invoke-Action -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $user.UserPrincipalName) -Action {
-                    try {
-                        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
-                    } catch {
-                        $errMsg = $_.Exception.Message
-                        if ($errMsg -match "group-based|inherited|cannot remove") {
-                            'inherited'
-                        } else { throw }
+                $ok = Invoke-Action `
+                    -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $user.UserPrincipalName) `
+                    -ActionType 'RemoveLicense' `
+                    -Target @{ userId = [string]$user.Id; userUpn = $user.UserPrincipalName; skuId = [string]$lic.SkuId; skuPart = [string]$lic.SkuPartNumber } `
+                    -ReverseType 'AssignLicense' `
+                    -ReverseDescription ("Re-assign license '{0}' to {1}" -f $lic.SkuPartNumber, $user.UserPrincipalName) `
+                    -Action {
+                        try {
+                            Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
+                        } catch {
+                            $errMsg = $_.Exception.Message
+                            if ($errMsg -match "group-based|inherited|cannot remove") {
+                                'inherited'
+                            } else { throw }
+                        }
                     }
-                }
                 if (-not (Get-PreviewMode)) {
                     if ($ok -eq 'inherited') {
                         Write-ErrorMsg "Cannot remove: this license is inherited from a group."

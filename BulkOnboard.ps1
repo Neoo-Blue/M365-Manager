@@ -291,15 +291,12 @@ function Invoke-BulkOnboard {
             }
 
             if ($r['IssueTAP'] -and $r['IssueTAP'] -match '^(?i:true|yes|1|y)$') {
-                $tapResp = Invoke-Action -Description ("Issue Temporary Access Pass for {0} (60 min, single-use)" -f $upn) -Action {
-                    $tapBody = @{ lifetimeInMinutes = 60; isUsableOnce = $true } | ConvertTo-Json -Compress
-                    Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/users/$($newUser.Id)/authentication/temporaryAccessPassMethods" -Body $tapBody -ContentType 'application/json' -ErrorAction Stop
-                }
+                # Delegates to MFAManager.New-TemporaryAccessPass so all
+                # TAP issuance flows through one place (audit + preview).
+                $tapResp = New-TemporaryAccessPass -User $newUser.Id -LifetimeMinutes 60 -IsUsableOnce $true
                 if ($tapResp -and $tapResp.temporaryAccessPass) {
                     $entry.TAP = [string]$tapResp.temporaryAccessPass
                     if (-not $dryRun) { Write-Success "TAP issued for $upn (one-time, 60 min)." }
-                } elseif ($dryRun) {
-                    $entry.TAP = '<preview>'
                 }
             }
 

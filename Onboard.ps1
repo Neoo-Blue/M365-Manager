@@ -205,9 +205,14 @@ function Start-Onboard {
         UserPrincipalName = $userData['UserPrincipalName']
         DisplayName       = $userData['DisplayName']
     }
-    $newUser = Invoke-Action -Description ("Create user {0}" -f $userData['UserPrincipalName']) -Critical -StubReturn $stubUser -Action {
-        New-MgUser -BodyParameter $body -ErrorAction Stop
-    }
+    $newUser = Invoke-Action `
+        -Description ("Create user {0}" -f $userData['UserPrincipalName']) `
+        -ActionType 'CreateUser' `
+        -Target @{ userUpn = $userData['UserPrincipalName']; displayName = $userData['DisplayName'] } `
+        -NoUndoReason 'User creation cannot be cleanly undone (deletion is destructive and removes audit history)' `
+        -Critical -StubReturn $stubUser -Action {
+            New-MgUser -BodyParameter $body -ErrorAction Stop
+        }
     if (-not $newUser) { Write-ErrorMsg "Failed to create account."; Pause-ForUser; return }
     if (-not (Get-PreviewMode)) { Write-Success "Account created: $($userData['UserPrincipalName'])" }
 
@@ -418,9 +423,15 @@ function Apply-TemplateLicenses {
         } else {
             $sku = [PSCustomObject]@{ SkuId = "preview-sku-$skuPart"; SkuPartNumber = $skuPart }
         }
-        $ok = Invoke-Action -Description ("Assign license '{0}' to user {1}" -f $skuPart, $UserId) -Action {
-            Set-MgUserLicense -UserId $UserId -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @() -ErrorAction Stop; $true
-        }
+        $ok = Invoke-Action `
+            -Description ("Assign license '{0}' to user {1}" -f $skuPart, $UserId) `
+            -ActionType 'AssignLicense' `
+            -Target @{ userId = $UserId; skuId = [string]$sku.SkuId; skuPart = [string]$skuPart } `
+            -ReverseType 'RemoveLicense' `
+            -ReverseDescription ("Remove license '{0}' from user {1}" -f $skuPart, $UserId) `
+            -Action {
+                Set-MgUserLicense -UserId $UserId -AddLicenses @(@{ SkuId = $sku.SkuId }) -RemoveLicenses @() -ErrorAction Stop; $true
+            }
         if ($ok -and -not (Get-PreviewMode)) { Write-Success "Assigned '$(Format-LicenseLabel $skuPart)'." }
     }
 }
@@ -444,13 +455,19 @@ function Apply-TemplateSecurityGroups {
         } else {
             $grp = [PSCustomObject]@{ Id = "preview-grp-$name"; DisplayName = $name }
         }
-        $ok = Invoke-Action -Description ("Add user {0} to security group '{1}'" -f $UserId, $name) -Action {
-            try {
-                New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $UserId -ErrorAction Stop; $true
-            } catch {
-                if ($_.Exception.Message -match 'already exist') { 'already' } else { throw }
+        $ok = Invoke-Action `
+            -Description ("Add user {0} to security group '{1}'" -f $UserId, $name) `
+            -ActionType 'AddToGroup' `
+            -Target @{ userId = $UserId; groupId = [string]$grp.Id; groupName = [string]$name } `
+            -ReverseType 'RemoveFromGroup' `
+            -ReverseDescription ("Remove user {0} from security group '{1}'" -f $UserId, $name) `
+            -Action {
+                try {
+                    New-MgGroupMember -GroupId $grp.Id -DirectoryObjectId $UserId -ErrorAction Stop; $true
+                } catch {
+                    if ($_.Exception.Message -match 'already exist') { 'already' } else { throw }
+                }
             }
-        }
         if (-not (Get-PreviewMode)) {
             if ($ok -eq 'already') { Write-Warn "Already a member of '$name'." }
             elseif ($ok)           { Write-Success "Added to '$name'." }
@@ -478,13 +495,19 @@ function Apply-TemplateDistributionLists {
                 Write-ErrorMsg "Lookup for DL '$name' failed: $_"; continue
             }
         }
-        $ok = Invoke-Action -Description ("Add {0} to distribution list '{1}'" -f $Upn, $name) -Action {
-            try {
-                Add-DistributionGroupMember -Identity $dlId -Member $Upn -BypassSecurityGroupManagerCheck -ErrorAction Stop; $true
-            } catch {
-                if ($_.Exception.Message -match 'already a member|already exists') { 'already' } else { throw }
+        $ok = Invoke-Action `
+            -Description ("Add {0} to distribution list '{1}'" -f $Upn, $name) `
+            -ActionType 'AddToDistributionList' `
+            -Target @{ upn = $Upn; dlIdentity = [string]$dlId; dlName = [string]$name } `
+            -ReverseType 'RemoveFromDistributionList' `
+            -ReverseDescription ("Remove {0} from distribution list '{1}'" -f $Upn, $name) `
+            -Action {
+                try {
+                    Add-DistributionGroupMember -Identity $dlId -Member $Upn -BypassSecurityGroupManagerCheck -ErrorAction Stop; $true
+                } catch {
+                    if ($_.Exception.Message -match 'already a member|already exists') { 'already' } else { throw }
+                }
             }
-        }
         if (-not (Get-PreviewMode)) {
             if ($ok -eq 'already') { Write-Warn "Already a member of DL '$name'." }
             elseif ($ok)           { Write-Success "Added to DL '$name'." }
@@ -509,26 +532,38 @@ function Apply-TemplateSharedMailboxes {
         }
 
         if ($access -eq 'Full' -or $access -eq 'FullSendAs') {
-            $ok = Invoke-Action -Description ("Grant {0} FullAccess on shared mailbox '{1}'" -f $Upn, $id) -Action {
-                try {
-                    Add-MailboxPermission -Identity $id -User $Upn -AccessRights FullAccess -AutoMapping $true -ErrorAction Stop; $true
-                } catch {
-                    if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+            $ok = Invoke-Action `
+                -Description ("Grant {0} FullAccess on shared mailbox '{1}'" -f $Upn, $id) `
+                -ActionType 'GrantMailboxFullAccess' `
+                -Target @{ mailbox = [string]$id; user = $Upn } `
+                -ReverseType 'RevokeMailboxFullAccess' `
+                -ReverseDescription ("Revoke {0} FullAccess on shared mailbox '{1}'" -f $Upn, $id) `
+                -Action {
+                    try {
+                        Add-MailboxPermission -Identity $id -User $Upn -AccessRights FullAccess -AutoMapping $true -ErrorAction Stop; $true
+                    } catch {
+                        if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+                    }
                 }
-            }
             if (-not (Get-PreviewMode)) {
                 if ($ok -eq 'already') { Write-Warn "Already has FullAccess on '$id'." }
                 elseif ($ok)           { Write-Success "FullAccess on '$id' granted." }
             }
         }
         if ($access -eq 'SendAs' -or $access -eq 'FullSendAs') {
-            $ok = Invoke-Action -Description ("Grant {0} SendAs on shared mailbox '{1}'" -f $Upn, $id) -Action {
-                try {
-                    Add-RecipientPermission -Identity $id -Trustee $Upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
-                } catch {
-                    if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+            $ok = Invoke-Action `
+                -Description ("Grant {0} SendAs on shared mailbox '{1}'" -f $Upn, $id) `
+                -ActionType 'GrantMailboxSendAs' `
+                -Target @{ mailbox = [string]$id; user = $Upn } `
+                -ReverseType 'RevokeMailboxSendAs' `
+                -ReverseDescription ("Revoke {0} SendAs on shared mailbox '{1}'" -f $Upn, $id) `
+                -Action {
+                    try {
+                        Add-RecipientPermission -Identity $id -Trustee $Upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
+                    } catch {
+                        if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+                    }
                 }
-            }
             if (-not (Get-PreviewMode)) {
                 if ($ok -eq 'already') { Write-Warn "Already has SendAs on '$id'." }
                 elseif ($ok)           { Write-Success "SendAs on '$id' granted." }

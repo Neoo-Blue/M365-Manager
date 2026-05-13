@@ -42,21 +42,37 @@ function Start-Offboard {
 
     if (-not (Confirm-Action "Begin offboarding for $($user.DisplayName)?")) { Pause-ForUser; return }
 
+    # Step 0: Revoke MFA methods (so the user cannot re-authenticate
+    # even with their device, before we kill in-flight sessions). Each
+    # method-revoke flows through Invoke-Action so it audits + previews.
+    Write-SectionHeader "Step 0 - Revoke MFA Methods"
+    if ((Get-Command Remove-AllAuthMethods -ErrorAction SilentlyContinue) -and (Confirm-Action "Revoke all MFA methods for $upn?")) {
+        $revoked = Remove-AllAuthMethods -User $user.Id
+        if (-not (Get-PreviewMode)) { Write-Success "$revoked MFA method(s) revoked." }
+    }
+
     # Step 1: Revoke sessions
     Write-SectionHeader "Step 1 - Revoke All Sessions"
     if (Confirm-Action "Revoke all sessions for $upn?") {
-        $ok = Invoke-Action -Description ("Revoke sign-in sessions for {0}" -f $upn) -Action {
-            Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; $true
-        }
+        $ok = Invoke-Action `
+            -Description ("Revoke sign-in sessions for {0}" -f $upn) `
+            -ActionType 'RevokeSignInSessions' `
+            -Target @{ userId = [string]$user.Id; userUpn = $upn } `
+            -NoUndoReason 'Sign-in sessions, once revoked, cannot be restored -- the user re-signs in fresh.' `
+            -Action { Revoke-MgUserSignInSession -UserId $user.Id -ErrorAction Stop; $true }
         if ($ok -and -not (Get-PreviewMode)) { Write-Success "Sessions revoked." }
     }
 
     # Step 2: Block sign-in
     Write-SectionHeader "Step 2 - Block Sign-In"
     if (Confirm-Action "Block sign-in for $upn?") {
-        $ok = Invoke-Action -Description ("Block sign-in for {0}" -f $upn) -Action {
-            Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; $true
-        }
+        $ok = Invoke-Action `
+            -Description ("Block sign-in for {0}" -f $upn) `
+            -ActionType 'BlockSignIn' `
+            -Target @{ userId = [string]$user.Id; userUpn = $upn } `
+            -ReverseType 'UnblockSignIn' `
+            -ReverseDescription ("Unblock sign-in for {0}" -f $upn) `
+            -Action { Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; $true }
         if ($ok -and -not (Get-PreviewMode)) { Write-Success "Sign-in blocked." }
     }
 
@@ -65,9 +81,15 @@ function Start-Offboard {
     if ([string]::IsNullOrWhiteSpace($userData["OOOMessage"])) { $userData["OOOMessage"] = Read-UserInput "Enter OOO message (or 'skip')" }
     if ($userData["OOOMessage"] -ne 'skip' -and $userData["OOOMessage"]) {
         if (Confirm-Action "Set auto-reply?" "Message: $($userData['OOOMessage'])") {
-            $ok = Invoke-Action -Description ("Set OOO auto-reply for {0}" -f $upn) -Action {
-                Set-MailboxAutoReplyConfiguration -Identity $upn -AutoReplyState Enabled -InternalMessage $userData["OOOMessage"] -ExternalMessage $userData["OOOMessage"] -ErrorAction Stop; $true
-            }
+            $ok = Invoke-Action `
+                -Description ("Set OOO auto-reply for {0}" -f $upn) `
+                -ActionType 'SetOOO' `
+                -Target @{ identity = $upn } `
+                -ReverseType 'ClearOOO' `
+                -ReverseDescription ("Clear OOO auto-reply on {0}" -f $upn) `
+                -Action {
+                    Set-MailboxAutoReplyConfiguration -Identity $upn -AutoReplyState Enabled -InternalMessage $userData["OOOMessage"] -ExternalMessage $userData["OOOMessage"] -ErrorAction Stop; $true
+                }
             if ($ok -and -not (Get-PreviewMode)) { Write-Success "OOO set." }
         }
     }
@@ -87,9 +109,15 @@ function Start-Offboard {
             if ($dc -ne -1) {
                 $keepCopy = ($dc -eq 1)
                 if (Confirm-Action "Set forwarding to $fwdEmail (keep copy: $keepCopy)?") {
-                    $ok = Invoke-Action -Description ("Set forwarding {0} -> {1} (keep copy: {2})" -f $upn, $fwdEmail, $keepCopy) -Action {
-                        Set-Mailbox -Identity $upn -ForwardingSmtpAddress "smtp:$fwdEmail" -DeliverToMailboxAndForward $keepCopy -ErrorAction Stop; $true
-                    }
+                    $ok = Invoke-Action `
+                        -Description ("Set forwarding {0} -> {1} (keep copy: {2})" -f $upn, $fwdEmail, $keepCopy) `
+                        -ActionType 'SetForwarding' `
+                        -Target @{ identity = $upn; forwardTo = $fwdEmail; keepCopy = $keepCopy } `
+                        -ReverseType 'ClearForwarding' `
+                        -ReverseDescription ("Clear forwarding on {0}" -f $upn) `
+                        -Action {
+                            Set-Mailbox -Identity $upn -ForwardingSmtpAddress "smtp:$fwdEmail" -DeliverToMailboxAndForward $keepCopy -ErrorAction Stop; $true
+                        }
                     if ($ok -and -not (Get-PreviewMode)) { Write-Success "Forwarding set." }
                 }
             }
@@ -99,9 +127,12 @@ function Start-Offboard {
     # Step 5: Shared mailbox
     Write-SectionHeader "Step 5 - Convert to Shared Mailbox"
     if (Confirm-Action "Convert $upn to Shared Mailbox?") {
-        $ok = Invoke-Action -Description ("Convert {0} to Shared Mailbox" -f $upn) -Action {
-            Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; $true
-        }
+        $ok = Invoke-Action `
+            -Description ("Convert {0} to Shared Mailbox" -f $upn) `
+            -ActionType 'ConvertToShared' `
+            -Target @{ identity = $upn } `
+            -NoUndoReason 'Reverting Shared back to UserMailbox requires re-licensing and operator judgment; not auto-reversible.' `
+            -Action { Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; $true }
         if ($ok -and -not (Get-PreviewMode)) { Write-Success "Converted." }
     }
 
@@ -123,18 +154,30 @@ function Start-Offboard {
                     }
                 }
                 if (Confirm-Action "Grant Full Access to $($au.DisplayName)?") {
-                    $ok = Invoke-Action -Description ("Grant {0} FullAccess on {1}" -f $au.UserPrincipalName, $upn) -Action {
-                        Add-MailboxPermission -Identity $upn -User $au.UserPrincipalName -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; $true
-                    }
+                    $ok = Invoke-Action `
+                        -Description ("Grant {0} FullAccess on {1}" -f $au.UserPrincipalName, $upn) `
+                        -ActionType 'GrantMailboxFullAccess' `
+                        -Target @{ mailbox = $upn; user = $au.UserPrincipalName } `
+                        -ReverseType 'RevokeMailboxFullAccess' `
+                        -ReverseDescription ("Revoke {0} FullAccess on {1}" -f $au.UserPrincipalName, $upn) `
+                        -Action {
+                            Add-MailboxPermission -Identity $upn -User $au.UserPrincipalName -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; $true
+                        }
                     if ($ok -and -not (Get-PreviewMode)) { Write-Success "Full Access granted." }
                 }
                 $pc = Show-Menu -Title "Send permissions for $($au.DisplayName)?" -Options @("Send As","Send on Behalf","Both","None") -BackLabel "Skip"
                 if ($pc -ne -1 -and $pc -ne 3) {
                     if ($pc -eq 0 -or $pc -eq 2) {
                         if (Confirm-Action "Grant Send As?") {
-                            $ok = Invoke-Action -Description ("Grant {0} SendAs on {1}" -f $au.UserPrincipalName, $upn) -Action {
-                                Add-RecipientPermission -Identity $upn -Trustee $au.UserPrincipalName -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
-                            }
+                            $ok = Invoke-Action `
+                                -Description ("Grant {0} SendAs on {1}" -f $au.UserPrincipalName, $upn) `
+                                -ActionType 'GrantMailboxSendAs' `
+                                -Target @{ mailbox = $upn; user = $au.UserPrincipalName } `
+                                -ReverseType 'RevokeMailboxSendAs' `
+                                -ReverseDescription ("Revoke {0} SendAs on {1}" -f $au.UserPrincipalName, $upn) `
+                                -Action {
+                                    Add-RecipientPermission -Identity $upn -Trustee $au.UserPrincipalName -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
+                                }
                             if ($ok -and -not (Get-PreviewMode)) { Write-Success "Send As granted." }
                         }
                     }
@@ -188,9 +231,15 @@ function Start-Offboard {
                         Write-Warn "$friendly is group-assigned. Skipping (remove user from the group instead)."
                         continue
                     }
-                    $ok = Invoke-Action -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $upn) -Action {
-                        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
-                    }
+                    $ok = Invoke-Action `
+                        -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $upn) `
+                        -ActionType 'RemoveLicense' `
+                        -Target @{ userId = [string]$user.Id; userUpn = $upn; skuId = [string]$lic.SkuId; skuPart = [string]$lic.SkuPartNumber } `
+                        -ReverseType 'AssignLicense' `
+                        -ReverseDescription ("Re-assign license '{0}' to {1}" -f $lic.SkuPartNumber, $upn) `
+                        -Action {
+                            Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
+                        }
                     if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed: $friendly" }
                 }
             }
