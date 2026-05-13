@@ -61,19 +61,130 @@ Add license: Set-MgUserLicense -UserId "ID" -AddLicenses @(@{SkuId="GUID"}) -Rem
 Remove license: Set-MgUserLicense -UserId "ID" -AddLicenses @() -RemoveLicenses @("GUID") -ErrorAction Stop
 Calendar perms: Get-MailboxFolderPermission -Identity "user:\Calendar" -ErrorAction Stop
 Add calendar: Add-MailboxFolderPermission -Identity "user:\Calendar" -User "user2" -AccessRights Editor -ErrorAction Stop
-Create user: New-MgUser -BodyParameter @{DisplayName="Name";GivenName="First";Surname="Last";UserPrincipalName="upn@domain.com";MailNickname="nick";AccountEnabled=`$true;PasswordProfile=@{Password="TempP@ss!";ForceChangePasswordNextSignIn=`$true};UsageLocation="US";JobTitle="Title";Department="Dept"} -ErrorAction Stop
+Create user: New-MgUser -BodyParameter @{DisplayName="Name";GivenName="First";Surname="Last";UserPrincipalName="upn@domain.com";MailNickname="nick";AccountEnabled=`$true;PasswordProfile=@{Password="<GENERATED_TEMP_PASSWORD>";ForceChangePasswordNextSignIn=`$true};UsageLocation="US";JobTitle="Title";Department="Dept"} -ErrorAction Stop
 Set manager: Set-MgUserManagerByRef -UserId "UID" -BodyParameter @{"@odata.id"="https://graph.microsoft.com/v1.0/users/MANAGER_ID"} -ErrorAction Stop
 "@
 
 # ============================================================
-#  Config
+#  Config — API key is DPAPI-encrypted at rest (per-user, per-machine).
+#  Stored values are prefixed:
+#     DPAPI:<hex>  → Windows DPAPI ciphertext (preferred)
+#     B64:<base64> → base64 fallback on non-Windows (NOT real encryption,
+#                    just obfuscation — flagged with a warning at save time)
+#     <anything else> → legacy plaintext, migrated on load
 # ============================================================
 
-function Get-AIConfig {
-    if (Test-Path $script:AIConfigPath) { try { return (Get-Content $script:AIConfigPath -Raw | ConvertFrom-Json) } catch { return $null } }
-    return $null
+function Protect-ApiKey {
+    param([string]$PlainKey)
+    if ([string]::IsNullOrWhiteSpace($PlainKey) -or $PlainKey -eq "none") { return $PlainKey }
+    if ($PlainKey -like "DPAPI:*" -or $PlainKey -like "B64:*") { return $PlainKey }
+    try {
+        $secure = ConvertTo-SecureString $PlainKey -AsPlainText -Force
+        $enc    = ConvertFrom-SecureString $secure
+        return "DPAPI:$enc"
+    } catch {
+        Write-Warn "DPAPI unavailable on this host; API key will be base64-obfuscated only (NOT encrypted). Reason: $_"
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($PlainKey)
+        return "B64:$([Convert]::ToBase64String($bytes))"
+    }
 }
-function Save-AIConfig { param([hashtable]$Config); $Config | ConvertTo-Json -Depth 5 | Out-File -FilePath $script:AIConfigPath -Encoding UTF8 -Force }
+
+function Unprotect-ApiKey {
+    param([string]$StoredKey)
+    if ([string]::IsNullOrWhiteSpace($StoredKey) -or $StoredKey -eq "none") { return $StoredKey }
+    if ($StoredKey -like "DPAPI:*") {
+        try {
+            $secure = ConvertTo-SecureString $StoredKey.Substring(6)
+            return [System.Net.NetworkCredential]::new("", $secure).Password
+        } catch {
+            throw "Failed to decrypt API key. Likely cause: config was encrypted by a different user account or on a different machine. Re-run AI setup (option 99 → /config)."
+        }
+    }
+    if ($StoredKey -like "B64:*") {
+        try {
+            return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($StoredKey.Substring(4)))
+        } catch { throw "Failed to decode API key (corrupt base64). Re-run AI setup." }
+    }
+    return $StoredKey  # legacy plaintext — caller is expected to re-save through Save-AIConfig to migrate
+}
+
+function Get-AIConfig {
+    if (-not (Test-Path $script:AIConfigPath)) { return $null }
+    $raw = $null
+    try { $raw = Get-Content $script:AIConfigPath -Raw | ConvertFrom-Json } catch { return $null }
+    if ($null -eq $raw) { return $null }
+
+    # Normalize to hashtable so callers don't need the PSCustomObject branch
+    $ht = @{}
+    foreach ($prop in $raw.PSObject.Properties) {
+        # Skip _comment_* documentation keys from the example file
+        if ($prop.Name -like "_comment*") { continue }
+        $ht[$prop.Name] = $prop.Value
+    }
+
+    # ---- Migrate legacy plaintext keys ----
+    if ($ht.ContainsKey("ApiKey")) {
+        $key = [string]$ht["ApiKey"]
+        if ($key -and $key -ne "none" -and $key -notlike "DPAPI:*" -and $key -notlike "B64:*" -and $key -ne "REPLACE_ME") {
+            Write-Warn "Plaintext API key detected in $($script:AIConfigPath). Encrypting in place..."
+            $ht["ApiKey"] = Protect-ApiKey -PlainKey $key
+            Save-AIConfig -Config $ht
+            Write-Success "API key encrypted (DPAPI, per-user, non-portable)."
+        }
+    }
+
+    # ---- Privacy section migration (commit 6) ----
+    $privacyDefaults = @{
+        ExternalRedaction       = 'Enabled'
+        RedactInAuditLog        = 'Disabled'
+        ExternalPayloadCapBytes = 8192
+        TrustedProviders        = @()
+    }
+    $privacyHt = @{}
+    $wroteDefaults = $false
+    if ($ht.ContainsKey('Privacy') -and $null -ne $ht['Privacy']) {
+        $p = $ht['Privacy']
+        if ($p -is [hashtable]) {
+            foreach ($k in $p.Keys) { if ($k -notlike '_comment*') { $privacyHt[$k] = $p[$k] } }
+        } else {
+            # PSCustomObject from JSON — normalize and drop _comment_* documentation keys
+            foreach ($prop in $p.PSObject.Properties) {
+                if ($prop.Name -like '_comment*') { continue }
+                $privacyHt[$prop.Name] = $prop.Value
+            }
+        }
+    } else {
+        $wroteDefaults = $true
+    }
+    foreach ($k in $privacyDefaults.Keys) {
+        if (-not $privacyHt.ContainsKey($k)) {
+            $privacyHt[$k] = $privacyDefaults[$k]
+            $wroteDefaults = $true
+        }
+    }
+    # TrustedProviders may come back as a typed array — normalize to plain array of lowercase strings
+    if ($privacyHt['TrustedProviders']) {
+        $privacyHt['TrustedProviders'] = @($privacyHt['TrustedProviders'] | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    } else {
+        $privacyHt['TrustedProviders'] = @()
+    }
+    $ht['Privacy'] = $privacyHt
+    if ($wroteDefaults) {
+        Save-AIConfig -Config $ht
+    }
+
+    return $ht
+}
+
+function Save-AIConfig {
+    param([hashtable]$Config)
+    $toSave = @{}
+    foreach ($k in $Config.Keys) { $toSave[$k] = $Config[$k] }
+    if ($toSave.ContainsKey("ApiKey")) {
+        $toSave["ApiKey"] = Protect-ApiKey -PlainKey ([string]$toSave["ApiKey"])
+    }
+    $toSave | ConvertTo-Json -Depth 5 | Out-File -FilePath $script:AIConfigPath -Encoding UTF8 -Force
+}
 
 function Setup-AIProvider {
     Write-SectionHeader "AI Assistant Setup"
@@ -99,20 +210,181 @@ function Setup-AIProvider {
     Save-AIConfig -Config $config; Write-Success "$($config['Provider']) / $($config['Model']) configured."; return $config
 }
 
+function Show-PrivacyMenu {
+    <#
+        Interactive editor for the Privacy section of ai_config.json.
+        Toggles ExternalRedaction / RedactInAuditLog, prompts for an
+        integer payload cap, edits the TrustedProviders list, and lets
+        the operator reset the session token map. Persists via
+        Save-AIConfig on exit.
+    #>
+    param([hashtable]$Config)
+    if (-not $Config.ContainsKey('Privacy') -or -not ($Config['Privacy'] -is [hashtable])) {
+        $Config['Privacy'] = @{
+            ExternalRedaction       = 'Enabled'
+            RedactInAuditLog        = 'Disabled'
+            ExternalPayloadCapBytes = 8192
+            TrustedProviders        = @()
+        }
+    }
+    $priv = $Config['Privacy']
+    $running = $true
+    while ($running) {
+        $tpDisplay = '(none)'
+        if ($priv['TrustedProviders'] -and @($priv['TrustedProviders']).Count -gt 0) {
+            $tpDisplay = ($priv['TrustedProviders'] -join ', ')
+        }
+        $tokens = 0
+        if ($script:PrivacyMap -and $script:PrivacyMap.ByToken) { $tokens = $script:PrivacyMap.ByToken.Count }
+        $cap = [int]$priv['ExternalPayloadCapBytes']
+        $capLabel = if ($cap -eq 0) { "(no cap)" } else { "$cap bytes" }
+
+        $sel = Show-Menu -Title "Privacy Settings" -Options @(
+            "External redaction        : $($priv['ExternalRedaction'])",
+            "Redact in audit log       : $($priv['RedactInAuditLog'])",
+            "External payload cap      : $capLabel",
+            "Trusted providers         : $tpDisplay",
+            "Reset session token map   : $tokens token(s) currently stored"
+        ) -BackLabel "Save and exit"
+
+        switch ($sel) {
+            0 {
+                $priv['ExternalRedaction'] = if ($priv['ExternalRedaction'] -eq 'Enabled') { 'Disabled' } else { 'Enabled' }
+            }
+            1 {
+                $priv['RedactInAuditLog'] = if ($priv['RedactInAuditLog'] -eq 'Enabled') { 'Disabled' } else { 'Enabled' }
+            }
+            2 {
+                $v = Read-UserInput "Cap bytes (non-negative integer; 0 disables) [current $cap]"
+                if (-not [string]::IsNullOrWhiteSpace($v)) {
+                    $n = 0
+                    if ([int]::TryParse($v, [ref]$n) -and $n -ge 0) {
+                        $priv['ExternalPayloadCapBytes'] = $n
+                    } else {
+                        Write-ErrorMsg "Invalid integer. Keeping $cap."
+                    }
+                }
+            }
+            3 {
+                $v = Read-UserInput "Trusted providers (comma-separated lowercase; blank to clear). Known: anthropic, openai, azure-openai, custom, ollama"
+                if ($null -ne $v) {
+                    $items = @($v -split ',' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+                    $priv['TrustedProviders'] = $items
+                    if ($items.Count -gt 0) {
+                        Write-Warn "Listed providers will receive RAW PII (secrets still scrubbed). Confirm each is in your compliance boundary."
+                    }
+                }
+            }
+            4 {
+                $cleared = Reset-PrivacyMap
+                Write-AIAuditEntry -EventType "CLEAR" -Detail ("privacy map manually reset ({0} tokens)" -f $cleared)
+                Write-Success "Cleared $cleared token(s)."
+            }
+            -1 { $running = $false }
+        }
+    }
+    $Config['Privacy'] = $priv
+    Save-AIConfig -Config $Config
+    Write-Success "Privacy settings saved."
+}
+
 # ============================================================
 #  API Call
 # ============================================================
 
 function Invoke-AIChat {
-    param([hashtable]$Config,[array]$Messages)
-    $p=$Config["Provider"];$k=$Config["ApiKey"];$ep=$Config["Endpoint"];$m=$Config["Model"]
-    try {
-        switch($p){
-            "Ollama" { $body=@{model=$m;stream=$false;messages=@(@{role="system";content=$script:AISystemPrompt})+$Messages}|ConvertTo-Json -Depth 10; return (Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop).message.content }
-            "Anthropic" { $body=@{model=$m;max_tokens=4096;system=$script:AISystemPrompt;messages=$Messages}|ConvertTo-Json -Depth 10; $h=@{"x-api-key"=$k;"anthropic-version"="2023-06-01";"content-type"="application/json"}; return (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).content[0].text }
-            default { $body=@{model=$m;messages=@(@{role="system";content=$script:AISystemPrompt})+$Messages;max_tokens=4096}|ConvertTo-Json -Depth 10; $h=@{"Content-Type"="application/json"}; if($p -eq "AzureOpenAI"){$h["api-key"]=$k}else{$h["Authorization"]="Bearer $k"}; return (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).choices[0].message.content }
+    param([hashtable]$Config, [array]$Messages)
+
+    $p = $Config["Provider"]
+    try { $k = Unprotect-ApiKey -StoredKey ([string]$Config["ApiKey"]) }
+    catch { return "[!] $_" }
+    $ep = $Config["Endpoint"]
+    $m  = $Config["Model"]
+
+    # ---- Privacy classification ----
+    $privacy = $null
+    if ($Config.ContainsKey('Privacy') -and $Config['Privacy'] -is [hashtable]) {
+        $privacy = $Config['Privacy']
+    } else {
+        $privacy = @{ ExternalRedaction='Enabled'; ExternalPayloadCapBytes=8192; TrustedProviders=@() }
+    }
+    $isExternal  = Test-IsExternalProvider -Provider $p -Endpoint $ep -TrustedProviders $privacy['TrustedProviders']
+    $fullRedact  = $isExternal -and ($privacy['ExternalRedaction'] -eq 'Enabled')
+    $secretsOnly = -not $fullRedact   # secrets are scrubbed even for local
+
+    # ---- Tokenize messages + apply byte cap ----
+    $counts = @{ JWT=0; SECRET=0; THUMB=0; UPN=0; GUID=0; TENANT=0; NAME=0 }
+    $safeMessages = @()
+    $cap = 0
+    if ($isExternal) { $cap = [int]($privacy['ExternalPayloadCapBytes']) }
+    $truncated = $false
+    foreach ($msg in $Messages) {
+        $content = [string]$msg.content
+        if ($content) {
+            $content = Convert-ToSafePayload -Text $content -SecretsOnly:$secretsOnly -Counts $counts
         }
-    } catch { $e=$_.Exception.Message; if($e -match "401|Unauth"){return "[!] Invalid API key."}; if($e -match "429"){return "[!] Rate limited."}; if($e -match "resolve|connect|refused"){return "[!] Cannot reach $(if($p -eq 'Ollama'){'Ollama'}else{'API'})."}; return "[!] API error: $e" }
+        if ($cap -gt 0 -and $content.Length -gt $cap) {
+            $orig = $content.Length
+            $content = $content.Substring(0, $cap) + "`n...[TRUNCATED $($orig - $cap) BYTES AFTER REDACTION]"
+            $truncated = $true
+        }
+        $safeMessages += @{ role = $msg.role; content = $content }
+    }
+
+    # ---- System prompt (with placeholder note appended for external providers) ----
+    $safeSystemPrompt = $script:AISystemPrompt
+    if ($fullRedact) { $safeSystemPrompt = $safeSystemPrompt + $script:PrivacySystemPromptAddendum }
+
+    # ---- Audit ----
+    $auditDetail = "provider={0} external={1} redact={2} cap={3} truncated={4} | {5}" -f `
+        (Get-ProviderCanonicalName $p), $isExternal, $(if ($fullRedact) {'full'} else {'secrets-only'}), $cap, $truncated, (Format-CountsForAudit $counts)
+    Write-AIAuditEntry -EventType "REDACT" -Detail $auditDetail
+
+    # ---- Call provider ----
+    try {
+        $rawResponse = $null
+        switch ($p) {
+            "Ollama" {
+                $body = @{
+                    model    = $m
+                    stream   = $false
+                    messages = @(@{ role='system'; content=$safeSystemPrompt }) + $safeMessages
+                } | ConvertTo-Json -Depth 10
+                $rawResponse = (Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop).message.content
+            }
+            "Anthropic" {
+                $body = @{
+                    model      = $m
+                    max_tokens = 4096
+                    system     = $safeSystemPrompt
+                    messages   = $safeMessages
+                } | ConvertTo-Json -Depth 10
+                $h = @{ "x-api-key"=$k; "anthropic-version"="2023-06-01"; "content-type"="application/json" }
+                $rawResponse = (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).content[0].text
+            }
+            default {
+                $body = @{
+                    model      = $m
+                    messages   = @(@{ role='system'; content=$safeSystemPrompt }) + $safeMessages
+                    max_tokens = 4096
+                } | ConvertTo-Json -Depth 10
+                $h = @{ "Content-Type"="application/json" }
+                if ($p -eq "AzureOpenAI") { $h["api-key"] = $k } else { $h["Authorization"] = "Bearer $k" }
+                $rawResponse = (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).choices[0].message.content
+            }
+        }
+
+        # ---- Restore placeholders so the operator sees real values and
+        #      Extract-Commands sees real cmdlet arguments ----
+        $restored = Restore-FromSafePayload -Text ([string]$rawResponse)
+        return $restored
+    } catch {
+        $e = $_.Exception.Message
+        if ($e -match "401|Unauth")            { return "[!] Invalid API key." }
+        if ($e -match "429")                   { return "[!] Rate limited." }
+        if ($e -match "resolve|connect|refused"){ return "[!] Cannot reach $(if($p -eq 'Ollama'){'Ollama'}else{'API'})." }
+        return "[!] API error: $e"
+    }
 }
 
 # ============================================================
@@ -209,6 +481,369 @@ function Limit-ResultsForAI {
 }
 
 # ============================================================
+#  Privacy / PII Tokenization
+#  Outbound payloads to non-local LLM providers are tokenized: each
+#  piece of PII (UPN/email/GUID/tenant-ID/cert-thumbprint/JWT/API-key
+#  /display-name) is replaced with a stable opaque placeholder
+#  (<UPN_1>, <GUID_3>, <TENANT>, ...) backed by a session-scoped
+#  reverse map. The AI's response is restored before display and
+#  before scriptblock execution, so the operator sees real values and
+#  generated commands target real objects. Map clears on /clear and
+#  on assistant exit.
+#
+#  Secrets (JWT, sk-*, sk-ant-*, cert thumbprints) are ALWAYS
+#  tokenized regardless of provider — that rule is hardcoded, not
+#  controlled by config.
+# ============================================================
+
+$script:PrivacyPatterns = @(
+    # Order matters — higher-specificity patterns first.
+    # SecretsOnly=$true means these run even when ExternalRedaction is
+    # Disabled and even for local providers — secrets must never leak.
+    @{ Type='JWT';    Regex='(?<![\w.-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'; SecretsOnly=$true  },
+    @{ Type='SECRET'; Regex='sk-ant-[A-Za-z0-9_\-]{20,}';                                    SecretsOnly=$true  },
+    @{ Type='SECRET'; Regex='sk-[A-Za-z0-9]{20,}';                                            SecretsOnly=$true  },
+    @{ Type='THUMB';  Regex='\b[0-9A-Fa-f]{40}\b';                                            SecretsOnly=$true  },
+    @{ Type='UPN';    Regex='\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b';           SecretsOnly=$false },
+    @{ Type='GUID';   Regex='\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b'; SecretsOnly=$false }
+)
+
+$script:PrivacyMap = $null
+
+function Reset-PrivacyMap {
+    $count = 0
+    if ($script:PrivacyMap -and $script:PrivacyMap.ByToken) {
+        $count = $script:PrivacyMap.ByToken.Count
+    }
+    $script:PrivacyMap = @{
+        ByValue  = @{}
+        ByToken  = @{}
+        Counters = @{ JWT=0; SECRET=0; THUMB=0; UPN=0; GUID=0; NAME=0; TENANT=0 }
+    }
+    return $count
+}
+Reset-PrivacyMap | Out-Null
+
+function Get-OrCreatePrivacyToken {
+    param([string]$Value, [string]$Type)
+    if ([string]::IsNullOrEmpty($Value)) { return $Value }
+    if ($script:PrivacyMap.ByValue.ContainsKey($Value)) {
+        return $script:PrivacyMap.ByValue[$Value]
+    }
+    if (-not $script:PrivacyMap.Counters.ContainsKey($Type)) {
+        $script:PrivacyMap.Counters[$Type] = 0
+    }
+    $script:PrivacyMap.Counters[$Type] = $script:PrivacyMap.Counters[$Type] + 1
+    $tok = '<{0}_{1}>' -f $Type, $script:PrivacyMap.Counters[$Type]
+    $script:PrivacyMap.ByValue[$Value] = $tok
+    $script:PrivacyMap.ByToken[$tok]   = $Value
+    return $tok
+}
+
+function Test-IsLocalEndpoint {
+    param([string]$Endpoint)
+    if ([string]::IsNullOrWhiteSpace($Endpoint)) { return $false }
+    try {
+        $uri = [Uri]$Endpoint
+        $h = $uri.Host.ToLowerInvariant()
+        if ($h -eq 'localhost' -or $h -eq '127.0.0.1' -or $h -eq '::1') { return $true }
+        if ($h.EndsWith('.local')) { return $true }
+        return $false
+    } catch { return $false }
+}
+
+function Get-ProviderCanonicalName {
+    param([string]$Provider)
+    switch (([string]$Provider).ToLowerInvariant()) {
+        'ollama'      { return 'ollama' }
+        'anthropic'   { return 'anthropic' }
+        'openai'      { return 'openai' }
+        'azureopenai' { return 'azure-openai' }
+        'custom'      { return 'custom' }
+        default       { return ([string]$Provider).ToLowerInvariant() }
+    }
+}
+
+function Test-IsExternalProvider {
+    param([string]$Provider, [string]$Endpoint, [array]$TrustedProviders)
+    $canonical = Get-ProviderCanonicalName -Provider $Provider
+    $trusted = @()
+    if ($TrustedProviders) { $trusted = @($TrustedProviders | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
+    if ($trusted -contains $canonical) { return $false }
+    if ($canonical -eq 'ollama' -or $canonical -eq 'custom') {
+        return -not (Test-IsLocalEndpoint $Endpoint)
+    }
+    return $true
+}
+
+function Convert-ToSafePayload {
+    <#
+        Tokenize PII in $Text. When $SecretsOnly is true only the
+        always-on secret patterns run (JWT / sk-* / sk-ant-* / cert
+        thumbprint). Mutates the session privacy map. $Counts is an
+        optional hashtable accumulator: keys are token types
+        (JWT/SECRET/THUMB/UPN/GUID/TENANT/NAME), values are ints.
+    #>
+    param(
+        [string]   $Text,
+        [bool]     $SecretsOnly = $false,
+        [hashtable]$Counts = $null
+    )
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+
+    # Tenant ID pre-pass: resolve to <TENANT> before the generic GUID
+    # regex sees it, so tenant gets a stable distinguished placeholder.
+    if (-not $SecretsOnly -and $script:SessionState -and $script:SessionState.TenantId) {
+        $tid = [string]$script:SessionState.TenantId
+        if ($tid -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' -and $Text.Contains($tid)) {
+            if (-not $script:PrivacyMap.ByValue.ContainsKey($tid)) {
+                $script:PrivacyMap.ByValue[$tid] = '<TENANT>'
+                $script:PrivacyMap.ByToken['<TENANT>'] = $tid
+            }
+            $occurrences = ([regex]::Matches($Text, [regex]::Escape($tid))).Count
+            $Text = $Text.Replace($tid, '<TENANT>')
+            if ($Counts -and $occurrences -gt 0) { $Counts['TENANT'] = (($Counts['TENANT']) + $occurrences) }
+        }
+    }
+
+    foreach ($pat in $script:PrivacyPatterns) {
+        if ($SecretsOnly -and -not $pat.SecretsOnly) { continue }
+        $patType = $pat.Type
+        $countsRef = $Counts
+        $evaluator = [System.Text.RegularExpressions.MatchEvaluator] {
+            param($m)
+            $tok = Get-OrCreatePrivacyToken -Value $m.Value -Type $patType
+            if ($countsRef) { $countsRef[$patType] = (($countsRef[$patType]) + 1) }
+            return $tok
+        }.GetNewClosure()
+        $Text = [regex]::Replace($Text, $pat.Regex, $evaluator)
+    }
+
+    if (-not $SecretsOnly) {
+        # Display-name capture from common cmdlet idioms. Three forms,
+        # tried in order — quoted always wins over bareword so we don't
+        # half-tokenize values that are already inside quotes:
+        #   (1)  displayName : "Name"  or  displayName : 'Name'
+        #   (2)  -DisplayName / -MailNickname / -SamAccountName "Name"
+        #   (3)  displayName : Bareword Until ClosingQuote
+        # The bareword form is anchored on a closing " so it only fires
+        # inside the typical -Search "displayName:..." idiom and won't
+        # devour prose.
+        $nameCountsRef = $Counts
+
+        $nameEvalQuoted = [System.Text.RegularExpressions.MatchEvaluator] {
+            param($m)
+            $prefix = $m.Groups[1].Value
+            $val = if ($m.Groups[2].Success -and $m.Groups[2].Value) { $m.Groups[2].Value } else { $m.Groups[3].Value }
+            if (-not $val -or $val -like '<*_*>' -or $val -eq '<TENANT>') { return $m.Value }
+            $tok = Get-OrCreatePrivacyToken -Value $val -Type 'NAME'
+            if ($nameCountsRef) { $nameCountsRef['NAME'] = (($nameCountsRef['NAME']) + 1) }
+            return ('{0}"{1}"' -f $prefix, $tok)
+        }.GetNewClosure()
+
+        $nameEvalBare = [System.Text.RegularExpressions.MatchEvaluator] {
+            param($m)
+            $prefix = $m.Groups[1].Value
+            $val = $m.Groups[2].Value
+            if (-not $val -or $val -like '<*_*>' -or $val -eq '<TENANT>') { return $m.Value }
+            $tok = Get-OrCreatePrivacyToken -Value $val -Type 'NAME'
+            if ($nameCountsRef) { $nameCountsRef['NAME'] = (($nameCountsRef['NAME']) + 1) }
+            return ('{0}{1}' -f $prefix, $tok)
+        }.GetNewClosure()
+
+        $Text = [regex]::Replace($Text, '(?i)(displayName\s*:\s*)(?:"([^"]+)"|''([^'']+)'')', $nameEvalQuoted)
+        $Text = [regex]::Replace($Text, '(?i)(-(?:DisplayName|MailNickname|SamAccountName)\s+)(?:"([^"]+)"|''([^'']+)'')', $nameEvalQuoted)
+        $Text = [regex]::Replace($Text, '(?i)(displayName\s*:\s*)([A-Za-z][A-Za-z0-9 \-''\.]{0,80})(?=")', $nameEvalBare)
+    }
+
+    return $Text
+}
+
+function Restore-FromSafePayload {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    if (-not $script:PrivacyMap -or $script:PrivacyMap.ByToken.Count -eq 0) { return $Text }
+    # Longest-token-first: belt + braces. The `>` terminator already
+    # prevents <UPN_1> from matching inside <UPN_10>, but this guards
+    # against future token shapes.
+    $tokens = @($script:PrivacyMap.ByToken.Keys | Sort-Object -Property Length -Descending)
+    foreach ($tok in $tokens) {
+        $val = [string]$script:PrivacyMap.ByToken[$tok]
+        $Text = $Text.Replace($tok, $val)
+    }
+    return $Text
+}
+
+function Format-CountsForAudit {
+    param([hashtable]$Counts)
+    if (-not $Counts -or $Counts.Count -eq 0) { return '0' }
+    return (($Counts.GetEnumerator() | Where-Object { $_.Value -gt 0 } | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' ')
+}
+
+$script:PrivacySystemPromptAddendum = @"
+
+
+PRIVACY NOTE: Values like <UPN_1>, <GUID_3>, <TENANT>, <NAME_2>, <SECRET_4>, <JWT_1>, <THUMB_1> are opaque placeholders. Preserve them verbatim in any command you propose. Do NOT invent or substitute real-looking values. If a value you need has not been provided, ask the operator rather than guessing.
+"@
+
+# ============================================================
+#  AI Command Audit + Allow-list
+#  Every AI-proposed command is parsed via the PowerShell language
+#  parser and checked against $script:AICmdAllowList before any prompt
+#  is shown. Default-deny: anything not matched is rejected with no
+#  confirmation dialog. Each phase (PROPOSE / SKIP / REJECT / RUN /
+#  OK / ERROR) is written to a per-session log under
+#  $env:LOCALAPPDATA\M365Manager\audit\ (or ~/.m365manager/audit/ on
+#  non-Windows). Sensitive parameter values are redacted at log time.
+# ============================================================
+
+$script:AICmdAllowList = @(
+    # Microsoft Graph PowerShell SDK
+    '*-Mg*',
+    'Invoke-MgGraphRequest',
+
+    # Exchange Online — specific cmdlets the AI prompt teaches
+    'Get-Mailbox', 'Set-Mailbox',
+    'Get-EXOMailbox*', 'Get-MailboxStatistics',
+    'Get-MailboxPermission', 'Add-MailboxPermission', 'Remove-MailboxPermission',
+    'Get-MailboxFolderPermission', 'Add-MailboxFolderPermission',
+    'Remove-MailboxFolderPermission', 'Set-MailboxFolderPermission',
+    'Get-MailboxAutoReplyConfiguration', 'Set-MailboxAutoReplyConfiguration',
+    'Get-DistributionGroup', 'Get-DistributionGroupMember', 'Set-DistributionGroup',
+    'Add-DistributionGroupMember', 'Remove-DistributionGroupMember',
+    'Get-Recipient', 'Get-EXORecipient',
+    'Add-RecipientPermission', 'Remove-RecipientPermission',
+    'Get-UnifiedGroup', 'Get-UnifiedGroupLinks',
+
+    # Security & Compliance Center
+    'Get-ComplianceSearch', 'New-ComplianceSearch', 'Start-ComplianceSearch',
+    'Remove-ComplianceSearch', 'Get-ComplianceSearchAction',
+
+    # Pure pipeline / formatting — no side effects
+    'Select-Object', 'Where-Object', 'ForEach-Object', 'Sort-Object',
+    'Group-Object', 'Measure-Object',
+    'Format-Table', 'Format-List', 'Format-Wide', 'Out-String', 'Out-Default'
+)
+
+$script:AIAuditLogPath = $null
+
+function Get-AIAuditLogPath {
+    if ($script:AIAuditLogPath -and (Test-Path -LiteralPath (Split-Path $script:AIAuditLogPath -Parent))) {
+        return $script:AIAuditLogPath
+    }
+    $base = $null
+    $onWindows = $false
+    if ($env:LOCALAPPDATA) {
+        $base = Join-Path $env:LOCALAPPDATA 'M365Manager\audit'
+        $onWindows = $true
+    } elseif ($env:HOME) {
+        $base = Join-Path $env:HOME '.m365manager/audit'
+    } else {
+        $base = Join-Path (Get-Location).Path 'audit'
+    }
+    $createdNow = $false
+    try {
+        if (-not (Test-Path -LiteralPath $base)) {
+            New-Item -ItemType Directory -Path $base -Force | Out-Null
+            $createdNow = $true
+        }
+    } catch { return $null }
+    # Lock down the audit directory if we just created it. On Windows,
+    # %LOCALAPPDATA% already has user-only NTFS ACLs and we inherit them.
+    # On POSIX, set mode 0700 so the audit log can't be world/group-read.
+    if ($createdNow -and -not $onWindows -and (Get-Command chmod -ErrorAction SilentlyContinue)) {
+        try { & chmod 700 $base 2>$null | Out-Null } catch {}
+    }
+    $name = "mark-{0}-{1}.log" -f (Get-Date -Format 'yyyy-MM-dd_HHmmss'), $PID
+    $script:AIAuditLogPath = Join-Path $base $name
+    return $script:AIAuditLogPath
+}
+
+function Format-CommandForAudit {
+    param([string]$Command)
+    # Redact -ParamName <value> for sensitive parameter names. Value can be
+    # 'single-quoted', "double-quoted", or bareword/variable up to next whitespace.
+    $sensitive = 'Password|Credential|AccessToken|ClientSecret|AppSecret|ApiKey|Secret|Token'
+    return ($Command -replace "(-(?:$sensitive))\s+('[^']*'|""[^""]*""|\S+)", '$1 ***REDACTED***')
+}
+
+function Write-AIAuditEntry {
+    param([string]$EventType, [string]$Detail)
+    $path = Get-AIAuditLogPath
+    if (-not $path) { return }
+    $line = "[{0}] [{1}] {2}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $EventType, $Detail
+    try { Add-Content -LiteralPath $path -Value $line -ErrorAction Stop } catch {}
+}
+
+function Format-DetailForAudit {
+    <#
+        Compose audit text. Always strips -Password/-Token/etc parameter
+        values (Format-CommandForAudit). Additionally tokenizes PII via
+        Convert-ToSafePayload when Privacy.RedactInAuditLog is Enabled.
+        Caller may pass $Config=$null for contexts where no config is
+        available (e.g. session-startup events).
+    #>
+    param([string]$Detail, [hashtable]$Config)
+    if ([string]::IsNullOrEmpty($Detail)) { return $Detail }
+    $piiRedact = $false
+    if ($Config -and $Config.ContainsKey('Privacy') -and $Config['Privacy'] -is [hashtable]) {
+        $piiRedact = ($Config['Privacy']['RedactInAuditLog'] -eq 'Enabled')
+    }
+    $out = $Detail
+    if ($piiRedact) {
+        # SecretsOnly=$false applies the full pattern set; secrets are
+        # always tokenized regardless.
+        $out = Convert-ToSafePayload -Text $out -SecretsOnly:$false -Counts $null
+    }
+    return (Format-CommandForAudit -Command $out)
+}
+
+function Test-AICommandAllowed {
+    <#
+        Parses the proposed command via the PowerShell language parser and
+        rejects if (a) it has parse errors, (b) it contains no named
+        CommandAst, (c) any CommandAst's name does not match a glob in
+        $script:AICmdAllowList. Returns a hashtable:
+            Allowed  : bool
+            Reason   : string
+            Commands : array of cmdlet names that were inspected
+    #>
+    param([string]$Command)
+
+    $tokens = $null; $errs = $null
+    try {
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errs)
+    } catch {
+        return @{ Allowed=$false; Reason="parser exception: $($_.Exception.Message)"; Commands=@() }
+    }
+    if ($errs -and $errs.Count -gt 0) {
+        return @{ Allowed=$false; Reason="parse error: $($errs[0].Message)"; Commands=@() }
+    }
+
+    $cmdAsts = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+    if (-not $cmdAsts -or $cmdAsts.Count -eq 0) {
+        return @{ Allowed=$false; Reason="no command invocation found"; Commands=@() }
+    }
+
+    $found = @()
+    foreach ($c in $cmdAsts) {
+        $name = $c.GetCommandName()
+        if (-not $name) {
+            return @{ Allowed=$false; Reason="indirect or non-named invocation rejected"; Commands=$found }
+        }
+        $found += $name
+        $allowed = $false
+        foreach ($pattern in $script:AICmdAllowList) {
+            if ($name -like $pattern) { $allowed = $true; break }
+        }
+        if (-not $allowed) {
+            return @{ Allowed=$false; Reason="cmdlet '$name' not in allow-list"; Commands=$found }
+        }
+    }
+    return @{ Allowed=$true; Reason=""; Commands=$found }
+}
+
+# ============================================================
 #  Command Execution with [Y/N/A/E] and auto-fixes
 # ============================================================
 
@@ -221,7 +856,25 @@ function Invoke-MarkCommands {
     $results = @(); $runAll = $false
 
     foreach ($command in $commands) {
-        if (-not (Ensure-ServiceForCommand -Command $command)) { $results += "Command: $command`nError: Service connection failed."; continue }
+        $redacted = Format-DetailForAudit -Detail $command -Config $Config
+
+        # ---- Default-deny: AST parse + allow-list (no Y/N prompt on reject) ----
+        $check = Test-AICommandAllowed -Command $command
+        if (-not $check.Allowed) {
+            Write-AIAuditEntry -EventType "REJECT" -Detail "$($check.Reason) | $redacted"
+            Write-Host ""
+            Write-ErrorMsg "Refused to run AI command: $($check.Reason)"
+            Write-Host "    $command" -ForegroundColor DarkGray
+            $results += "Command: $command`nError: rejected ($($check.Reason))"
+            continue
+        }
+        Write-AIAuditEntry -EventType "PROPOSE" -Detail $redacted
+
+        if (-not (Ensure-ServiceForCommand -Command $command)) {
+            Write-AIAuditEntry -EventType "ERROR" -Detail "service connection failed | $redacted"
+            $results += "Command: $command`nError: Service connection failed."
+            continue
+        }
 
         # Display command box
         Write-Host ""
@@ -254,13 +907,18 @@ function Invoke-MarkCommands {
                 }
                 else { $results += "[Skipped: $command]"; $confirmed = $true; $ans = "n" }
             }
-            if ($ans -match '^[Nn]') { continue }
+            if ($ans -match '^[Nn]') {
+                Write-AIAuditEntry -EventType "SKIP" -Detail $redacted
+                continue
+            }
         }
 
-        # ---- Execute ----
+        # ---- Execute via parsed ScriptBlock (no Invoke-Expression) ----
         Write-Host "  Executing..." -ForegroundColor $script:Colors.Info
+        Write-AIAuditEntry -EventType "RUN" -Detail $redacted
         try {
-            $output = Invoke-Expression $command 2>&1
+            $sb = [scriptblock]::Create($command)
+            $output = & $sb 2>&1
             $outputStr = ($output | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($outputStr)) { $outputStr = "(completed, no output)" }
             Write-Host "  Result:" -ForegroundColor $script:Colors.Success
@@ -268,9 +926,12 @@ function Invoke-MarkCommands {
             for ($i = 0; $i -lt $show; $i++) { Write-Host "    $($lines[$i])" -ForegroundColor White }
             if ($lines.Count -gt 25) { Write-Warn "($($lines.Count) lines, showing 25)" }
             $results += "Command: $command`nOutput: $outputStr"
+            Write-AIAuditEntry -EventType "OK" -Detail ("{0} line(s) | {1}" -f $lines.Count, $redacted)
         } catch {
             Write-ErrorMsg "Failed: $_"
             $results += "Command: $command`nError: $_"
+            $errMsg = Format-DetailForAudit -Detail $_.Exception.Message -Config $Config
+            Write-AIAuditEntry -EventType "ERROR" -Detail ("{0} | {1}" -f $errMsg, $redacted)
         }
     }
 
@@ -316,10 +977,16 @@ function Start-AIAssistant {
 
         $cmd = $userMsg.Trim().ToLower()
         if ($cmd -match '^/(quit|exit|back)$') { Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": See you!" -ForegroundColor White; Write-Host ""; $chatting=$false; continue }
-        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /clear /context /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /privacy /clear /context /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
         if ($cmd -eq '/config') { $nc=Setup-AIProvider; if($nc){$config=$nc}else{$r=Get-AIConfig;if($r){if($r -is [PSCustomObject]){$ht=@{};$r.PSObject.Properties|ForEach-Object{$ht[$_.Name]=$_.Value};$config=$ht}else{$config=$r}}}; Write-Host ""; continue }
         if ($cmd -eq '/models') { if($config["Provider"] -eq "Ollama"){try{$ms=Invoke-RestMethod -Uri "$($config['Endpoint'])/api/tags" -Method GET -TimeoutSec 5;Write-Host "";foreach($m in $ms.models){$c=if($m.name -eq $config["Model"]){"<< current"}else{""};Write-Host "    $($m.name) ($([math]::Round($m.size/1MB))MB) $c" -ForegroundColor White}}catch{Write-ErrorMsg "Cannot reach Ollama."}}else{Write-InfoMsg "/models is for Ollama."}; Write-Host ""; continue }
-        if ($cmd -eq '/clear') { $chatHistory=@(); Write-Host "  [cleared]" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -eq '/privacy') { Show-PrivacyMenu -Config $config; $r=Get-AIConfig; if($r){$config=$r}; Write-Host ""; continue }
+        if ($cmd -eq '/clear') {
+            $cleared = Reset-PrivacyMap
+            $chatHistory = @()
+            Write-AIAuditEntry -EventType "CLEAR" -Detail ("chat history + privacy map ({0} tokens) cleared" -f $cleared)
+            Write-Host "  [cleared — $cleared privacy token(s) dropped]" -ForegroundColor "DarkGray"; Write-Host ""; continue
+        }
         if ($cmd -eq '/context') { Write-Host ""; Write-StatusLine "Tenant" "$($script:SessionState.TenantMode) $(if($script:SessionState.TenantName){"($($script:SessionState.TenantName))"})" "White"; Write-StatusLine "Graph" $(if($script:SessionState.MgGraph){"Connected"}else{"Auto"}) $(if($script:SessionState.MgGraph){"Green"}else{"Yellow"}); Write-StatusLine "EXO" $(if($script:SessionState.ExchangeOnline){"Connected"}else{"Auto"}) $(if($script:SessionState.ExchangeOnline){"Green"}else{"Yellow"}); Write-StatusLine "SCC" $(if($script:SessionState.ComplianceCenter){"Connected"}else{"Auto"}) $(if($script:SessionState.ComplianceCenter){"Green"}else{"Yellow"}); Write-StatusLine "AI" "$($config['Provider'])/$($config['Model'])" "Cyan"; Write-Host ""; continue }
 
         $sendMsg = $userMsg

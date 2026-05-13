@@ -30,6 +30,46 @@ $env:MSAL_BROKER_ENABLED = "0"
 powershell -ExecutionPolicy Bypass -NoProfile -File Main.ps1
 ```
 
+## Configuration & secrets
+
+Anything that may contain a secret (API keys, tokens) lives in `ai_config.json`, which is **gitignored** and DPAPI-encrypted on first save (per-user, per-machine — not portable).
+
+- `ai_config.example.json` is the template, safe to commit.
+- `ai_config.json` is created automatically on first run of the AI assistant (hidden option `99`). To pre-seed it manually, copy the example and run the assistant once — your plaintext key will be encrypted in place on first load.
+- Build artifacts (`M365Admin_Merged.ps1`, `M365Admin.exe`) and audit logs (`audit/`) are also gitignored.
+
+## AI privacy / PII handling
+
+When the assistant talks to a non-local LLM (Anthropic, OpenAI, Azure OpenAI, or a remote Ollama / custom endpoint), PII in your prompts and tool output is **tokenized** before send: UPNs, emails, GUIDs, tenant IDs, JWTs, API keys, cert thumbprints, and display names captured from cmdlet arguments are each replaced with a stable opaque placeholder (`<UPN_1>`, `<GUID_3>`, `<TENANT>`, ...). The reverse map is session-scoped and dropped on `/clear` or assistant exit. The AI's response is restored before display and before any command runs, so you see real values and commands target the real objects.
+
+**Secrets (JWT / `sk-…` / `sk-ant-…` / 40-hex thumbprints) are ALWAYS tokenized regardless of provider.** That rule is hardcoded.
+
+Configure from the assistant chat with `/privacy`:
+
+| Setting | Default | Notes |
+|---|---|---|
+| `ExternalRedaction` | `Enabled` | Full PII tokenization for non-local providers. Disable only if you have an alternate redaction layer upstream. |
+| `RedactInAuditLog` | `Disabled` | When Disabled, the audit log under `%LOCALAPPDATA%\M365Manager\audit\` (or `~/.m365manager/audit/` on POSIX) records real values for forensics; secret-bearing params (`-Password`, `-Token`, etc.) are always scrubbed. Enable to also tokenize PII in the audit log itself. |
+| `ExternalPayloadCapBytes` | `8192` | After redaction, outbound message content is truncated at this many bytes with an explicit `[TRUNCATED N BYTES]` marker. `0` disables the cap. Applies only to external providers. |
+| `TrustedProviders` | `[]` | Lowercase provider names treated like localhost: PII is sent raw, but secrets are still scrubbed. Example: `["azure-openai"]` if your Azure OpenAI deployment lives inside the same tenant you're administering. **Only add a provider here after reviewing its data-handling terms.** |
+
+**Provider retention defaults** (as of writing — verify against the current provider terms):
+
+- **Anthropic** (enterprise API key) — zero retention.
+- **OpenAI** — 30-day abuse-monitoring retention unless your organization has opted out via a Zero Data Retention agreement.
+- **Azure OpenAI** — governed by your Azure subscription's data terms; if your deployment is in your own tenant, data does not leave that boundary.
+- **Ollama / LM Studio on localhost** — never leaves the machine. The assistant does not redact for local providers by default.
+
+The audit directory is created with mode `0700` on non-Windows and inherits user-only NTFS ACLs from `%LOCALAPPDATA%` on Windows.
+
+## Tests
+
+```powershell
+Invoke-Pester ./tests/
+```
+
+Covers the privacy redaction layer (round-trip stability, provider classification, audit-log toggle, fixture file with realistic PII). No network or M365 connection required.
+
 ## File Structure
 
 ```

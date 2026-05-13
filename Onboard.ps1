@@ -206,15 +206,45 @@ function Start-Onboard {
     }
 
     # ---- Password ----
+    # Don't print the temp password to the host (lingers in scrollback /
+    # transcript files). Push it to the clipboard, prompt the operator to
+    # deliver it via a secure channel, then scrub clipboard + clear screen.
     Write-SectionHeader "Step 5 - Temporary Password"
-    $b = $script:Box
-    Write-Host ""; Write-Host ("  " + $b.TL + [string]::new($b.H, 48) + $b.TR) -ForegroundColor $script:Colors.Highlight
-    Write-Host ("  " + $b.V + "  User : $($userData['UserPrincipalName'])") -ForegroundColor White
-    Write-Host ("  " + $b.V + "  Pass : $password") -ForegroundColor $script:Colors.Success
-    Write-Host ("  " + $b.V + "  (User must change on first login)") -ForegroundColor $script:Colors.Info
-    Write-Host ("  " + $b.BL + [string]::new($b.H, 48) + $b.BR) -ForegroundColor $script:Colors.Highlight
-    Write-Warn "Securely deliver these credentials to the user."
-    Write-Success "Onboarding complete!"
+    $b   = $script:Box
+    $upn = $userData['UserPrincipalName']
+
+    $clipped = $false
+    if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+        try { Set-Clipboard -Value $password -ErrorAction Stop; $clipped = $true } catch {}
+    }
+
+    Write-Host ""
+    Write-Host ("  " + $b.TL + [string]::new($b.H, 56) + $b.TR) -ForegroundColor $script:Colors.Highlight
+    Write-Host ("  " + $b.V + "  User : $upn") -ForegroundColor White
+    if ($clipped) {
+        Write-Host ("  " + $b.V + "  Pass : <copied to clipboard>") -ForegroundColor $script:Colors.Success
+        Write-Host ("  " + $b.V + "  Paste it now -- it will NOT be shown again.") -ForegroundColor $script:Colors.Warning
+    } else {
+        Write-Host ("  " + $b.V + "  Pass : $password") -ForegroundColor $script:Colors.Success
+        Write-Host ("  " + $b.V + "  Clipboard unavailable -- copy now, screen will clear.") -ForegroundColor $script:Colors.Warning
+    }
+    Write-Host ("  " + $b.V + "  User must change on first sign-in.") -ForegroundColor $script:Colors.Info
+    Write-Host ("  " + $b.BL + [string]::new($b.H, 56) + $b.BR) -ForegroundColor $script:Colors.Highlight
+    Write-Warn "Deliver via a secure channel (password manager / encrypted message)."
+    Write-Host ""
+    $null = Read-UserInput "Press Enter when the password has been delivered (screen will clear)"
+
+    # ---- Scrub ----
+    # Overwrite the clipboard so the password doesn't sit on the OS pasteboard.
+    # PowerShell strings are immutable so we can't truly zero $password in
+    # memory, but we drop the reference so GC can reclaim it sooner.
+    if ($clipped) {
+        try { Set-Clipboard -Value " " -ErrorAction SilentlyContinue } catch {}
+    }
+    Remove-Variable password -ErrorAction SilentlyContinue
+
+    Clear-Host
+    Write-Success "Onboarding complete for $upn."
     Pause-ForUser
 }
 
