@@ -1,0 +1,68 @@
+[
+  {
+    "name": "Get-MgSubscribedSku",
+    "description": "List the tenant's purchased SKUs with prepaid units, consumed units, free seats.",
+    "parameters": { "type": "object", "properties": {}, "required": [] },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-MgUserLicenseDetail",
+    "description": "List licenses currently assigned to a user.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UserId": { "type": "string", "description": "UPN or object id" }
+      },
+      "required": ["UserId"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Set-MgUserLicense-Add",
+    "description": "Assign one license SKU to a user. Wrapper around Set-MgUserLicense -AddLicenses.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UserId": { "type": "string" },
+        "SkuId":  { "type": "string", "description": "Sku object id (GUID)" }
+      },
+      "required": ["UserId","SkuId"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Set-MgUserLicense-Remove"
+  },
+  {
+    "name": "Set-MgUserLicense-Remove",
+    "description": "Remove one license SKU from a user. Wrapper around Set-MgUserLicense -RemoveLicenses.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UserId": { "type": "string" },
+        "SkuId":  { "type": "string" }
+      },
+      "required": ["UserId","SkuId"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Set-MgUserLicense-Add"
+  },
+  {
+    "name": "Get-LicenseUtilizationReport",
+    "description": "Run the Phase 4 cost optimizer; returns inactive / hoarder / paid-unassigned / downgrade-candidate findings.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "DaysInactive": { "type": "integer", "description": "Inactivity threshold for inactive licensed users", "default": 60 }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]

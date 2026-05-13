@@ -1,0 +1,57 @@
+[
+  {
+    "name": "Search-SignIns",
+    "description": "Query Microsoft Graph sign-in log. Wraps /v1.0/auditLogs/signIns with pagination.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN":          { "type": "string" },
+        "FromDate":     { "type": "string", "description": "ISO 8601 UTC (e.g. 2026-05-01T00:00:00Z)" },
+        "ToDate":       { "type": "string", "description": "ISO 8601 UTC" },
+        "AppName":      { "type": "string" },
+        "IP":           { "type": "string" },
+        "Country":      { "type": "string", "description": "ISO 3166-1 alpha-2" },
+        "RiskLevel":    { "type": "string", "enum": ["low","medium","high","hidden","none"] },
+        "OnlyFailures": { "type": "boolean", "default": false },
+        "MaxResults":   { "type": "integer", "default": 500 }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Search-UAL",
+    "description": "Search the unified audit log (Search-UnifiedAuditLog). Requires EXO + ingestion enabled.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "FromDate":   { "type": "string" },
+        "ToDate":     { "type": "string" },
+        "UserId":     { "type": "string" },
+        "Operations": { "type": "array", "items": { "type": "string" } },
+        "IP":         { "type": "string" }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Show-RecentUndoable",
+    "description": "List recently audited operations that still have a reverse recipe (Phase 2 Undo).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Limit":  { "type": "integer", "default": 20 },
+        "Filter": { "type": "string", "description": "UPN or target substring" }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]

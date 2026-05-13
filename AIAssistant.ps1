@@ -343,14 +343,26 @@ function Invoke-AIChat {
     # ---- Call provider ----
     try {
         $rawResponse = $null
+        $usage = @{ InputTokens = 0; OutputTokens = 0 }
         switch ($p) {
             "Ollama" {
-                $body = @{
-                    model    = $m
-                    stream   = $false
-                    messages = @(@{ role='system'; content=$safeSystemPrompt }) + $safeMessages
-                } | ConvertTo-Json -Depth 10
-                $rawResponse = (Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop).message.content
+                # Real streaming -- print the response as it arrives.
+                if (Get-Command Invoke-OllamaStream -ErrorAction SilentlyContinue) {
+                    $stream = Invoke-OllamaStream -Endpoint $ep -Model $m -SystemPrompt $safeSystemPrompt -SafeMessages $safeMessages
+                    $rawResponse = $stream.Text
+                    $usage = $stream.Usage
+                    $script:LastAIChatStreamed = $true
+                } else {
+                    $body = @{
+                        model    = $m
+                        stream   = $false
+                        messages = @(@{ role='system'; content=$safeSystemPrompt }) + $safeMessages
+                    } | ConvertTo-Json -Depth 10
+                    $resp = Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop
+                    $rawResponse = $resp.message.content
+                    if ($resp.prompt_eval_count) { $usage.InputTokens  = [int]$resp.prompt_eval_count }
+                    if ($resp.eval_count)        { $usage.OutputTokens = [int]$resp.eval_count }
+                }
             }
             "Anthropic" {
                 $body = @{
@@ -360,7 +372,12 @@ function Invoke-AIChat {
                     messages   = $safeMessages
                 } | ConvertTo-Json -Depth 10
                 $h = @{ "x-api-key"=$k; "anthropic-version"="2023-06-01"; "content-type"="application/json" }
-                $rawResponse = (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).content[0].text
+                $resp = Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop
+                $rawResponse = $resp.content[0].text
+                if ($resp.usage) {
+                    $usage.InputTokens  = [int]$resp.usage.input_tokens
+                    $usage.OutputTokens = [int]$resp.usage.output_tokens
+                }
             }
             default {
                 $body = @{
@@ -370,8 +387,20 @@ function Invoke-AIChat {
                 } | ConvertTo-Json -Depth 10
                 $h = @{ "Content-Type"="application/json" }
                 if ($p -eq "AzureOpenAI") { $h["api-key"] = $k } else { $h["Authorization"] = "Bearer $k" }
-                $rawResponse = (Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop).choices[0].message.content
+                $resp = Invoke-RestMethod -Uri $ep -Method POST -Headers $h -Body $body -ErrorAction Stop
+                $rawResponse = $resp.choices[0].message.content
+                if ($resp.usage) {
+                    $usage.InputTokens  = [int]$resp.usage.prompt_tokens
+                    $usage.OutputTokens = [int]$resp.usage.completion_tokens
+                }
             }
+        }
+
+        # ---- Cost tracking ----
+        if (Get-Command Add-AICostEvent -ErrorAction SilentlyContinue) {
+            try {
+                $script:LastAICostResult = Add-AICostEvent -Config $Config -Usage $usage -Reason 'chat'
+            } catch { Write-Warn "Cost tracker: $($_.Exception.Message)" }
         }
 
         # ---- Restore placeholders so the operator sees real values and
@@ -686,6 +715,24 @@ $script:PrivacySystemPromptAddendum = @"
 PRIVACY NOTE: Values like <UPN_1>, <GUID_3>, <TENANT>, <NAME_2>, <SECRET_4>, <JWT_1>, <THUMB_1> are opaque placeholders. Preserve them verbatim in any command you propose. Do NOT invent or substitute real-looking values. If a value you need has not been provided, ask the operator rather than guessing.
 "@
 
+$script:PlanningSystemPromptAddendum = @"
+
+
+PLANNING: For tasks that need 3+ tool calls, OR any sequence of destructive operations, you SHOULD first call the special meta-tool 'submit_plan' to propose the full plan. The operator approves, edits, or rejects the plan before any step runs. Single-tool reads (Get-* / List-*) do NOT need a plan. The plan's steps[].tool field must exactly match a real tool name from the catalog (not 'submit_plan' / 'ask_operator'). Use 'dependsOn' to express ordering. Mark each step's 'destructive' field truthfully so the operator sees risk. If the operator asked you to '/plan' in their last message, ALWAYS submit_plan first. If they asked '/noplan', skip planning and call tools directly.
+"@
+
+$script:PlanForceSystemPromptAddendum = @"
+
+
+PLAN MODE FORCED: The operator typed /plan. For this turn you MUST call submit_plan first (do not call any other tool directly). Build a complete plan of every tool call needed to accomplish the operator's request, then stop and wait for approval.
+"@
+
+$script:NoPlanSystemPromptAddendum = @"
+
+
+PLAN MODE SKIPPED: The operator typed /noplan. Do NOT call submit_plan; call the actual tools directly even if the task involves multiple steps.
+"@
+
 # ============================================================
 #  AI Command Audit + Allow-list
 #  Every AI-proposed command is parsed via the PowerShell language
@@ -850,6 +897,15 @@ function Test-AICommandAllowed {
 function Invoke-MarkCommands {
     param([string]$Response, [hashtable]$Config)
 
+    # Deprecation notice: this regex-RUN: path is now the FALLBACK for
+    # providers / models that don't support native tool calling. Phase 5
+    # Commit A's AIToolDispatch.ps1 + the ai-tools/ registry is the
+    # primary path. We emit one console warning per session.
+    if (-not $script:AIToolingDeprecationWarned) {
+        Write-Warn "[deprecated] Using regex RUN: extractor. Native tool calling preferred (provider lacked support, or capability cache says no)."
+        $script:AIToolingDeprecationWarned = $true
+    }
+
     $commands = Extract-Commands -Response $Response
     if ($commands.Count -eq 0) { return $null }
 
@@ -959,7 +1015,20 @@ function Start-AIAssistant {
     $pd="$($config['Provider']) ($($config['Model']))"; if($pd.Length -gt 52){$pd=$pd.Substring(0,49)+"..."}
     Write-Host ("  " + $b.DV + "   $("{0,-52}" -f $pd)" + $b.DV) -ForegroundColor "Gray"
     Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor "Cyan"
-    Write-Host ""; Write-Host "  /help  /config  /models  /clear  /context  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+    Write-Host ""; Write-Host "  /help  /about  /tools  /plan  /noplan  /dryrun  /cost  /costs  /list  /load  /save  /ephemeral  /export  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+
+    # Phase 5: pre-load the tool catalog and probe provider capability.
+    if (Get-Command Get-AIToolCatalog -ErrorAction SilentlyContinue) { Get-AIToolCatalog | Out-Null }
+    $useTooling = $false
+    if (Get-Command Test-ProviderToolSupport -ErrorAction SilentlyContinue) {
+        $useTooling = Test-ProviderToolSupport -Config $config
+    }
+    if ($useTooling) {
+        Write-InfoMsg ("Native tool calling enabled ({0} tools loaded)." -f ($script:AIToolCatalog | Measure-Object).Count)
+    } else {
+        Write-Warn "Native tool calling unavailable -- falling back to RUN: regex path."
+    }
+    Write-Host ""
 
     $chatHistory = @()
     $ctx = "Services auto-connect. Tenant: $($script:SessionState.TenantMode)"
@@ -976,8 +1045,114 @@ function Start-AIAssistant {
         if ([string]::IsNullOrWhiteSpace($userMsg)) { continue }
 
         $cmd = $userMsg.Trim().ToLower()
-        if ($cmd -match '^/(quit|exit|back)$') { Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": See you!" -ForegroundColor White; Write-Host ""; $chatting=$false; continue }
-        if ($cmd -eq '/help') { Write-Host ""; Write-Host "  /config /models /privacy /clear /context /quit" -ForegroundColor "DarkGray"; Write-Host ""; continue }
+        if ($cmd -match '^/(quit|exit|back)$') {
+            # Auto-save unless /ephemeral
+            if ((Get-Command Save-AISession -ErrorAction SilentlyContinue) -and $chatHistory.Count -gt 0 -and -not (Get-AISessionCurrent).Ephemeral) {
+                $sid = Save-AISession -Config $config -History $chatHistory
+                if ($sid) { Write-Host "  [auto-saved as $sid]" -ForegroundColor DarkGray }
+            }
+            Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": See you!" -ForegroundColor White; Write-Host ""; $chatting=$false; continue
+        }
+        if ($cmd -eq '/help') {
+            Write-Host ""
+            Write-Host "  /config /models /privacy /clear /context /tools" -ForegroundColor "DarkGray"
+            Write-Host "  /about                 diagnostic snapshot" -ForegroundColor "DarkGray"
+            Write-Host "  /plan /noplan          plan-mode controls" -ForegroundColor "DarkGray"
+            Write-Host "  /dryrun                toggle PREVIEW (no tenant changes)" -ForegroundColor "DarkGray"
+            Write-Host "  /cost /costs           cost summary / history" -ForegroundColor "DarkGray"
+            Write-Host "  /list /load <id>       saved sessions" -ForegroundColor "DarkGray"
+            Write-Host "  /save [title]          persist this chat" -ForegroundColor "DarkGray"
+            Write-Host "  /rename <id> <title>   rename" -ForegroundColor "DarkGray"
+            Write-Host "  /delete <id>           delete" -ForegroundColor "DarkGray"
+            Write-Host "  /ephemeral             do not auto-save on quit" -ForegroundColor "DarkGray"
+            Write-Host "  /export <id> [path]    redacted JSON for sharing" -ForegroundColor "DarkGray"
+            Write-Host "  /quit                  exit" -ForegroundColor "DarkGray"
+            Write-Host ""; continue
+        }
+        if ($cmd -eq '/cost') {
+            if (Get-Command Show-AICostSummary -ErrorAction SilentlyContinue) { Show-AICostSummary }
+            else { Write-Warn "Cost tracker not loaded." }
+            continue
+        }
+        if ($cmd -eq '/costs') {
+            if (Get-Command Show-AICostHistory -ErrorAction SilentlyContinue) { Show-AICostHistory }
+            else { Write-Warn "Cost tracker not loaded." }
+            continue
+        }
+        if ($cmd -eq '/list') {
+            if (Get-Command Show-AISessionList -ErrorAction SilentlyContinue) { Show-AISessionList }
+            else { Write-Warn "Session store not loaded." }
+            continue
+        }
+        if ($cmd -like '/load *') {
+            if (-not (Get-Command Load-AISession -ErrorAction SilentlyContinue)) { Write-Warn "Session store not loaded."; continue }
+            $target = $userMsg.Substring(6).Trim()
+            $loaded = Load-AISession -IdOrPrefix $target
+            if (-not $loaded) { Write-Warn "No session matches '$target'."; continue }
+            $chatHistory = @($loaded.History)
+            Write-InfoMsg ("Loaded session '{0}' ({1} message(s), {2:N4} USD)." -f $loaded.Title, $loaded.History.Count, $loaded.CostUsd)
+            continue
+        }
+        if ($cmd -eq '/save' -or $cmd -like '/save *') {
+            if (-not (Get-Command Save-AISession -ErrorAction SilentlyContinue)) { Write-Warn "Session store not loaded."; continue }
+            $title = if ($cmd.Length -gt 5) { $userMsg.Substring(6).Trim() } else { $null }
+            $sid = Save-AISession -Config $config -History $chatHistory -Title $title -Force
+            if ($sid) { Write-InfoMsg ("Saved session '{0}' ({1})." -f $script:AISessionCurrent.Title, $sid) }
+            continue
+        }
+        if ($cmd -like '/rename *') {
+            $parts = $userMsg.Substring(8).Trim() -split '\s+', 2
+            if ($parts.Count -ne 2) { Write-Warn "Usage: /rename <id-or-prefix> <new title>"; continue }
+            if (Rename-AISession -IdOrPrefix $parts[0] -NewTitle $parts[1]) { Write-InfoMsg "Renamed." }
+            continue
+        }
+        if ($cmd -like '/delete *') {
+            $target = $userMsg.Substring(8).Trim()
+            if (Remove-AISession -IdOrPrefix $target) { Write-InfoMsg "Deleted '$target'." }
+            continue
+        }
+        if ($cmd -eq '/ephemeral') {
+            Set-AISessionEphemeral -On $true
+            Write-InfoMsg "Ephemeral mode ON -- this chat will NOT be auto-saved on /quit."
+            continue
+        }
+        if ($cmd -eq '/about') {
+            if (Get-Command Show-AIAbout -ErrorAction SilentlyContinue) { Show-AIAbout -Config $config }
+            else { Write-Warn "AIUx module not loaded." }
+            continue
+        }
+        if ($cmd -eq '/dryrun') {
+            if (Get-Command Set-PreviewMode -ErrorAction SilentlyContinue) {
+                $newState = -not (Get-PreviewMode)
+                Set-PreviewMode -Enabled $newState
+                if ($newState) { Write-Warn "PREVIEW MODE ON -- mutating tools will be logged but not executed." }
+                else           { Write-InfoMsg "PREVIEW MODE OFF -- mutating tools will apply to the tenant." }
+            } else { Write-Warn "Preview module not loaded." }
+            continue
+        }
+        if ($cmd -like '/export *' -or $cmd -eq '/export') {
+            $rest = if ($cmd.Length -gt 8) { $userMsg.Substring(8).Trim() } else { '' }
+            $parts = $rest -split '\s+', 2
+            $idArg = if ($parts.Count -ge 1 -and $parts[0]) { $parts[0] } else { $script:AISessionCurrent.Id }
+            $dest  = if ($parts.Count -ge 2) { $parts[1] } else { $null }
+            if (-not $idArg) { Write-Warn "Usage: /export <id-or-prefix> [destination-path]"; continue }
+            Export-AISession -IdOrPrefix $idArg -DestinationPath $dest | Out-Null
+            continue
+        }
+        if ($cmd -eq '/plan') {
+            if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) {
+                Set-AIPlanMode -Mode 'force'
+                Write-InfoMsg "Plan mode forced for next prompt -- Mark will submit_plan before executing tools."
+            } else { Write-Warn "Planner module not loaded." }
+            Write-Host ""; continue
+        }
+        if ($cmd -eq '/noplan') {
+            if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) {
+                Set-AIPlanMode -Mode 'skip'
+                Write-InfoMsg "Plan mode skipped for next prompt -- Mark will call tools directly."
+            } else { Write-Warn "Planner module not loaded." }
+            Write-Host ""; continue
+        }
         if ($cmd -eq '/config') { $nc=Setup-AIProvider; if($nc){$config=$nc}else{$r=Get-AIConfig;if($r){if($r -is [PSCustomObject]){$ht=@{};$r.PSObject.Properties|ForEach-Object{$ht[$_.Name]=$_.Value};$config=$ht}else{$config=$r}}}; Write-Host ""; continue }
         if ($cmd -eq '/models') { if($config["Provider"] -eq "Ollama"){try{$ms=Invoke-RestMethod -Uri "$($config['Endpoint'])/api/tags" -Method GET -TimeoutSec 5;Write-Host "";foreach($m in $ms.models){$c=if($m.name -eq $config["Model"]){"<< current"}else{""};Write-Host "    $($m.name) ($([math]::Round($m.size/1MB))MB) $c" -ForegroundColor White}}catch{Write-ErrorMsg "Cannot reach Ollama."}}else{Write-InfoMsg "/models is for Ollama."}; Write-Host ""; continue }
         if ($cmd -eq '/privacy') { Show-PrivacyMenu -Config $config; $r=Get-AIConfig; if($r){$config=$r}; Write-Host ""; continue }
@@ -988,6 +1163,152 @@ function Start-AIAssistant {
             Write-Host "  [cleared — $cleared privacy token(s) dropped]" -ForegroundColor "DarkGray"; Write-Host ""; continue
         }
         if ($cmd -eq '/context') { Write-Host ""; Write-StatusLine "Tenant" "$($script:SessionState.TenantMode) $(if($script:SessionState.TenantName){"($($script:SessionState.TenantName))"})" "White"; Write-StatusLine "Graph" $(if($script:SessionState.MgGraph){"Connected"}else{"Auto"}) $(if($script:SessionState.MgGraph){"Green"}else{"Yellow"}); Write-StatusLine "EXO" $(if($script:SessionState.ExchangeOnline){"Connected"}else{"Auto"}) $(if($script:SessionState.ExchangeOnline){"Green"}else{"Yellow"}); Write-StatusLine "SCC" $(if($script:SessionState.ComplianceCenter){"Connected"}else{"Auto"}) $(if($script:SessionState.ComplianceCenter){"Green"}else{"Yellow"}); Write-StatusLine "AI" "$($config['Provider'])/$($config['Model'])" "Cyan"; Write-Host ""; continue }
+        if ($cmd -eq '/tools') {
+            if (Get-Command Show-AIToolCatalog -ErrorAction SilentlyContinue) { Show-AIToolCatalog }
+            else { Write-Warn "Tool catalog module not loaded." }
+            continue
+        }
+
+        # ---- Phase 5: native tool-calling path ----
+        if ($useTooling -and (Get-Command Invoke-AIChatToolingTurn -ErrorAction SilentlyContinue)) {
+            $sendMsg = $userMsg
+            if ($chatHistory.Count -eq 0) { $sendMsg = "[CONTEXT: $ctx]`n`n$userMsg" }
+            $chatHistory += @{ role = 'user'; content = $sendMsg }
+            $hops = 0
+            $maxHops = 8
+            while ($hops -lt $maxHops) {
+                $hops++
+                Write-Host ""; Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline; Write-Host "thinking..." -ForegroundColor "DarkGray"
+                $turn = Invoke-AIChatToolingTurn -Config $config -Messages $chatHistory
+                try{$t=$Host.UI.RawUI.CursorPosition.Y-1;$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t;Write-Host(" "*80);$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t}catch{}
+
+                if ($turn.Error) {
+                    if ($turn.Error -eq 'ollama_no_tool_support') {
+                        Write-Warn "This Ollama model lacks tool support -- switching to RUN: regex fallback for this session."
+                        $useTooling = $false
+                        # Pop the user message we already added so the regex path takes it fresh
+                        $chatHistory = @($chatHistory | Select-Object -SkipLast 1)
+                        break
+                    }
+                    Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": [!] $($turn.Error)" -ForegroundColor $script:Colors.Error
+                    break
+                }
+                # ---- Cost tracking for this hop ----
+                if ($turn.Usage -and (Get-Command Add-AICostEvent -ErrorAction SilentlyContinue)) {
+                    try {
+                        $costResult = Add-AICostEvent -Config $config -Usage $turn.Usage -Reason 'tooling-hop'
+                        if (Get-Command Show-AICostFooter -ErrorAction SilentlyContinue) { Show-AICostFooter -Result $costResult }
+                    } catch { Write-Warn "Cost tracker: $($_.Exception.Message)" }
+                }
+                # Persist assistant turn into history in Anthropic-shaped form
+                # so subsequent tool_result blocks have somewhere to attach.
+                if ($turn.AssistantContent) {
+                    $chatHistory += @{ role = 'assistant'; content = $turn.AssistantContent }
+                }
+                if ($turn.Text) {
+                    Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline
+                    Write-MarkResponse $turn.Text
+                }
+                if ($turn.ToolUses.Count -eq 0) { break }
+                # Operator gate (Y/A/N) + dispatch
+                $results = New-Object System.Collections.ArrayList
+                $runAll = $false
+                # ---- Auto-plan: if AI returned >= threshold tool_uses on first hop
+                # and didn't already submit_plan, nudge into plan mode for the *next*
+                # turn. We don't synthesize a plan locally; we tell the AI to revise.
+                $threshold = if ($script:AIAutoPlanThreshold) { [int]$script:AIAutoPlanThreshold } else { 3 }
+                $hasSubmitPlan = $false
+                foreach ($tu in $turn.ToolUses) { if ($tu.name -eq 'submit_plan') { $hasSubmitPlan = $true; break } }
+                if ($hops -eq 1 -and -not $hasSubmitPlan -and $turn.ToolUses.Count -ge $threshold -and (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) -and (Get-AIPlanMode) -ne 'skip') {
+                    Write-Warn ("Mark proposed {0} tool calls on first turn (>= {1}). Routing through plan mode." -f $turn.ToolUses.Count, $threshold)
+                    Set-AIPlanMode -Mode 'force'
+                    foreach ($tu in $turn.ToolUses) {
+                        [void]$results.Add(@{ id = $tu.id; content = '{"ok":false,"error":"auto_plan_required","note":"Operator requires submit_plan first for tasks needing >= ' + $threshold + ' tool calls."}'; isError = $true })
+                    }
+                } else {
+                foreach ($tu in $turn.ToolUses) {
+                    # ---- submit_plan intercept -- route to planner approval flow
+                    if ($tu.name -eq 'submit_plan' -and (Get-Command Invoke-AIPlanApprovalFlow -ErrorAction SilentlyContinue)) {
+                        Write-Host ""
+                        $flow = Invoke-AIPlanApprovalFlow -PlanInput $tu.input -Config $config
+                        # Reset plan-mode latch once a plan has been processed
+                        if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) { Set-AIPlanMode -Mode 'auto' }
+                        $body = @{ ok = ($flow.Status -ne 'rejected'); status = $flow.Status }
+                        if ($flow.Result) {
+                            $body.executed  = $flow.Result.Executed
+                            $body.succeeded = $flow.Result.Succeeded
+                            $body.failed    = $flow.Result.Failed
+                            $body.skipped   = $flow.Result.Skipped
+                            $body.steps     = @($flow.Result.StepResults | ForEach-Object {
+                                @{ id = $_.id; tool = $_.tool; status = $_.status; error = $_.error }
+                            })
+                        }
+                        if ($flow.ValidationErrors) { $body.validationErrors = @($flow.ValidationErrors) }
+                        if ($flow.Reason) { $body.reason = $flow.Reason }
+                        $payload = ($body | ConvertTo-Json -Depth 8 -Compress)
+                        [void]$results.Add(@{ id = $tu.id; content = $payload; isError = ($flow.Status -eq 'rejected') })
+                        continue
+                    }
+                    # ---- ask_operator intercept -- prompt the human directly
+                    if ($tu.name -eq 'ask_operator') {
+                        $q = [string]$tu.input.question
+                        Write-Host ""
+                        Write-Host "  Mark asks: $q" -ForegroundColor Cyan
+                        Write-Host "  You" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                        $ansText = Read-Host
+                        $payload = (@{ ok = $true; answer = $ansText } | ConvertTo-Json -Compress)
+                        [void]$results.Add(@{ id = $tu.id; content = $payload; isError = $false })
+                        continue
+                    }
+                    $toolDef = Get-AIToolByName -Name $tu.name
+                    $destFlag = if ($toolDef -and $toolDef.destructive) { '[DESTRUCTIVE] ' } else { '' }
+                    Write-Host ""
+                    Write-Host ("  Mark wants to call: " + $destFlag + $tu.name) -ForegroundColor Yellow
+                    foreach ($k in $tu.input.Keys) {
+                        Write-Host ("      {0}: {1}" -f $k, ($tu.input[$k])) -ForegroundColor DarkGray
+                    }
+                    $ans = if ($runAll) { 'y' } else {
+                        Write-Host "  [Y]es  [N]o  [A]ll  [Q]uit" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                        Read-Host
+                    }
+                    if ($ans -match '^[Aa]') { $runAll = $true; $ans = 'y' }
+                    if ($ans -match '^[Qq]') { break }
+                    if ($ans -notmatch '^[Yy]') {
+                        # Ask for an optional reason so the AI gets context to adapt.
+                        $note = if (Get-NonInteractiveMode) { '' } else {
+                            Write-Host "  (optional) what should change? " -ForegroundColor DarkGray -NoNewline
+                            Read-Host
+                        }
+                        $rejectPayload = if (Get-Command Build-RejectionToolResult -ErrorAction SilentlyContinue) {
+                            Build-RejectionToolResult -ToolName $tu.name -Note $note
+                        } else { '{"ok":false,"error":"operator_declined"}' }
+                        [void]$results.Add(@{ id = $tu.id; content = $rejectPayload; isError = $true })
+                        continue
+                    }
+                    $inputHt = @{}; foreach ($k in $tu.input.Keys) { $inputHt[$k] = $tu.input[$k] }
+                    $spin = $null
+                    if (Get-Command Start-AISpinner -ErrorAction SilentlyContinue) {
+                        $spin = Start-AISpinner -Label ("running " + $tu.name)
+                    }
+                    try {
+                        $out = Invoke-AIToolCall -ToolName $tu.name -Params $inputHt -Config $config
+                    } finally {
+                        if ($spin -and (Get-Command Stop-AISpinner -ErrorAction SilentlyContinue)) { Stop-AISpinner -Token $spin }
+                    }
+                    $payload = (Format-AIToolResultPayload -Result $out -MaxBytes 4000)
+                    [void]$results.Add(@{ id = $tu.id; content = $payload; isError = (-not $out.ok) })
+                }
+                }
+                if ($results.Count -eq 0) { break }
+                $followup = Build-ToolResultMessage -Provider $config.Provider -ToolResults @($results)
+                if ($followup -is [array]) { $chatHistory += $followup } else { $chatHistory += $followup }
+            }
+            Write-Host ""
+            if ($chatHistory.Count -gt 60) { $chatHistory = $chatHistory[-60..-1] }
+            # Reset the /plan or /noplan latch so it only applies to one prompt.
+            if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) { Set-AIPlanMode -Mode 'auto' }
+            if ($useTooling) { continue }   # done; let outer while-loop ask next prompt
+        }
 
         $sendMsg = $userMsg
         if ($chatHistory.Count -eq 0) { $sendMsg = "[CONTEXT: $ctx]`n`n$userMsg" }
@@ -1000,11 +1321,21 @@ function Start-AIAssistant {
 
         if ($response -match "^\[!\]") { Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": $response" -ForegroundColor $script:Colors.Error; Write-Host ""; continue }
 
+        # ---- Cost footer (regex path) ----
+        if ($script:LastAICostResult -and (Get-Command Show-AICostFooter -ErrorAction SilentlyContinue)) {
+            Show-AICostFooter -Result $script:LastAICostResult
+            $script:LastAICostResult = $null
+        }
+
         $hasCmd = Test-HasCommands -Response $response
         $cleanText = Get-CleanResponse $response
 
-        # Show only the clean (non-hallucinated) text
-        if ($cleanText) { Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline; Write-MarkResponse $cleanText }
+        # Show only the clean (non-hallucinated) text -- skip when we
+        # already streamed it (Ollama path printed inline).
+        if ($cleanText -and -not $script:LastAIChatStreamed) {
+            Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline; Write-MarkResponse $cleanText
+        }
+        $script:LastAIChatStreamed = $false
 
         if ($hasCmd) {
             $cmdResults = Invoke-MarkCommands -Response $response -Config $config

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "submit_plan",
+    "description": "Submit a multi-step execution plan for operator approval BEFORE executing any tools. Use this when the goal requires 3+ destructive tool calls, or when the operator explicitly asked for a plan. Each step lists a tool name (must exist in the catalog), the params, and which earlier step IDs it depends on. Do NOT execute any other tools in the same response as submit_plan -- the plan is reviewed first.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "goal": { "type": "string", "description": "One-sentence statement of what the plan accomplishes." },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id":          { "type": "integer" },
+              "description": { "type": "string" },
+              "tool":        { "type": "string", "description": "Name of a tool in the catalog" },
+              "params":      { "type": "object" },
+              "dependsOn":   { "type": "array", "items": { "type": "integer" } },
+              "reversible":  { "type": "boolean", "description": "Whether the catalog entry has a reverseTool" },
+              "destructive": { "type": "boolean" }
+            },
+            "required": ["id","description","tool","params"]
+          }
+        },
+        "estimatedDurationSec": { "type": "integer" },
+        "destructiveStepCount": { "type": "integer" }
+      },
+      "required": ["goal","steps"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null,
+    "isMeta": true
+  },
+  {
+    "name": "ask_operator",
+    "description": "When you need information the operator hasn't provided (e.g. the leaver's manager UPN, a successor for a sole-owner team), call this tool with a clear question. The operator's reply will arrive as a tool_result on the next turn.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "question": { "type": "string" }
+      },
+      "required": ["question"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null,
+    "isMeta": true
+  }
+]

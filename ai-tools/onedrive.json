@@ -1,0 +1,61 @@
+[
+  {
+    "name": "Get-UserOneDriveUrl",
+    "description": "Resolve personal OneDrive site URL for a UPN.",
+    "parameters": {
+      "type": "object",
+      "properties": { "UPN": { "type": "string" } },
+      "required": ["UPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Grant-OneDriveAccess",
+    "description": "Add a user as site-collection admin on a personal OneDrive site.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "SiteUrl":    { "type": "string" },
+        "GranteeUPN": { "type": "string" }
+      },
+      "required": ["SiteUrl","GranteeUPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Revoke-OneDriveAccess"
+  },
+  {
+    "name": "Revoke-OneDriveAccess",
+    "description": "Remove site-collection admin grant.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "SiteUrl":    { "type": "string" },
+        "GranteeUPN": { "type": "string" }
+      },
+      "required": ["SiteUrl","GranteeUPN"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": true,
+    "reverseTool": "Grant-OneDriveAccess"
+  },
+  {
+    "name": "Invoke-OneDriveHandoff",
+    "description": "End-to-end offboard hand-off: resolve URL + grant successor + log retention + email summary.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "LeaverUPN":      { "type": "string" },
+        "SuccessorUPN":   { "type": "string" },
+        "RetentionDays":  { "type": "integer", "default": 60 },
+        "NotifyManager":  { "type": "boolean", "default": true }
+      },
+      "required": ["LeaverUPN","SuccessorUPN"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]

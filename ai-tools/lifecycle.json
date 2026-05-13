@@ -1,0 +1,41 @@
+[
+  {
+    "name": "Invoke-BulkOnboard",
+    "description": "Run the CSV-driven onboarding pipeline. Validates the CSV first, then per-row creates users + applies templates (Phase 1).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Path":     { "type": "string" },
+        "Template": { "type": "string", "description": "Default template key when a row's Template column is blank" },
+        "WhatIf":   { "type": "boolean", "default": false }
+      },
+      "required": ["Path"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Invoke-BulkOffboard",
+    "description": "Run the canonical 12-step offboarding pipeline over a CSV (Phase 3).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Path":   { "type": "string" },
+        "WhatIf": { "type": "boolean", "default": false }
+      },
+      "required": ["Path"]
+    },
+    "destructive": true,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-OnboardTemplates",
+    "description": "List available role templates from templates/ (Phase 1).",
+    "parameters": { "type": "object", "properties": {}, "required": [] },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]
