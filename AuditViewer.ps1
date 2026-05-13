@@ -446,6 +446,8 @@ function Start-AuditReportingMenu {
             "Sign-in lookup (recent activity for one user)",
             "Unified audit log (Search-UnifiedAuditLog)",
             "Guest user reports...",
+            "Break-glass accounts...",
+            "Notifications setup / test...",
             "Reporting (existing reports menu)"
         )
         $sel = Show-Menu -Title "Audit & Reporting" -Options $opts -BackLabel "Back to Main Menu"
@@ -456,7 +458,9 @@ function Start-AuditReportingMenu {
             3  { if (Get-Command Show-UserRecentActivity -ErrorAction SilentlyContinue) { Show-UserRecentActivity } else { Write-Warn "Sign-in lookup unavailable."; Pause-ForUser } }
             4  { if (Get-Command Start-UnifiedAuditSearch -ErrorAction SilentlyContinue) { Start-UnifiedAuditSearch } else { Write-Warn "Unified audit log unavailable."; Pause-ForUser } }
             5  { if (Get-Command Start-GuestUsersMenu -ErrorAction SilentlyContinue) { Start-GuestUsersMenu } else { Write-Warn "Guest user module unavailable."; Pause-ForUser } }
-            6  { if (Get-Command Start-ReportingMenu -ErrorAction SilentlyContinue) { Start-ReportingMenu } else { Write-Warn "Reporting menu unavailable."; Pause-ForUser } }
+            6  { if (Get-Command Start-BreakGlassMenu -ErrorAction SilentlyContinue) { Start-BreakGlassMenu } else { Write-Warn "Break-glass module unavailable."; Pause-ForUser } }
+            7  { if (Get-Command Start-NotificationsSetup -ErrorAction SilentlyContinue) { Start-NotificationsSetup } else { Write-Warn "Notifications module unavailable."; Pause-ForUser } }
+            8  { if (Get-Command Start-ReportingMenu -ErrorAction SilentlyContinue) { Start-ReportingMenu } else { Write-Warn "Reporting menu unavailable."; Pause-ForUser } }
             -1 { return }
         }
     }

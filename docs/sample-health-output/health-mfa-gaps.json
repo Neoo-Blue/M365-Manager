@@ -1,0 +1,23 @@
+{
+  "checkName": "mfa-gaps",
+  "startedAtUtc": "2026-05-12T09:00:00Z",
+  "completedAtUtc": "2026-05-12T09:00:42Z",
+  "status": "findings",
+  "findingCount": 8,
+  "note": "",
+  "findings": {
+    "noMfaUsers": [
+      "service-account-1@contoso.com",
+      "intern.demo@contoso.com",
+      "guest-vendor@contoso.com"
+    ],
+    "onlyPhoneUsers": [
+      "old.timer@contoso.com",
+      "field.tech.1@contoso.com",
+      "field.tech.2@contoso.com",
+      "warehouse.scanner@contoso.com",
+      "lobby.kiosk@contoso.com"
+    ],
+    "totals": { "noMfa": 3, "onlyPhone": 5 }
+  }
+}

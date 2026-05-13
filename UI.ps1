@@ -71,12 +71,48 @@ function Write-ErrorMsg { param([string]$Msg) Write-Host "  [x] $Msg" -Foregroun
 function Write-Warn     { param([string]$Msg) Write-Host "  [!] $Msg" -ForegroundColor $script:Colors.Warning }
 function Write-InfoMsg  { param([string]$Msg) Write-Host "  [i] $Msg" -ForegroundColor $script:Colors.Info }
 
+# ============================================================
+#  Non-interactive mode (Phase 4 Commit B)
+#
+#  $script:NonInteractive = $true means the process is running
+#  unattended (e.g. from Scheduled Tasks via a health-check
+#  script). All prompt paths must either return a safe default
+#  or fail fast -- never block on Read-Host.
+# ============================================================
+
+if ($null -eq (Get-Variable -Name NonInteractive -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:NonInteractive = $false
+}
+
+function Set-NonInteractiveMode { param([bool]$Enabled) $script:NonInteractive = $Enabled }
+function Get-NonInteractiveMode  { return [bool]$script:NonInteractive }
+
+function Get-OperatorInput {
+    <#
+        Canonical prompt helper. When NonInteractive, returns
+        $DefaultIfNonInteractive (empty string by default). All
+        Read-Host calls in UI.ps1's helpers route through this so
+        a missing -Default never blocks a scheduled run.
+    #>
+    param(
+        [string]$Prompt = '',
+        [string]$DefaultIfNonInteractive = ''
+    )
+    if ($script:NonInteractive) {
+        return $DefaultIfNonInteractive
+    }
+    if ($Prompt) {
+        Write-Host "  $Prompt" -ForegroundColor $script:Colors.Prompt -NoNewline
+        Write-Host ": " -ForegroundColor $script:Colors.Prompt -NoNewline
+    }
+    return (Read-Host)
+}
+
 function Read-UserInput {
     param([string]$Prompt)
+    if ($script:NonInteractive) { return '' }
     Write-Host ""
-    Write-Host "  $Prompt" -ForegroundColor $script:Colors.Prompt -NoNewline
-    Write-Host ": " -ForegroundColor $script:Colors.Prompt -NoNewline
-    return (Read-Host)
+    return (Get-OperatorInput -Prompt $Prompt)
 }
 
 function Confirm-Action {
@@ -96,6 +132,12 @@ function Confirm-Action {
     }
     Write-Host ("  " + $b.DBL + [string]::new($b.DH, $w) + $b.DBR) -ForegroundColor $script:Colors.Warning
     Write-Host ""
+    if ($script:NonInteractive) {
+        # Default to NO in non-interactive mode -- scheduled checks
+        # MUST NOT silently approve a destructive prompt.
+        Write-Host "  [non-interactive: declining]" -ForegroundColor Yellow
+        return $false
+    }
     Write-Host "  Proceed? [Y/N]" -ForegroundColor $script:Colors.Highlight -NoNewline
     Write-Host ": " -NoNewline
     $answer = Read-Host
@@ -122,6 +164,11 @@ function Show-Menu {
     Write-Host "] " -NoNewline -ForegroundColor $script:Colors.Accent
     Write-Host $BackLabel -ForegroundColor $script:Colors.Error
     Write-Host ""
+    if ($script:NonInteractive) {
+        # In non-interactive mode, menus return -1 (back) so callers
+        # that wrap a flow in a menu loop fall out gracefully.
+        return -1
+    }
     while ($true) {
         Write-Host "  Select option" -ForegroundColor $script:Colors.Prompt -NoNewline
         Write-Host ": " -NoNewline
@@ -308,6 +355,7 @@ function Resolve-UserIdentity {
 }
 
 function Pause-ForUser {
+    if ($script:NonInteractive) { return }
     Write-Host ""
     Write-Host "  Press any key to continue..." -ForegroundColor $script:Colors.Info
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

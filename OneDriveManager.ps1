@@ -219,24 +219,28 @@ $rowsHtml
 </body></html>
 "@
 
-    $message = @{
-        message = @{
-            subject = "OneDrive handoff: $LeaverUPN"
-            body = @{ contentType = "HTML"; content = $body }
-            toRecipients = @(@{ emailAddress = @{ address = $ManagerUPN } })
-        }
-        saveToSentItems = $true
-    } | ConvertTo-Json -Depth 10
-
-    Invoke-Action `
-        -Description ("Send OneDrive handoff email to {0} (leaver: {1})" -f $ManagerUPN, $LeaverUPN) `
-        -ActionType 'SendOneDriveHandoffEmail' `
-        -Target @{ recipient = $ManagerUPN; leaverUpn = $LeaverUPN; siteUrl = $SiteUrl } `
-        -NoUndoReason 'Email send is irreversible.' `
-        -Action {
-            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/me/sendMail" -Body $message -ContentType 'application/json' -ErrorAction Stop | Out-Null
-            $true
-        } | Out-Null
+    if (Get-Command Send-Email -ErrorAction SilentlyContinue) {
+        Send-Email -To @($ManagerUPN) -Subject "OneDrive handoff: $LeaverUPN" -Body $body | Out-Null
+    } else {
+        # Standalone fallback: direct /me/sendMail when Notifications.ps1 not loaded.
+        $message = @{
+            message = @{
+                subject      = "OneDrive handoff: $LeaverUPN"
+                body         = @{ contentType = "HTML"; content = $body }
+                toRecipients = @(@{ emailAddress = @{ address = $ManagerUPN } })
+            }
+            saveToSentItems = $true
+        } | ConvertTo-Json -Depth 10
+        Invoke-Action `
+            -Description ("Send OneDrive handoff email to {0} (leaver: {1})" -f $ManagerUPN, $LeaverUPN) `
+            -ActionType 'SendOneDriveHandoffEmail' `
+            -Target @{ recipient = $ManagerUPN; leaverUpn = $LeaverUPN; siteUrl = $SiteUrl } `
+            -NoUndoReason 'Email send is irreversible.' `
+            -Action {
+                Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/me/sendMail" -Body $message -ContentType 'application/json' -ErrorAction Stop | Out-Null
+                $true
+            } | Out-Null
+    }
 }
 
 function Send-OffboardManagerSummary {
@@ -267,15 +271,18 @@ function Send-OffboardManagerSummary {
 <p style='color:#666;font-size:12px'>Sent automatically by M365 Manager.</p>
 </body></html>
 "@
+    if (Get-Command Send-Email -ErrorAction SilentlyContinue) {
+        return [bool] (Send-Email -To @($ManagerUPN) -Subject "Offboard complete: $LeaverUPN" -Body $body)
+    }
+    # Standalone fallback when Notifications.ps1 isn't loaded.
     $message = @{
         message = @{
-            subject = "Offboard complete: $LeaverUPN"
-            body = @{ contentType = "HTML"; content = $body }
+            subject      = "Offboard complete: $LeaverUPN"
+            body         = @{ contentType = "HTML"; content = $body }
             toRecipients = @(@{ emailAddress = @{ address = $ManagerUPN } })
         }
         saveToSentItems = $true
     } | ConvertTo-Json -Depth 10
-
     return Invoke-Action `
         -Description ("Send offboard summary to manager {0} (leaver: {1})" -f $ManagerUPN, $LeaverUPN) `
         -ActionType 'SendOffboardSummary' `

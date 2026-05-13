@@ -76,7 +76,8 @@ $modules = @(
     "Reports.ps1","eDiscovery.ps1","GroupManager.ps1",
     "AuditViewer.ps1","Undo.ps1","SignInLookup.ps1","UnifiedAuditLog.ps1",
     "MFAManager.ps1","OneDriveManager.ps1","TeamsManager.ps1","SharePoint.ps1",
-    "GuestUsers.ps1","AIAssistant.ps1"
+    "GuestUsers.ps1","LicenseOptimizer.ps1","Scheduler.ps1","BreakGlass.ps1",
+    "Notifications.ps1","AIAssistant.ps1"
 )
 
 foreach ($mod in $modules) {
@@ -207,6 +208,8 @@ function Start-M365Admin {
             "Teams Management...",
             "SharePoint...",
             "Guest Users...",
+            "License & Cost...",
+            "Scheduled Health Checks...",
             "Switch Tenant"
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
 
@@ -230,8 +233,10 @@ function Start-M365Admin {
             16 { Start-TeamsMenu }
             17 { Start-SharePointMenu }
             18 { Start-GuestUsersMenu }
+            19 { Start-LicenseOptimizerMenu }
+            20 { Start-SchedulerMenu }
             99 { Start-AIAssistant }
-            19 {
+            21 {
                 Write-Host ""
                 if (Confirm-Action "Disconnect ALL sessions and switch tenant?") {
                     Reset-AllSessions

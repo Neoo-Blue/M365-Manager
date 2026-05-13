@@ -1,0 +1,26 @@
+{
+  "_comment": "Placeholder list prices in USD per user per month. Override these with your tenant's actual EA/MCA pricing -- the values shipped here are NOT a quote, just sensible defaults for the savings-estimate dashboard. Run Get-MgSubscribedSku for the exact SkuPartNumber values to use as keys.",
+  "_comment_currency": "All values in USD/user/month. Change the keys (e.g. EUR/GBP) only by updating the dashboard rendering text; the math is currency-agnostic.",
+  "_comment_override": "To use real prices, copy this file to templates/license-prices.json (already the default path) and edit. The dashboard surfaces both 'list' and 'estimated' so it's clear when an override is in effect.",
+
+  "SPE_E5":              57.00,
+  "SPE_E3":              36.00,
+  "ENTERPRISEPREMIUM":   38.00,
+  "ENTERPRISEPACK":      23.00,
+  "STANDARDPACK":        10.00,
+  "OFFICESUBSCRIPTION":  12.00,
+  "POWER_BI_PRO":        10.00,
+  "POWER_BI_PREMIUM_PER_USER": 20.00,
+  "PROJECT_P1":          10.00,
+  "PROJECT_P3":          30.00,
+  "VISIOCLIENT":         15.00,
+  "EMS":                 10.85,
+  "EMSPREMIUM":          14.80,
+  "INTUNE_A":             6.00,
+  "MCOEV":                8.00,
+  "MCOMEETADV":           4.00,
+  "FLOW_FREE":            0.00,
+  "M365_F1":              2.25,
+  "M365_F3":              8.00,
+  "SPB":                 22.00
+}
