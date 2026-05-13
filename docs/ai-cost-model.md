@@ -77,9 +77,12 @@ The tracker fires once per crossing per month at the 50% / `AlertAtPct`
 - Stamps the threshold in `monthly.json.alerted` so it doesn't re-fire.
 
 The session shop floor still works -- this is a softer cousin of a
-hard budget cap. If you want a hard cap, wire `Test-AIBudgetCap`
-into your pre-call hook and refuse to call `Invoke-AIChat` past the
-threshold.
+hard budget cap. A true hard cap (refuse to call `Invoke-AIChat`
+past the threshold) is not implemented today; the design intent
+is that operators see the cumulative warning, react to it, and
+either switch model or stop. Future work could add a guard at
+the top of `Invoke-AIChat` that consults
+`Add-AICostEvent`'s return value before the call.
 
 ## Commands
 
