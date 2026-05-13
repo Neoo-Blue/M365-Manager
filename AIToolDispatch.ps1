@@ -251,6 +251,32 @@ function Invoke-AIToolImpl {
         default {
             $cmd = Get-Command $ToolName -ErrorAction SilentlyContinue
             if (-not $cmd) { throw "No cmdlet named '$ToolName' is currently loaded." }
+            # Pre-merge fix: when the catalog says wrapInInvokeAction=true,
+            # wrap the default-branch call in Invoke-Action so destructive
+            # SDK / Exchange cmdlets (Remove-MgGroupMember,
+            # Revoke-MgUserSignInSession, Set-MailboxAutoReplyConfiguration,
+            # Remove-MailboxPermission, Update-MgUser,
+            # Remove-DistributionGroupMember, etc.) get a proper EXEC audit
+            # line with actionType + noUndoReason rather than just an
+            # AIToolCall line. Custom functions that already wrap internally
+            # (Remove-Guest, Remove-AllAuthMethods, Revoke-OneDriveAccess,
+            # Remove-UserFromTeam, Set-TeamOwnership, New-TemporaryAccessPass)
+            # still wrap themselves -- double-wrapping is harmless because
+            # Invoke-Action's PREVIEW short-circuit + audit entries
+            # idempotently dedupe by entryId.
+            if ($ToolDef.wrapInInvokeAction -and (Get-Command Invoke-Action -ErrorAction SilentlyContinue)) {
+                $targetHash = @{}
+                foreach ($k in $Params.Keys) { $targetHash[$k] = $Params[$k] }
+                return (Invoke-Action `
+                    -Description ("AI: {0} {1}" -f $ToolName, (($Params | ConvertTo-Json -Compress -Depth 4))) `
+                    -ActionType ("AI:" + $ToolName) `
+                    -Target $targetHash `
+                    -NoUndoReason ("AI-invoked '{0}' has no curated reverse recipe; manual reversal required." -f $ToolName) `
+                    -Action {
+                        & $ToolName @splat
+                        $true
+                    })
+            }
             return (& $ToolName @splat)
         }
     }

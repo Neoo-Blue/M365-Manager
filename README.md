@@ -350,10 +350,14 @@ forensics work cleanly.
 - **Per-tenant configuration overrides** —
   `Get-EffectiveConfig -Key <name>` resolves a value through
   global config → `<stateDir>/tenant-overrides/<name>.json` →
-  `$env:M365MGR_<KEY>` → CLI flag. Canonical override keys listed
-  in `$script:TenantOverridableKeys`; AI budget + alert pct +
-  stale-guest threshold are wired today, the rest are tracked for
-  mechanical conversion. See [docs/tenant-overrides.md](docs/tenant-overrides.md).
+  `$env:M365MGR_<KEY>` → CLI flag. Canonical override keys
+  catalog'd in `$script:TenantOverridableKeys` (13 keys).
+  **3 are wired through `Get-EffectiveConfig` today**
+  (`AI.MonthlyBudgetUsd`, `AI.AlertAtPct`, `StaleGuestDays`);
+  the remaining 10 (notification recipients, OneDrive retention,
+  default role template, license prices, etc.) are tracked for
+  mechanical conversion in a follow-up — their consuming modules
+  still read `$Config` directly. See [docs/tenant-overrides.md](docs/tenant-overrides.md).
 
 New PowerShell entry points:
 
