@@ -1,0 +1,36 @@
+[
+  {
+    "_comment": "Example registry. Copy to <stateDir>/tenants.json and edit. TenantId values below are placeholders; replace with real Azure AD tenant GUIDs. Do NOT commit real tenantIds to public repos -- they are not secrets per se but they fingerprint your customers.",
+    "name": "Contoso",
+    "tenantId": "00000000-0000-0000-0000-000000000001",
+    "primaryDomain": "contoso.onmicrosoft.com",
+    "spoAdminUrl": "https://contoso-admin.sharepoint.com",
+    "credentialRef": "tenant-contoso",
+    "tags": ["customer","prod"],
+    "lastUsed": null,
+    "notes": "Cert+thumbprint app-only. Primary IT contact: bob@contoso.com",
+    "createdUtc": "2026-05-12T18:30:00Z"
+  },
+  {
+    "name": "Acme Manufacturing",
+    "tenantId": "00000000-0000-0000-0000-000000000002",
+    "primaryDomain": "acme.onmicrosoft.com",
+    "spoAdminUrl": "https://acme-admin.sharepoint.com",
+    "credentialRef": null,
+    "tags": ["customer","staging"],
+    "lastUsed": null,
+    "notes": "Interactive auth -- this customer hasn't approved an app reg yet.",
+    "createdUtc": "2026-05-12T18:30:00Z"
+  },
+  {
+    "name": "Internal IT",
+    "tenantId": "00000000-0000-0000-0000-000000000003",
+    "primaryDomain": "fabrikam.com",
+    "spoAdminUrl": null,
+    "credentialRef": null,
+    "tags": ["internal"],
+    "lastUsed": null,
+    "notes": "Our own tenant -- used for development and dogfooding.",
+    "createdUtc": "2026-05-12T18:30:00Z"
+  }
+]

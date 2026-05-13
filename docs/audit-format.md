@@ -15,7 +15,7 @@ The session audit log under `%LOCALAPPDATA%\M365Manager\audit\session-*.log` (Wi
 | `target`       | object   | usually | Free-form hashtable of operands. Keys like `userUpn`, `userId`, `groupId`, `groupName`, `skuId`, `skuPart`, `dlIdentity`, `mailbox`, `identity` are stable contract for downstream tooling. |
 | `result`       | string   | yes     | `success`, `failure`, `preview`, `info`. |
 | `error`        | string   | when failure | Exception message captured by `Invoke-Action`. |
-| `tenant`       | string   | when known | Tenant domain or id from `$script:SessionState`. |
+| `tenant`       | object   | when known | **Phase 6:** structured hashtable `{ name; id; domain; mode }` from `$script:SessionState`. `mode` is `Direct`, `Partner`, or `Profile`. Legacy entries (Phase 1-5) carry this field as a single string; `AuditViewer.ps1`'s filter handles both shapes via `Filter.Tenant` substring match. |
 | `session`      | int      | yes     | OS PID of the M365 Manager process that wrote the line. |
 | `reverse`      | object   | optional | `{ type, description, target }` describing the inverse operation. `null` when the operation has no curated reverse. |
 | `noUndoReason` | string   | optional | Human-readable explanation of why this entry is non-reversible. Set on destructive operations (user / mailbox / group deletion, session revocation, MFA method revocation). |
