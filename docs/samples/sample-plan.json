@@ -1,0 +1,56 @@
+{
+  "goal": "Offboard alice@contoso.com (transfer OneDrive to manager, convert mailbox to shared, remove licenses)",
+  "estimatedDurationSec": 90,
+  "destructiveStepCount": 5,
+  "failureMode": "stop",
+  "steps": [
+    {
+      "id": 1,
+      "description": "Reset password to a long random value and revoke active sessions",
+      "tool": "Reset-UserPassword",
+      "params": { "UPN": "alice@contoso.com", "Random": true, "RevokeSignIns": true },
+      "destructive": true,
+      "dependsOn": []
+    },
+    {
+      "id": 2,
+      "description": "Convert mailbox to Shared so it stops counting against licenses",
+      "tool": "Convert-MailboxShared",
+      "params": { "UPN": "alice@contoso.com" },
+      "destructive": true,
+      "dependsOn": [1]
+    },
+    {
+      "id": 3,
+      "description": "Set forwarding to bob@contoso.com (Alice's manager) for 30 days",
+      "tool": "Set-MailboxForwarding",
+      "params": { "UPN": "alice@contoso.com", "ForwardTo": "bob@contoso.com", "ExpiresDays": 30 },
+      "destructive": false,
+      "dependsOn": [2]
+    },
+    {
+      "id": 4,
+      "description": "Transfer Alice's OneDrive ownership to bob@contoso.com",
+      "tool": "Transfer-OneDriveOwnership",
+      "params": { "FromUPN": "alice@contoso.com", "ToUPN": "bob@contoso.com" },
+      "destructive": true,
+      "dependsOn": [1]
+    },
+    {
+      "id": 5,
+      "description": "Remove all assigned licenses",
+      "tool": "Remove-UserLicenses",
+      "params": { "UPN": "alice@contoso.com" },
+      "destructive": true,
+      "dependsOn": [2, 4]
+    },
+    {
+      "id": 6,
+      "description": "Remove Alice from all security and distribution groups",
+      "tool": "Remove-UserFromAllGroups",
+      "params": { "UPN": "alice@contoso.com" },
+      "destructive": true,
+      "dependsOn": [1]
+    }
+  ]
+}

@@ -310,11 +310,72 @@ Severity routing in `Send-Notification`:
 
 The three Phase 3 notifiers (`Send-OneDriveHandoffSummary`, `Send-OffboardManagerSummary`, `Send-GuestRecertEmail`) all delegate to `Send-Email` when `Notifications.ps1` is loaded, with a Get-Command-guarded fallback to the original `/me/sendMail` path. This means a tenant that hasn't configured the Notifications block yet still gets the same emails — they just don't honor `DryRunNotifications`.
 
+## AI v2 (Phase 5)
+
+Phase 5 turns the chat assistant from a regex-driven proposer into a
+provider-native tool caller with structured planning, persistent
+sessions, cost tracking, and the polish that makes day-to-day use
+sane.
+
+- **Native tool calling** — Mark proposes tools by name from
+  `ai-tools/*.json`, the operator approves Y / A / N / Q, and the
+  dispatcher runs them via `Invoke-Action` (so PREVIEW + undo + audit
+  still apply). The regex `RUN:` path stays as a fallback for Ollama
+  models that lack tool support but logs a deprecation warning on
+  first use. See [docs/ai-tools.md](docs/ai-tools.md).
+- **Multi-step plans** — for 3+ tool calls (configurable) Mark must
+  submit a structured plan via the `submit_plan` meta-tool. The
+  operator approves the whole thing (`[A]` all / `[S]` step-by-step /
+  `[E]` edit / `[R]` reject) before any step runs. Topological
+  execution honors `dependsOn`; `failureMode: ask` opens a revise
+  loop. See [docs/ai-planning.md](docs/ai-planning.md) and a sample
+  in [docs/samples/sample-plan.json](docs/samples/sample-plan.json).
+- **Cost tracking** — token usage from every call lands in
+  `<stateDir>/ai-cost/events-YYYY-MM.jsonl` priced against
+  `templates/ai-prices.json`. `/cost` shows session totals, `/costs`
+  rolls up 6 months and the last 7 days; `MonthlyBudgetUsd` +
+  `AlertAtPct` trigger one-per-month threshold alerts written into
+  the audit log. See [docs/ai-cost-model.md](docs/ai-cost-model.md).
+- **Persistent chat sessions** — `/save` writes a DPAPI-encrypted
+  blob under `<stateDir>/chat-sessions/`. `/list`, `/load`,
+  `/rename`, `/delete`, `/ephemeral`, and `/export` (writes a
+  *redacted* JSON safe for sharing) round out the lifecycle. Chats
+  auto-save on `/quit` unless `/ephemeral` is on. See
+  [docs/ai-session-persistence.md](docs/ai-session-persistence.md)
+  and [docs/samples/sample-session-export.json](docs/samples/sample-session-export.json).
+- **UX polish** — real Ollama streaming (deltas print as they
+  arrive), background spinner while a cloud call is in flight,
+  tool-exec spinner during dispatch, structured rejection messages
+  with an optional operator note so the AI doesn't blindly retry,
+  `/about` diagnostic banner, `/dryrun` to toggle PREVIEW from chat.
+
+New chat commands:
+
+```
+  /help /about /tools
+  /plan /noplan         force / skip plan mode for next prompt
+  /dryrun               toggle PREVIEW mode (no tenant changes)
+  /cost /costs          cost summary / history
+  /list /load <id>      saved sessions
+  /save [title]         persist current chat
+  /rename /delete       manage sessions
+  /ephemeral            do not auto-save on quit
+  /export <id> [path]   write a redacted JSON for sharing
+  /quit                 exit (auto-saves unless /ephemeral)
+```
+
 ## Tests
 
 ```powershell
 Invoke-Pester ./tests/
 ```
+
+Phase 5 adds four more Pester suites alongside the Phase 1 / 2 / 3 / 4 ones:
+
+- `tests/AIToolDispatch.Tests.ps1` — catalog loading, JSON-Schema validation, Anthropic / OpenAI payload builders, tool-result shape.
+- `tests/AIPlanner.Tests.ps1` — plan parsing, structural validation (unknown tool / forward dep / duplicate id / meta-tool-as-step), topological order, rejection path through `Invoke-AIPlanApprovalFlow`.
+- `tests/AICostTracker.Tests.ps1` — exact/family/unknown price lookup, cost arithmetic, session running total, monthly rollup, budget-alert crossings (uses a temp `LOCALAPPDATA`).
+- `tests/AISessionStore.Tests.ps1` — save/load round-trip, title-prefix resolution, privacy-map preservation, ephemeral-mode suppression, redacted `/export` content.
 
 Phase 4 adds four more Pester suites alongside the Phase 1 / 2 / 3 ones:
 
