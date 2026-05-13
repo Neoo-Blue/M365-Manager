@@ -37,10 +37,19 @@ function Start-CalendarAccessManagement {
         $accessMap = @("Reviewer","Editor","Author","Contributor"); $ar = $accessMap[$pl]
 
         if (Confirm-Action "Grant $ar to $($tu.DisplayName) on $($owner.DisplayName) calendar?") {
-            try {
-                try { Add-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; Write-Success "Granted: $ar" }
-                catch { if ($_.Exception.Message -match "already exists") { Set-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; Write-Success "Updated to: $ar" } else { throw $_ } }
-            } catch { Write-ErrorMsg "Failed: $_" }
+            $ok = Invoke-Action -Description ("Grant {0} {1} on {2} calendar" -f $tu.UserPrincipalName, $ar, $owner.UserPrincipalName) -Action {
+                try {
+                    Add-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; $true
+                } catch {
+                    if ($_.Exception.Message -match 'already exists') {
+                        Set-MailboxFolderPermission -Identity $calId -User $tu.UserPrincipalName -AccessRights $ar -ErrorAction Stop; 'updated'
+                    } else { throw }
+                }
+            }
+            if (-not (Get-PreviewMode)) {
+                if ($ok -eq 'updated') { Write-Success "Updated to: $ar" }
+                elseif ($ok)           { Write-Success "Granted: $ar" }
+            }
         }
     } else {
         $removable = @($perms | Where-Object { $_.User.DisplayName -ne "Default" -and $_.User.DisplayName -ne "Anonymous" -and $_.User.ToString() -ne "Default" -and $_.User.ToString() -ne "Anonymous" })
@@ -49,7 +58,12 @@ function Start-CalendarAccessManagement {
         $sel = Show-MultiSelect -Title "Remove" -Options $labels
         foreach ($idx in $sel) {
             $p = $removable[$idx]; $pu = if ($p.User.DisplayName) { $p.User.DisplayName } else { $p.User.ToString() }
-            if (Confirm-Action "Remove access for '$pu'?") { try { Remove-MailboxFolderPermission -Identity $calId -User $pu -Confirm:$false -ErrorAction Stop; Write-Success "Removed." } catch { Write-ErrorMsg "$_" } }
+            if (Confirm-Action "Remove access for '$pu'?") {
+                $ok = Invoke-Action -Description ("Remove '{0}' from {1} calendar" -f $pu, $owner.UserPrincipalName) -Action {
+                    Remove-MailboxFolderPermission -Identity $calId -User $pu -Confirm:$false -ErrorAction Stop; $true
+                }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed." }
+            }
         }
     }
     Pause-ForUser

@@ -1,0 +1,14 @@
+{
+  "_comment": "EXAMPLE — minimal fallback template used when no role-specific template fits. Just an E3 license and the all-employees DL; no SGs or shared mailboxes.",
+  "name": "Default",
+  "description": "Minimal onboarding bundle for unspecified roles",
+  "usageLocation": "US",
+  "licenseSKUs": ["SPE_E3"],
+  "securityGroups": [],
+  "distributionLists": ["DL-All-Employees"],
+  "sharedMailboxes": [],
+  "teams": [],
+  "oneDrive": { "quotaGB": 1024, "provisionImmediately": true },
+  "defaults": { "Department": "", "OfficeLocation": "" },
+  "contractorExpiryDays": null
+}

@@ -56,8 +56,10 @@ function Edit-SecurityGroupMembers {
             foreach ($idx in $selected) {
                 $m = $members[$idx]
                 if (Confirm-Action "Remove '$($m.AdditionalProperties['displayName'])'?") {
-                    try { Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $m.Id -ErrorAction Stop; Write-Success "Removed." }
-                    catch { Write-ErrorMsg "Failed: $_" }
+                    $ok = Invoke-Action -Description ("Remove {0} from group '{1}'" -f $m.AdditionalProperties['userPrincipalName'], $group.DisplayName) -Action {
+                        Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $m.Id -ErrorAction Stop; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed." }
                 }
             }
         } catch { Write-ErrorMsg "Error: $_" }
@@ -76,9 +78,15 @@ function Edit-SecurityGroupProperties {
 
     $ec = Show-Menu -Title "Edit" -Options @("Change name","Change description","Change mail nickname") -BackLabel "Done"
     switch ($ec) {
-        0 { $v = Read-UserInput "New name"; if ($v -and (Confirm-Action "Rename to '$v'?")) { try { Update-MgGroup -GroupId $group.Id -DisplayName $v; Write-Success "Updated." } catch { Write-ErrorMsg "$_" } } }
-        1 { $v = Read-UserInput "New description (or 'clear')"; $sv = if ($v -eq 'clear') { "" } else { $v }; if (Confirm-Action "Update description?") { try { Update-MgGroup -GroupId $group.Id -Description $sv; Write-Success "Updated." } catch { Write-ErrorMsg "$_" } } }
-        2 { $v = Read-UserInput "New mail nickname"; if ($v -and (Confirm-Action "Change to '$v'?")) { try { Update-MgGroup -GroupId $group.Id -MailNickname $v; Write-Success "Updated." } catch { Write-ErrorMsg "$_" } } }
+        0 { $v = Read-UserInput "New name"; if ($v -and (Confirm-Action "Rename to '$v'?")) {
+                $ok = Invoke-Action -Description ("Rename group '{0}' -> '{1}'" -f $group.DisplayName, $v) -Action { Update-MgGroup -GroupId $group.Id -DisplayName $v -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Updated." } } }
+        1 { $v = Read-UserInput "New description (or 'clear')"; $sv = if ($v -eq 'clear') { "" } else { $v }; if (Confirm-Action "Update description?") {
+                $ok = Invoke-Action -Description ("Update group '{0}' description" -f $group.DisplayName) -Action { Update-MgGroup -GroupId $group.Id -Description $sv -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Updated." } } }
+        2 { $v = Read-UserInput "New mail nickname"; if ($v -and (Confirm-Action "Change to '$v'?")) {
+                $ok = Invoke-Action -Description ("Update group '{0}' mailNickname -> '{1}'" -f $group.DisplayName, $v) -Action { Update-MgGroup -GroupId $group.Id -MailNickname $v -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Updated." } } }
     }
     Pause-ForUser
 }
@@ -90,8 +98,10 @@ function Remove-SecurityGroupFlow {
     if (Confirm-Action "DELETE '$($group.DisplayName)'?") {
         $check = Read-UserInput "Type the group name to confirm"
         if ($check -eq $group.DisplayName) {
-            try { Remove-MgGroup -GroupId $group.Id -ErrorAction Stop; Write-Success "Deleted." }
-            catch { Write-ErrorMsg "Failed: $_" }
+            $ok = Invoke-Action -Description ("DELETE security group '{0}'" -f $group.DisplayName) -Action {
+                Remove-MgGroup -GroupId $group.Id -ErrorAction Stop; $true
+            }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Deleted." }
         } else { Write-Warn "Name mismatch. Cancelled." }
     }
     Pause-ForUser
@@ -135,8 +145,15 @@ function Add-MembersLoop {
                 }
             }
             if (Confirm-Action "Add '$($tu.DisplayName)' to '$GroupName'?") {
-                New-MgGroupMember -GroupId $GroupId -DirectoryObjectId $tu.Id -ErrorAction Stop; Write-Success "Added."
+                $ok = Invoke-Action -Description ("Add {0} to security group '{1}'" -f $tu.UserPrincipalName, $GroupName) -Action {
+                    try { New-MgGroupMember -GroupId $GroupId -DirectoryObjectId $tu.Id -ErrorAction Stop; $true }
+                    catch { if ($_.Exception.Message -match 'already exist') { 'already' } else { throw } }
+                }
+                if (-not (Get-PreviewMode)) {
+                    if ($ok -eq 'already') { Write-Warn "Already a member." }
+                    elseif ($ok)           { Write-Success "Added." }
+                }
             }
-        } catch { if ($_.Exception.Message -match "already exist") { Write-Warn "Already a member." } else { Write-ErrorMsg "Failed: $_" } }
+        } catch { Write-ErrorMsg "Failed: $_" }
     }
 }

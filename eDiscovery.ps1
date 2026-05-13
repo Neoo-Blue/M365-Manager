@@ -145,12 +145,16 @@ function New-QuickSearch {
             ExchangeLocation = if ($locations) { $mailboxes } else { "All" }
         }
 
-        New-ComplianceSearch @searchParams -ErrorAction Stop | Out-Null
-        Write-Success "Search '$name' created."
+        $ok = Invoke-Action -Description ("Create compliance search '{0}'" -f $name) -Action {
+            New-ComplianceSearch @searchParams -ErrorAction Stop | Out-Null; $true
+        }
+        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Search '$name' created." }
 
         Write-InfoMsg "Starting search..."
-        Invoke-ComplianceSearchStart -SearchName $name | Out-Null
-        Write-InfoMsg "Use 'View search results' to check status and see results."
+        $started = Invoke-Action -Description ("Start compliance search '{0}'" -f $name) -Action {
+            Invoke-ComplianceSearchStart -SearchName $name | Out-Null; $true
+        }
+        if ($started -and -not (Get-PreviewMode)) { Write-InfoMsg "Use 'View search results' to check status and see results." }
     } catch {
         Write-ErrorMsg "Failed to create search: $_"
     }
@@ -245,10 +249,10 @@ function View-SearchResults {
         switch ($action) {
             0 {
                 if (Confirm-Action "Create a preview action for '$($s.Name)'?") {
-                    try {
-                        New-ComplianceSearchAction -SearchName $s.Name -Preview -ErrorAction Stop | Out-Null
-                        Write-Success "Preview action created. Check status with 'View export status'."
-                    } catch { Write-ErrorMsg "Preview failed: $_" }
+                    $ok = Invoke-Action -Description ("Create preview action for compliance search '{0}'" -f $s.Name) -Action {
+                        New-ComplianceSearchAction -SearchName $s.Name -Preview -ErrorAction Stop | Out-Null; $true
+                    }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Preview action created. Check status with 'View export status'." }
                 }
             }
             1 {
@@ -261,18 +265,23 @@ function View-SearchResults {
                 if ($exportFormat -ne -1) {
                     $formatMap = @{ 0 = "SoftDelete"; 1 = "SingleMsg"; 2 = "HardDelete" }
                     if (Confirm-Action "Create export action for '$($s.Name)'?") {
-                        try {
-                            New-ComplianceSearchAction -SearchName $s.Name -Export -Format $formatMap[$exportFormat] -ErrorAction Stop | Out-Null
+                        $fmt = $formatMap[$exportFormat]
+                        $ok = Invoke-Action -Description ("Create export action ({0}) for compliance search '{1}'" -f $fmt, $s.Name) -Action {
+                            New-ComplianceSearchAction -SearchName $s.Name -Export -Format $fmt -ErrorAction Stop | Out-Null; $true
+                        }
+                        if ($ok -and -not (Get-PreviewMode)) {
                             Write-Success "Export action created."
                             Write-InfoMsg "Download the export from the Compliance portal:"
                             Write-InfoMsg "  https://compliance.microsoft.com > Content Search > Export tab"
-                        } catch { Write-ErrorMsg "Export failed: $_" }
+                        }
                     }
                 }
             }
             2 {
                 if (Confirm-Action "Re-run search '$($s.Name)'?") {
-                    Invoke-ComplianceSearchStart -SearchName $s.Name | Out-Null
+                    Invoke-Action -Description ("Re-run compliance search '{0}'" -f $s.Name) -Action {
+                        Invoke-ComplianceSearchStart -SearchName $s.Name | Out-Null; $true
+                    } | Out-Null
                 }
             }
             3 { Show-ExportStatus }
@@ -290,15 +299,19 @@ function Remove-SearchFlow {
     if (Confirm-Action "DELETE search '$($search.Name)'?") {
         $check = Read-UserInput "Type the search name to confirm"
         if ($check -eq $search.Name) {
-            try {
-                # Remove any actions first
+            $actions = @()
+            if (-not (Get-PreviewMode)) {
                 $actions = @(Get-ComplianceSearchAction -ErrorAction SilentlyContinue | Where-Object { $_.SearchName -eq $search.Name })
-                foreach ($a in $actions) {
-                    Remove-ComplianceSearchAction -Identity $a.Name -Confirm:$false -ErrorAction SilentlyContinue
-                }
-                Remove-ComplianceSearch -Identity $search.Name -Confirm:$false -ErrorAction Stop
-                Write-Success "Search '$($search.Name)' deleted."
-            } catch { Write-ErrorMsg "Failed: $_" }
+            }
+            foreach ($a in $actions) {
+                Invoke-Action -Description ("Remove compliance-search action '{0}'" -f $a.Name) -Action {
+                    Remove-ComplianceSearchAction -Identity $a.Name -Confirm:$false -ErrorAction Stop; $true
+                } | Out-Null
+            }
+            $ok = Invoke-Action -Description ("DELETE compliance search '{0}'" -f $search.Name) -Action {
+                Remove-ComplianceSearch -Identity $search.Name -Confirm:$false -ErrorAction Stop; $true
+            }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Search '$($search.Name)' deleted." }
         } else { Write-Warn "Name mismatch. Cancelled." }
     }
     Pause-ForUser
@@ -630,12 +643,16 @@ function New-CaseSearch {
         if ($exLoc) { $params["ExchangeLocation"] = $exLoc }
         if ($spLoc) { $params["SharePointLocation"] = $spLoc }
 
-        New-ComplianceSearch @params -ErrorAction Stop | Out-Null
-        Write-Success "Search '$name' created in case '$($case.Name)'."
+        $ok = Invoke-Action -Description ("Create case search '{0}' in case '{1}'" -f $name, $case.Name) -Action {
+            New-ComplianceSearch @params -ErrorAction Stop | Out-Null; $true
+        }
+        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Search '$name' created in case '$($case.Name)'." }
 
         $runNow = Read-UserInput "Start search now? (y/n)"
         if ($runNow -match '^[Yy]') {
-            Invoke-ComplianceSearchStart -SearchName $name | Out-Null
+            Invoke-Action -Description ("Start compliance search '{0}'" -f $name) -Action {
+                Invoke-ComplianceSearchStart -SearchName $name | Out-Null; $true
+            } | Out-Null
         }
     } catch { Write-ErrorMsg "Failed: $_" }
     Pause-ForUser
@@ -669,7 +686,9 @@ function Run-CaseSearch {
     if ($null -eq $search) { Pause-ForUser; return }
 
     if (Confirm-Action "Run search '$($search.Name)'?") {
-        Invoke-ComplianceSearchStart -SearchName $search.Name | Out-Null
+        Invoke-Action -Description ("Run compliance search '{0}'" -f $search.Name) -Action {
+            Invoke-ComplianceSearchStart -SearchName $search.Name | Out-Null; $true
+        } | Out-Null
     }
     Pause-ForUser
 }
@@ -680,10 +699,19 @@ function Remove-CaseSearchFlow {
 
     if (Confirm-Action "DELETE search '$($search.Name)'?") {
         try {
-            $actions = @(Get-ComplianceSearchAction -ErrorAction SilentlyContinue | Where-Object { $_.SearchName -eq $search.Name })
-            foreach ($a in $actions) { Remove-ComplianceSearchAction -Identity $a.Name -Confirm:$false -ErrorAction SilentlyContinue }
-            Remove-ComplianceSearch -Identity $search.Name -Confirm:$false -ErrorAction Stop
-            Write-Success "Deleted."
+            $actions = @()
+            if (-not (Get-PreviewMode)) {
+                $actions = @(Get-ComplianceSearchAction -ErrorAction SilentlyContinue | Where-Object { $_.SearchName -eq $search.Name })
+            }
+            foreach ($a in $actions) {
+                Invoke-Action -Description ("Remove compliance-search action '{0}'" -f $a.Name) -Action {
+                    Remove-ComplianceSearchAction -Identity $a.Name -Confirm:$false -ErrorAction Stop; $true
+                } | Out-Null
+            }
+            $ok = Invoke-Action -Description ("DELETE compliance search '{0}'" -f $search.Name) -Action {
+                Remove-ComplianceSearch -Identity $search.Name -Confirm:$false -ErrorAction Stop; $true
+            }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Deleted." }
         } catch { Write-ErrorMsg "Failed: $_" }
     }
     Pause-ForUser

@@ -43,9 +43,18 @@ function Edit-SharedMailboxAccess {
             foreach ($idx in $sel) {
                 $p = $perms[$idx]
                 if (Confirm-Action "Remove all permissions for '$($p.User)'?") {
-                    try { Remove-MailboxPermission -Identity $box.PrimarySmtpAddress -User $p.User -AccessRights FullAccess -InheritanceType All -Confirm:$false -ErrorAction Stop; Write-Success "Full Access removed." } catch { Write-ErrorMsg "$_" }
-                    try { Remove-RecipientPermission -Identity $box.PrimarySmtpAddress -Trustee $p.User -AccessRights SendAs -Confirm:$false -ErrorAction SilentlyContinue; Write-Success "Send As removed." } catch {}
-                    try { Set-Mailbox -Identity $box.PrimarySmtpAddress -GrantSendOnBehalfTo @{Remove=$p.User} -ErrorAction SilentlyContinue; Write-Success "Send on Behalf removed." } catch {}
+                    $ok1 = Invoke-Action -Description ("Revoke FullAccess for {0} on '{1}'" -f $p.User, $box.PrimarySmtpAddress) -Action {
+                        Remove-MailboxPermission -Identity $box.PrimarySmtpAddress -User $p.User -AccessRights FullAccess -InheritanceType All -Confirm:$false -ErrorAction Stop; $true
+                    }
+                    if ($ok1 -and -not (Get-PreviewMode)) { Write-Success "Full Access removed." }
+                    $ok2 = Invoke-Action -Description ("Revoke SendAs for {0} on '{1}'" -f $p.User, $box.PrimarySmtpAddress) -Action {
+                        Remove-RecipientPermission -Identity $box.PrimarySmtpAddress -Trustee $p.User -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true
+                    }
+                    if ($ok2 -and -not (Get-PreviewMode)) { Write-Success "Send As removed." }
+                    $ok3 = Invoke-Action -Description ("Revoke SendOnBehalf for {0} on '{1}'" -f $p.User, $box.PrimarySmtpAddress) -Action {
+                        Set-Mailbox -Identity $box.PrimarySmtpAddress -GrantSendOnBehalfTo @{Remove=$p.User} -ErrorAction Stop; $true
+                    }
+                    if ($ok3 -and -not (Get-PreviewMode)) { Write-Success "Send on Behalf removed." }
                 }
             }
         } catch { Write-ErrorMsg "$_" }
@@ -61,14 +70,31 @@ function Edit-SharedMailboxProperties {
     Write-StatusLine "Forwarding" $(if ($box.ForwardingSmtpAddress) { $box.ForwardingSmtpAddress } else { "(none)" }) "White"
 
     $ec = Show-Menu -Title "Edit" -Options @("Change name","Add email alias","Remove email alias","Set forwarding","Remove forwarding","Toggle hidden","Set auto-reply") -BackLabel "Done"
+    $boxId = $box.PrimarySmtpAddress
     switch ($ec) {
-        0 { $v = Read-UserInput "New name"; if ($v -and (Confirm-Action "Rename?")) { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -DisplayName $v; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
-        1 { $v = Read-UserInput "New alias email"; if ($v -and (Confirm-Action "Add '$v'?")) { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -EmailAddresses @{Add="smtp:$v"}; Write-Success "Added." } catch { Write-ErrorMsg "$_" } } }
-        2 { $a = @($box.EmailAddresses | Where-Object { $_ -like "smtp:*" }); if ($a.Count -eq 0) { Write-InfoMsg "No aliases." } else { $al = $a | ForEach-Object { $_ -replace '^smtp:','' }; $s = Show-MultiSelect -Title "Remove" -Options $al; foreach ($i in $s) { if (Confirm-Action "Remove '$($al[$i])'?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -EmailAddresses @{Remove=$a[$i]}; Write-Success "Removed." } catch { Write-ErrorMsg "$_" } } } } }
-        3 { $v = Read-UserInput "Forward to"; $kc = Show-Menu -Title "Keep copy?" -Options @("Yes","No") -BackLabel "Cancel"; if ($kc -ne -1 -and $v) { if (Confirm-Action "Set forwarding?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -ForwardingSmtpAddress "smtp:$v" -DeliverToMailboxAndForward ($kc -eq 0); Write-Success "Done." } catch { Write-ErrorMsg "$_" } } } }
-        4 { if (Confirm-Action "Remove forwarding?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -ForwardingSmtpAddress $null -DeliverToMailboxAndForward $false; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
-        5 { $nv = -not $box.HiddenFromAddressListsEnabled; if (Confirm-Action "Set hidden to $nv?") { try { Set-Mailbox -Identity $box.PrimarySmtpAddress -HiddenFromAddressListsEnabled $nv; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
-        6 { $im = Read-UserInput "Internal message"; $em = Read-UserInput "External (Enter for same)"; if ([string]::IsNullOrWhiteSpace($em)) { $em = $im }; if ($im -and (Confirm-Action "Set auto-reply?")) { try { Set-MailboxAutoReplyConfiguration -Identity $box.PrimarySmtpAddress -AutoReplyState Enabled -InternalMessage $im -ExternalMessage $em; Write-Success "Done." } catch { Write-ErrorMsg "$_" } } }
+        0 { $v = Read-UserInput "New name"; if ($v -and (Confirm-Action "Rename?")) {
+                $ok = Invoke-Action -Description ("Rename shared mailbox '{0}' -> '{1}'" -f $boxId, $v) -Action { Set-Mailbox -Identity $boxId -DisplayName $v -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
+        1 { $v = Read-UserInput "New alias email"; if ($v -and (Confirm-Action "Add '$v'?")) {
+                $ok = Invoke-Action -Description ("Add alias smtp:{0} to '{1}'" -f $v, $boxId) -Action { Set-Mailbox -Identity $boxId -EmailAddresses @{Add="smtp:$v"} -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Added." } } }
+        2 { $a = @($box.EmailAddresses | Where-Object { $_ -like "smtp:*" }); if ($a.Count -eq 0) { Write-InfoMsg "No aliases." } else { $al = $a | ForEach-Object { $_ -replace '^smtp:','' }; $s = Show-MultiSelect -Title "Remove" -Options $al; foreach ($i in $s) { if (Confirm-Action "Remove '$($al[$i])'?") {
+                $rmv = $a[$i]
+                $ok = Invoke-Action -Description ("Remove alias {0} from '{1}'" -f $rmv, $boxId) -Action { Set-Mailbox -Identity $boxId -EmailAddresses @{Remove=$rmv} -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Removed." } } } } }
+        3 { $v = Read-UserInput "Forward to"; $kc = Show-Menu -Title "Keep copy?" -Options @("Yes","No") -BackLabel "Cancel"; if ($kc -ne -1 -and $v) { if (Confirm-Action "Set forwarding?") {
+                $keepCopy = ($kc -eq 0)
+                $ok = Invoke-Action -Description ("Set forwarding on '{0}' -> {1} (keep copy: {2})" -f $boxId, $v, $keepCopy) -Action { Set-Mailbox -Identity $boxId -ForwardingSmtpAddress "smtp:$v" -DeliverToMailboxAndForward $keepCopy -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } } }
+        4 { if (Confirm-Action "Remove forwarding?") {
+                $ok = Invoke-Action -Description ("Remove forwarding from '{0}'" -f $boxId) -Action { Set-Mailbox -Identity $boxId -ForwardingSmtpAddress $null -DeliverToMailboxAndForward $false -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
+        5 { $nv = -not $box.HiddenFromAddressListsEnabled; if (Confirm-Action "Set hidden to $nv?") {
+                $ok = Invoke-Action -Description ("Set HiddenFromAddressListsEnabled = {0} on '{1}'" -f $nv, $boxId) -Action { Set-Mailbox -Identity $boxId -HiddenFromAddressListsEnabled $nv -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
+        6 { $im = Read-UserInput "Internal message"; $em = Read-UserInput "External (Enter for same)"; if ([string]::IsNullOrWhiteSpace($em)) { $em = $im }; if ($im -and (Confirm-Action "Set auto-reply?")) {
+                $ok = Invoke-Action -Description ("Enable auto-reply on '{0}'" -f $boxId) -Action { Set-MailboxAutoReplyConfiguration -Identity $boxId -AutoReplyState Enabled -InternalMessage $im -ExternalMessage $em -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Done." } } }
     }
     Pause-ForUser
 }
@@ -77,7 +103,13 @@ function Remove-SharedMailboxFlow {
     $box = Find-SharedMailbox; if ($null -eq $box) { Pause-ForUser; return }
     Write-Warn "This permanently deletes the mailbox and ALL contents!"
     if (Confirm-Action "DELETE '$($box.DisplayName)'?") {
-        $check = Read-UserInput "Type email to confirm"; if ($check -eq $box.PrimarySmtpAddress) { try { Remove-Mailbox -Identity $box.PrimarySmtpAddress -Confirm:$false; Write-Success "Deleted." } catch { Write-ErrorMsg "$_" } } else { Write-Warn "Mismatch." }
+        $check = Read-UserInput "Type email to confirm"
+        if ($check -eq $box.PrimarySmtpAddress) {
+            $ok = Invoke-Action -Description ("DELETE shared mailbox '{0}' <{1}>" -f $box.DisplayName, $box.PrimarySmtpAddress) -Action {
+                Remove-Mailbox -Identity $box.PrimarySmtpAddress -Confirm:$false -ErrorAction Stop; $true
+            }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Deleted." }
+        } else { Write-Warn "Mismatch." }
     }
     Pause-ForUser
 }
@@ -110,11 +142,18 @@ function Add-SharedMailboxAccessLoop { param([string]$Id, [string]$Name)
                 if ($f.Count -eq 0) { Write-ErrorMsg "Not found."; continue }; if ($f.Count -eq 1) { $f[0] } else {
                     $sel = Show-Menu -Title "Select" -Options ($f | ForEach-Object { "$($_.DisplayName) ($($_.UserPrincipalName))" }) -BackLabel "Cancel"; if ($sel -eq -1) { continue }; $f[$sel] } }
             $upn = $tu.UserPrincipalName
-            if (Confirm-Action "Grant Full Access to $($tu.DisplayName)?") { try { Add-MailboxPermission -Identity $Id -User $upn -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } }
+            if (Confirm-Action "Grant Full Access to $($tu.DisplayName)?") {
+                $ok = Invoke-Action -Description ("Grant {0} FullAccess on '{1}'" -f $upn, $Name) -Action { Add-MailboxPermission -Identity $Id -User $upn -AccessRights FullAccess -InheritanceType All -AutoMapping $true -ErrorAction Stop; $true }
+                if ($ok -and -not (Get-PreviewMode)) { Write-Success "Granted." }
+            }
             $pc = Show-Menu -Title "Send permissions?" -Options @("Send As","Send on Behalf","Both","None") -BackLabel "Skip"
             if ($pc -ne -1 -and $pc -ne 3) {
-                if ($pc -eq 0 -or $pc -eq 2) { if (Confirm-Action "Send As?") { try { Add-RecipientPermission -Identity $Id -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } } }
-                if ($pc -eq 1 -or $pc -eq 2) { if (Confirm-Action "Send on Behalf?") { try { Set-Mailbox -Identity $Id -GrantSendOnBehalfTo @{Add=$upn} -ErrorAction Stop; Write-Success "Granted." } catch { Write-ErrorMsg "$_" } } }
+                if ($pc -eq 0 -or $pc -eq 2) { if (Confirm-Action "Send As?") {
+                    $ok = Invoke-Action -Description ("Grant {0} SendAs on '{1}'" -f $upn, $Name) -Action { Add-RecipientPermission -Identity $Id -Trustee $upn -AccessRights SendAs -Confirm:$false -ErrorAction Stop; $true }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Granted." } } }
+                if ($pc -eq 1 -or $pc -eq 2) { if (Confirm-Action "Send on Behalf?") {
+                    $ok = Invoke-Action -Description ("Grant {0} SendOnBehalf on '{1}'" -f $upn, $Name) -Action { Set-Mailbox -Identity $Id -GrantSendOnBehalfTo @{Add=$upn} -ErrorAction Stop; $true }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "Granted." } } }
             }
         } catch { Write-ErrorMsg "$_" }
     }

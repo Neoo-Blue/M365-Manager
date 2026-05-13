@@ -69,8 +69,9 @@ if (-not $ScriptRoot) {
 # ---- Load all modules ----
 $loadErrors = @()
 $modules = @(
-    "UI.ps1","Auth.ps1","Onboard.ps1","Offboard.ps1","License.ps1",
-    "Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
+    "UI.ps1","Auth.ps1","Audit.ps1","Preview.ps1","Templates.ps1",
+    "Onboard.ps1","BulkOnboard.ps1","Offboard.ps1","BulkOffboard.ps1",
+    "License.ps1","Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
     "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
     "Reports.ps1","eDiscovery.ps1","GroupManager.ps1","AIAssistant.ps1"
 )
@@ -114,11 +115,30 @@ function Start-M365Admin {
     Clear-StartupSession
     Write-Host ""
 
+    # ---- Operating mode picker ----
+    Write-SectionHeader "Operating Mode"
+    $modeSel = Show-Menu -Title "Run this session in" -Options @(
+        "LIVE     -- changes WILL be applied to the tenant",
+        "PREVIEW  -- dry-run, no tenant changes"
+    ) -BackLabel "Quit"
+    if ($modeSel -eq -1) {
+        Write-Host ""; Write-Host "  Goodbye!" -ForegroundColor $script:Colors.Title; return
+    }
+    Set-PreviewMode -Enabled ($modeSel -eq 1)
+    if (Get-PreviewMode) {
+        Write-Warn "PREVIEW mode -- mutating cmdlets will be logged but not executed."
+    } else {
+        Write-InfoMsg "LIVE mode -- mutations will be applied."
+    }
+    Write-Host ""
+
     if (-not (Select-TenantMode)) {
         Write-Host ""
         Write-Host "  Goodbye!" -ForegroundColor $script:Colors.Title
         return
     }
+
+    Write-AuditBanner
 
     $running = $true
     while ($running) {
@@ -157,6 +177,13 @@ function Start-M365Admin {
 
         Write-Host ("  " + $b.BL + [string]::new($b.H, 58) + $b.BR) -ForegroundColor $script:Colors.Accent
 
+        # ---- Mode banner (Preview / Live) ----
+        $modeText  = if (Get-PreviewMode) { '  [ PREVIEW MODE -- dry-run, no tenant changes ]  ' } else { '  [ LIVE MODE -- changes apply to the tenant ]  ' }
+        $modeColor = if (Get-PreviewMode) { 'Yellow' } else { 'Red' }
+        Write-Host ""
+        Write-Host $modeText -ForegroundColor $modeColor
+        Write-Host ""
+
         $sel = Show-Menu -Title "Main Menu - Select a Task" -Options @(
             "Onboard New User",
             "Offboard User",
@@ -170,6 +197,8 @@ function Start-M365Admin {
             "Group Membership Manager",
             "Reporting",
             "eDiscovery",
+            "Bulk Onboard from CSV...",
+            "Bulk Offboard from CSV...",
             "Switch Tenant"
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
 
@@ -186,8 +215,10 @@ function Start-M365Admin {
             9  { Start-GroupManagerMenu }
             10 { Start-ReportingMenu }
             11 { Start-eDiscoveryMenu }
+            12 { Start-BulkOnboard }
+            13 { Start-BulkOffboard }
             99 { Start-AIAssistant }
-            12 {
+            14 {
                 Write-Host ""
                 if (Confirm-Action "Disconnect ALL sessions and switch tenant?") {
                     Reset-AllSessions

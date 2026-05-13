@@ -62,6 +62,55 @@ Configure from the assistant chat with `/privacy`:
 
 The audit directory is created with mode `0700` on non-Windows and inherits user-only NTFS ACLs from `%LOCALAPPDATA%` on Windows.
 
+## Onboarding role templates
+
+Drop a `role-<slug>.json` into `templates/` and it shows up in the onboarding picker automatically. Five examples ship in the repo (`sales-rep`, `engineer`, `exec-assistant`, `contractor`, `default`); see `templates/README.md` for the schema and `Get-MgSubscribedSku` / `Get-MgGroup` for finding the right values for your tenant.
+
+When the single-user onboarding asks "Apply a role-based onboarding template?", choosing one skips the file/manual/replicate picker — the operator is prompted only for the user-specific fields (name, UPN, optional manager and job title) and the template fills the rest. Unknown SKUs / groups / DLs / shared mailboxes are skipped with a per-item warning; the onboard continues. Set `contractorExpiryDays` to record `employeeLeaveDateTime` automatically (auto-disable on that date still needs Entra lifecycle workflows).
+
+## Bulk operations
+
+Two CSV-driven workflows, available from the main menu and as scriptable entry points:
+
+```powershell
+Invoke-BulkOnboard  -Path users.csv   [-Template <name>] [-WhatIf]
+Invoke-BulkOffboard -Path leavers.csv [-WhatIf]
+```
+
+Both follow the same pattern: validate the whole CSV first (required fields, UPN format, duplicate UPNs, unknown templates), show errors per row, then ask for confirmation before any tenant call. Per-row failures don't halt the batch — every row gets a line in a result CSV written next to the input (`bulk-onboard-<ts>.csv` / `bulk-offboard-<ts>.csv`) with `Status` ∈ `Success | PartialSuccess | Failed | Preview` and a `Reason` column.
+
+Samples to copy from: `templates/bulk-onboard-sample.csv`, `templates/bulk-offboard-sample.csv`. Onboard CSV column reference:
+
+| Column | Required | Notes |
+|---|---|---|
+| `FirstName` / `LastName` | yes | |
+| `DisplayName` | no | Defaults to `FirstName LastName`. |
+| `UserPrincipalName` (or `UPN`) | yes | Used as both sign-in name and primary email. |
+| `Manager` | no | UPN of an existing user; skipped with a warning if not found. |
+| `Department`, `JobTitle`, `OfficeLocation`, `UsageLocation` | mixed | `UsageLocation` is required (template fills it if blank). |
+| `Template` | no | Role-template key (`sales-rep`, `engineer`, ...). Row value wins over `-Template` flag. |
+| `Password` | no | If blank, a 16-char password is generated. Either way, ForceChangePasswordNextSignIn is set. |
+| `IssueTAP` | no | `true` / `yes` / `1` issues a 60-minute single-use Temporary Access Pass via `/authentication/temporaryAccessPassMethods`. |
+
+Offboard CSV columns: `UserPrincipalName, ForwardTo, ConvertToShared, HandoffOneDriveTo, RemoveFromAllGroups, Reason`. `HandoffOneDriveTo` is validated and surfaced in the result CSV but the actual SPO transfer is a Phase 3 deliverable — for now the column being set logs a TODO line and the rest of the row continues.
+
+## Preview / dry-run mode
+
+On launch the tool asks `LIVE` vs `PREVIEW`. Every menu refresh paints a colored badge above the main menu so the mode is visible at a glance — red `[LIVE]` or yellow `[PREVIEW]`. The choice is session-scoped; switch via `Switch Tenant` (which re-shows the picker) or by quitting and re-launching.
+
+In `PREVIEW` mode, every state-mutating call is routed through `Invoke-Action` (see `Preview.ps1`). The cmdlet does **not** run; instead a `[PREVIEW] Would: <description>` line is written to the console and to the per-session audit log. Stub return values let downstream code (e.g. anything that reads `$newUser.Id`) keep working. The pattern at every call site is:
+
+```powershell
+$ok = Invoke-Action -Description "Block sign-in for $upn" -Action {
+    Update-MgUser -UserId $user.Id -AccountEnabled:$false -ErrorAction Stop; $true
+}
+if ($ok -and -not (Get-PreviewMode)) { Write-Success "Sign-in blocked." }
+```
+
+Bulk operations accept `-WhatIf` independently — it flips `$script:PreviewMode` to `$true` for the duration of that single call (try/finally restores it on return) so a one-off dry-run does not disturb the rest of the session.
+
+Audit log location: `%LOCALAPPDATA%\M365Manager\audit\session-<ts>-<pid>.log` (Windows) or `~/.m365manager/audit/session-<ts>-<pid>.log` (POSIX, mode `0700`). Every line is tagged `MODE=PREVIEW` or `MODE=LIVE` — grep one or the other to filter. A sample preview log shape is at `docs/preview-sample.log`.
+
 ## Tests
 
 ```powershell

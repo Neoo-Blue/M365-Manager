@@ -107,12 +107,10 @@ function Start-LicenseManagement {
                     continue
                 }
                 if (Confirm-Action "Assign '$(Get-SkuFriendlyName $sku.SkuPartNumber)' to $($user.UserPrincipalName)?") {
-                    try {
-                        Set-MgUserLicense -UserId $user.Id -AddLicenses @(@{SkuId = $sku.SkuId}) -RemoveLicenses @() -ErrorAction Stop
-                        Write-Success "$(Get-SkuFriendlyName $sku.SkuPartNumber) assigned."
-                    } catch {
-                        Write-ErrorMsg "Failed to assign: $_"
+                    $ok = Invoke-Action -Description ("Assign license '{0}' to {1}" -f $sku.SkuPartNumber, $user.UserPrincipalName) -Action {
+                        Set-MgUserLicense -UserId $user.Id -AddLicenses @(@{SkuId = $sku.SkuId}) -RemoveLicenses @() -ErrorAction Stop; $true
                     }
+                    if ($ok -and -not (Get-PreviewMode)) { Write-Success "$(Get-SkuFriendlyName $sku.SkuPartNumber) assigned." }
                 }
             }
         } catch { Write-ErrorMsg "License error: $_" }
@@ -168,16 +166,22 @@ function Start-LicenseManagement {
             }
 
             if (Confirm-Action "Remove '$friendlyName' from $($user.UserPrincipalName)?") {
-                try {
-                    Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop
-                    Write-Success "$friendlyName removed."
-                } catch {
-                    $errMsg = $_.Exception.Message
-                    if ($errMsg -match "group-based|inherited|cannot remove") {
+                $ok = Invoke-Action -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $user.UserPrincipalName) -Action {
+                    try {
+                        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true
+                    } catch {
+                        $errMsg = $_.Exception.Message
+                        if ($errMsg -match "group-based|inherited|cannot remove") {
+                            'inherited'
+                        } else { throw }
+                    }
+                }
+                if (-not (Get-PreviewMode)) {
+                    if ($ok -eq 'inherited') {
                         Write-ErrorMsg "Cannot remove: this license is inherited from a group."
                         Write-InfoMsg "Remove the user from the licensing group instead."
-                    } else {
-                        Write-ErrorMsg "Failed to remove: $errMsg"
+                    } elseif ($ok) {
+                        Write-Success "$friendlyName removed."
                     }
                 }
             }

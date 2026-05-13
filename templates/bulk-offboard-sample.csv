@@ -1,0 +1,4 @@
+UserPrincipalName,ForwardTo,ConvertToShared,HandoffOneDriveTo,RemoveFromAllGroups,Reason
+jane.smith@contoso.com,manager@contoso.com,true,manager@contoso.com,true,Jane has left the company effective 2026-05-01. Please contact manager@contoso.com.
+bob.jones@contoso.com,eng-lead@contoso.com,true,,false,Bob is on extended leave; messages forwarded to the engineering lead.
+eve.brown@contoso.com,,false,,true,Contract ended 2026-04-30.
