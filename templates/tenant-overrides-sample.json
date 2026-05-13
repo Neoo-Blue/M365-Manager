@@ -1,0 +1,18 @@
+{
+  "_comment": "Drop this into <stateDir>/tenant-overrides/<tenant-name-slug>.json to override the listed keys for that tenant. Only the keys you want to override need to be present.",
+  "StaleGuestDays": 30,
+  "OneDriveRetentionDays": 180,
+  "Notifications.Recipients": [
+    "alice@contoso.com",
+    "bob@contoso.com"
+  ],
+  "Notifications.TeamsWebhook": "https://outlook.office.com/webhook/REPLACE-ME",
+  "AI.MonthlyBudgetUsd": 25.00,
+  "AI.AlertAtPct": 75,
+  "AI.AutoPlanThreshold": 2,
+  "BreakGlassReminderDays": 60,
+  "LicensePrices": {
+    "ENTERPRISEPACK": { "monthlyUsd": 35.00 },
+    "STANDARDPACK":   { "monthlyUsd": 12.50 }
+  }
+}

@@ -15,7 +15,7 @@ The session audit log under `%LOCALAPPDATA%\M365Manager\audit\session-*.log` (Wi
 | `target`       | object   | usually | Free-form hashtable of operands. Keys like `userUpn`, `userId`, `groupId`, `groupName`, `skuId`, `skuPart`, `dlIdentity`, `mailbox`, `identity` are stable contract for downstream tooling. |
 | `result`       | string   | yes     | `success`, `failure`, `preview`, `info`. |
 | `error`        | string   | when failure | Exception message captured by `Invoke-Action`. |
-| `tenant`       | string   | when known | Tenant domain or id from `$script:SessionState`. |
+| `tenant`       | object   | when known | **Phase 6:** structured hashtable `{ name; id; domain; mode }` from `$script:SessionState`. `mode` is `Direct`, `Partner`, or `Profile`. Legacy entries (Phase 1-5) carry this field as a single string; `AuditViewer.ps1`'s filter handles both shapes via `Filter.Tenant` substring match. |
 | `session`      | int      | yes     | OS PID of the M365 Manager process that wrote the line. |
 | `reverse`      | object   | optional | `{ type, description, target }` describing the inverse operation. `null` when the operation has no curated reverse. |
 | `noUndoReason` | string   | optional | Human-readable explanation of why this entry is non-reversible. Set on destructive operations (user / mailbox / group deletion, session revocation, MFA method revocation). |
@@ -37,25 +37,25 @@ When `noUndoReason` is set, `reverse` is forced to `null`.
 A reversible success (license assignment from a template):
 
 ```json
-{"ts":"2026-05-12T16:23:45.123Z","entryId":"a1b2c3d4-...","mode":"LIVE","event":"EXEC","description":"Assign license 'SPE_E3' to user 4f3a-...","actionType":"AssignLicense","target":{"userId":"4f3a-...","skuId":"05e9...","skuPart":"SPE_E3"},"result":"success","error":null,"tenant":"contoso.onmicrosoft.com","session":17432,"reverse":{"type":"RemoveLicense","description":"Remove license 'SPE_E3' from user 4f3a-...","target":{"userId":"4f3a-...","skuId":"05e9...","skuPart":"SPE_E3"}},"noUndoReason":null}
+{"ts":"2026-05-12T16:23:45.123Z","entryId":"a1b2c3d4-...","mode":"LIVE","event":"EXEC","description":"Assign license 'SPE_E3' to user 4f3a-...","actionType":"AssignLicense","target":{"userId":"4f3a-...","skuId":"05e9...","skuPart":"SPE_E3"},"result":"success","error":null,"tenant":{"name":"Contoso","id":"abcd-1234-...","domain":"contoso.onmicrosoft.com","mode":"Profile"},"session":17432,"reverse":{"type":"RemoveLicense","description":"Remove license 'SPE_E3' from user 4f3a-...","target":{"userId":"4f3a-...","skuId":"05e9...","skuPart":"SPE_E3"}},"noUndoReason":null}
 ```
 
 A non-reversible destructive op:
 
 ```json
-{"ts":"2026-05-12T16:30:11.005Z","entryId":"b2c3d4e5-...","mode":"LIVE","event":"EXEC","description":"DELETE security group 'SG-Old-Marketing'","actionType":"DeleteSecurityGroup","target":{"groupId":"g-id","groupName":"SG-Old-Marketing"},"result":"success","error":null,"tenant":"contoso.onmicrosoft.com","session":17432,"reverse":null,"noUndoReason":"Security group deletion is irreversible (cannot reconstruct membership history)."}
+{"ts":"2026-05-12T16:30:11.005Z","entryId":"b2c3d4e5-...","mode":"LIVE","event":"EXEC","description":"DELETE security group 'SG-Old-Marketing'","actionType":"DeleteSecurityGroup","target":{"groupId":"g-id","groupName":"SG-Old-Marketing"},"result":"success","error":null,"tenant":{"name":"Contoso","id":"abcd-1234-...","domain":"contoso.onmicrosoft.com","mode":"Profile"},"session":17432,"reverse":null,"noUndoReason":"Security group deletion is irreversible (cannot reconstruct membership history)."}
 ```
 
 A preview entry (dry-run):
 
 ```json
-{"ts":"2026-05-12T16:31:00.118Z","entryId":"c3d4e5f6-...","mode":"PREVIEW","event":"PREVIEW","description":"Block sign-in for jane@contoso.com","actionType":"BlockSignIn","target":{"userId":"4f3a-...","userUpn":"jane@contoso.com"},"result":"preview","error":null,"tenant":"contoso.onmicrosoft.com","session":17432,"reverse":{"type":"UnblockSignIn","description":"Unblock sign-in for jane@contoso.com","target":{"userId":"4f3a-...","userUpn":"jane@contoso.com"}},"noUndoReason":null}
+{"ts":"2026-05-12T16:31:00.118Z","entryId":"c3d4e5f6-...","mode":"PREVIEW","event":"PREVIEW","description":"Block sign-in for jane@contoso.com","actionType":"BlockSignIn","target":{"userId":"4f3a-...","userUpn":"jane@contoso.com"},"result":"preview","error":null,"tenant":{"name":"Contoso","id":"abcd-1234-...","domain":"contoso.onmicrosoft.com","mode":"Profile"},"session":17432,"reverse":{"type":"UnblockSignIn","description":"Unblock sign-in for jane@contoso.com","target":{"userId":"4f3a-...","userUpn":"jane@contoso.com"}},"noUndoReason":null}
 ```
 
 A failure (Graph 403):
 
 ```json
-{"ts":"2026-05-12T16:32:42.310Z","entryId":"d4e5f6a7-...","mode":"LIVE","event":"EXEC","description":"Add user 4f3a-... to security group 'SG-Engineering'","actionType":"AddToGroup","target":{"userId":"4f3a-...","groupId":"g-id","groupName":"SG-Engineering"},"result":"failure","error":"Insufficient privileges to complete the operation.","tenant":"contoso.onmicrosoft.com","session":17432,"reverse":null,"noUndoReason":null}
+{"ts":"2026-05-12T16:32:42.310Z","entryId":"d4e5f6a7-...","mode":"LIVE","event":"EXEC","description":"Add user 4f3a-... to security group 'SG-Engineering'","actionType":"AddToGroup","target":{"userId":"4f3a-...","groupId":"g-id","groupName":"SG-Engineering"},"result":"failure","error":"Insufficient privileges to complete the operation.","tenant":{"name":"Contoso","id":"abcd-1234-...","domain":"contoso.onmicrosoft.com","mode":"Profile"},"session":17432,"reverse":null,"noUndoReason":null}
 ```
 
 ## Legacy human-readable lines

@@ -310,6 +310,84 @@ Severity routing in `Send-Notification`:
 
 The three Phase 3 notifiers (`Send-OneDriveHandoffSummary`, `Send-OffboardManagerSummary`, `Send-GuestRecertEmail`) all delegate to `Send-Email` when `Notifications.ps1` is loaded, with a Get-Command-guarded fallback to the original `/me/sendMail` path. This means a tenant that hasn't configured the Notifications block yet still gets the same emails — they just don't honor `DryRunNotifications`.
 
+## Multi-tenant / MSP mode (Phase 6)
+
+Phase 6 turns the tool from "single-tenant operator console" into
+"MSP cockpit". An operator can register many tenants, switch between
+them with one command, run reports across the whole portfolio in a
+single pass, and view an HTML dashboard summarizing everyone's
+posture. Every audit entry from Phase 6 onward carries a structured
+`tenant: { name; id; domain; mode }` field so cross-customer audit
+forensics work cleanly.
+
+- **Tenant profile registry** — `Register-Tenant`,
+  `Update-Tenant`, `Remove-Tenant`, `Get-Tenants`, `Get-Tenant`,
+  `Set-CurrentTenant`. Profiles live in `<stateDir>/tenants.json`
+  (plaintext metadata) with per-tenant credential manifests at
+  `<stateDir>/secrets/tenant-<name>.dat` (DPAPI-encrypted on
+  Windows). Three auth modes: Interactive (no creds at rest),
+  CertThumbprint (recommended for app-only), ClientSecret
+  (encrypted but warned). See [docs/multi-tenant.md](docs/multi-tenant.md).
+- **Fast switching** — `Switch-Tenant -Name <name>` (or `/tenant
+  <name>` from chat) disconnects current sessions, swaps in the
+  profile, reconnects app-only when creds are wired, and paints a
+  per-tenant colored banner so cross-tenant mistakes are visually
+  obvious. The audit log opens a fresh file per tenant.
+- **Cross-tenant operations** — `Invoke-AcrossTenants -Tenants
+  <names> -Script { ... }` iterates a scriptblock with try/finally
+  context restore. Five pre-built rollups in `MSPReports.ps1`:
+  `Get-CrossTenantLicenseUtilization`, `Get-CrossTenantMFAGaps`,
+  `Get-CrossTenantStaleGuests`, `Get-CrossTenantOrphanedTeams`,
+  `Get-CrossTenantBreakGlassPosture`. Sequential by design (Graph
+  SDK uses process-global state).
+- **MSP portfolio dashboard** — `Update-MSPDashboard` builds a
+  single-page HTML file at `<stateDir>/msp-dashboard/msp-dashboard-
+  latest.html` with one card per tenant (users, monthly USD, MFA
+  %, stale guests, orphan teams, break-glass posture) plus
+  portfolio totals. No JavaScript / no CDNs — safe to email or
+  open offline. See [docs/msp-dashboard.md](docs/msp-dashboard.md)
+  and [docs/sample-msp-dashboard/](docs/sample-msp-dashboard/).
+- **Per-tenant configuration overrides** —
+  `Get-EffectiveConfig -Key <name>` resolves a value through
+  global config → `<stateDir>/tenant-overrides/<name>.json` →
+  `$env:M365MGR_<KEY>` → CLI flag. Canonical override keys
+  catalog'd in `$script:TenantOverridableKeys` (13 keys).
+  **3 are wired through `Get-EffectiveConfig` today**
+  (`AI.MonthlyBudgetUsd`, `AI.AlertAtPct`, `StaleGuestDays`);
+  the remaining 10 (notification recipients, OneDrive retention,
+  default role template, license prices, etc.) are tracked for
+  mechanical conversion in a follow-up — their consuming modules
+  still read `$Config` directly. See [docs/tenant-overrides.md](docs/tenant-overrides.md).
+
+New PowerShell entry points:
+
+```powershell
+Register-Tenant -Name 'Contoso' -TenantId 'abcd-...' `
+    -AuthMode 'CertThumbprint' -ClientId '...' -CertThumbprint '...'
+Switch-Tenant      -Name 'Contoso'
+Get-CrossTenantStaleGuests -DaysSinceSignIn 90
+Update-MSPDashboard
+Show-TenantOverrides -Name 'Contoso'
+```
+
+New chat commands:
+
+```
+  /tenants               list registered tenants
+  /tenant <name>         switch tenant context
+```
+
+New menu slot (replaces "Switch Tenant"):
+
+```
+  Tenants...
+    Switch to tenant...
+    Register a new tenant
+    Edit a tenant
+    Remove a tenant
+    MSP portfolio dashboard
+```
+
 ## AI v2 (Phase 5)
 
 Phase 5 turns the chat assistant from a regex-driven proposer into a
@@ -369,6 +447,12 @@ New chat commands:
 ```powershell
 Invoke-Pester ./tests/
 ```
+
+Phase 6 adds three more Pester suites alongside the Phase 1 / 2 / 3 / 4 / 5 ones:
+
+- `tests/TenantRegistry.Tests.ps1` — CRUD round-trip, encrypted secret manifest, Set/Get-CurrentTenant SessionState mirroring, partial Update-Tenant.
+- `tests/InvokeAcrossTenants.Tests.ps1` — happy path + @all + unknown-name skip, result-shape contract, per-tenant exception capture without aborting the run, try/finally tenant restore on scriptblock throw.
+- `tests/TenantOverrides.Tests.ps1` — full resolution chain (global → tenant file → env var → CLI), JSON round-trip preserving nested types, override-key registry exposure.
 
 Phase 5 adds four more Pester suites alongside the Phase 1 / 2 / 3 / 4 ones:
 

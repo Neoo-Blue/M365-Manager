@@ -132,6 +132,13 @@ function Assert-ModulesInstalled {
 function Select-TenantMode {
     Write-SectionHeader "Tenant Selection"
 
+    # Pre-merge fix: ensure the audit log filename reflects the
+    # newly-chosen tenant. Switch-Tenant calls this already; the
+    # legacy partner-center picker path didn't, so an operator who
+    # switched tenants via this UI ended up writing entries to the
+    # prior tenant's session log.
+    if (Get-Command Reset-AuditLogPath -ErrorAction SilentlyContinue) { Reset-AuditLogPath }
+
     $mode = Show-Menu -Title "Which tenant are you managing?" -Options @(
         "My own organization (direct admin)",
         "A customer tenant (GDAP partner access)"

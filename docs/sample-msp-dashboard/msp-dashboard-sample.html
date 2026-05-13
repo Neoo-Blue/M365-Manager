@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><title>MSP portfolio dashboard (sample)</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#0f172a; color:#e2e8f0; margin:0; padding:24px; }
+  h1 { margin:0 0 12px; font-size:24px; }
+  .ts { color:#94a3b8; font-size:13px; margin-bottom:24px; }
+  .totals { display:flex; gap:24px; margin-bottom:32px; }
+  .totals .tot { background:#1e293b; padding:16px 20px; border-radius:8px; }
+  .totals .tot-num { font-size:24px; font-weight:600; }
+  .totals .tot-lbl { color:#94a3b8; font-size:13px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:16px; }
+  .card { background:#1e293b; border-radius:10px; padding:16px; border:1px solid #334155; }
+  .card-head { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .card-head h2 { margin:0; font-size:18px; flex:1; }
+  .card-head .tid { font-family:Menlo,monospace; font-size:11px; color:#64748b; }
+  .dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
+  .metrics { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .metric { background:#0f172a; padding:8px 10px; border-radius:6px; text-align:center; }
+  .m-num { display:block; font-size:18px; font-weight:600; }
+  .m-lbl { display:block; font-size:11px; color:#94a3b8; margin-top:2px; }
+  .footer { font-size:11px; color:#64748b; margin-top:12px; }
+</style></head>
+<body>
+<h1>MSP portfolio dashboard</h1>
+<div class="ts">Generated 2026-05-12 18:33:00 UTC &middot; 3 tenant(s) &middot; SAMPLE DATA</div>
+<div class="totals">
+  <div class="tot"><div class="tot-num">912</div><div class="tot-lbl">total users</div></div>
+  <div class="tot"><div class="tot-num">$4,121.40</div><div class="tot-lbl">monthly spend</div></div>
+  <div class="tot"><div class="tot-num">93.2%</div><div class="tot-lbl">weighted MFA</div></div>
+</div>
+<div class="cards">
+
+<div class="card">
+  <div class="card-head"><span class="dot" style="background:#22c55e"></span><h2>Contoso</h2><span class="tid">0000...0001</span></div>
+  <div class="metrics">
+    <div class="metric"><span class="m-num">312</span><span class="m-lbl">users</span></div>
+    <div class="metric"><span class="m-num">$1,840.00</span><span class="m-lbl">/ month</span></div>
+    <div class="metric"><span class="m-num" style="color:#22c55e">96.4%</span><span class="m-lbl">MFA compliant</span></div>
+    <div class="metric"><span class="m-num">7</span><span class="m-lbl">stale guests</span></div>
+    <div class="metric"><span class="m-num">2</span><span class="m-lbl">orphan teams</span></div>
+    <div class="metric"><span class="m-num" style="color:#22c55e">ok</span><span class="m-lbl">break-glass</span></div>
+  </div>
+  <div class="footer">last sync: 2026-05-12T18:30:00Z</div>
+</div>
+
+<div class="card">
+  <div class="card-head"><span class="dot" style="background:#eab308"></span><h2>Acme Manufacturing</h2><span class="tid">0000...0002</span></div>
+  <div class="metrics">
+    <div class="metric"><span class="m-num">428</span><span class="m-lbl">users</span></div>
+    <div class="metric"><span class="m-num">$1,925.20</span><span class="m-lbl">/ month</span></div>
+    <div class="metric"><span class="m-num" style="color:#eab308">87.1%</span><span class="m-lbl">MFA compliant</span></div>
+    <div class="metric"><span class="m-num">23</span><span class="m-lbl">stale guests</span></div>
+    <div class="metric"><span class="m-num">5</span><span class="m-lbl">orphan teams</span></div>
+    <div class="metric"><span class="m-num" style="color:#eab308">warn</span><span class="m-lbl">break-glass</span></div>
+  </div>
+  <div class="footer">last sync: 2026-05-12T18:31:18Z</div>
+</div>
+
+<div class="card">
+  <div class="card-head"><span class="dot" style="background:#22c55e"></span><h2>Fabrikam Internal</h2><span class="tid">0000...0003</span></div>
+  <div class="metrics">
+    <div class="metric"><span class="m-num">172</span><span class="m-lbl">users</span></div>
+    <div class="metric"><span class="m-num">$356.20</span><span class="m-lbl">/ month</span></div>
+    <div class="metric"><span class="m-num" style="color:#22c55e">98.8%</span><span class="m-lbl">MFA compliant</span></div>
+    <div class="metric"><span class="m-num">1</span><span class="m-lbl">stale guests</span></div>
+    <div class="metric"><span class="m-num">0</span><span class="m-lbl">orphan teams</span></div>
+    <div class="metric"><span class="m-num" style="color:#22c55e">ok</span><span class="m-lbl">break-glass</span></div>
+  </div>
+  <div class="footer">last sync: 2026-05-12T18:31:54Z</div>
+</div>
+
+</div>
+</body></html>

@@ -67,7 +67,13 @@ function Get-Guests {
 }
 
 function Get-StaleGuests {
-    param([int]$DaysSinceSignIn = 90)
+    # Phase 6: default threshold is tenant-overridable
+    # (tenant-overrides/<name>.json key 'StaleGuestDays').
+    param([int]$DaysSinceSignIn = 0)
+    if ($DaysSinceSignIn -le 0) {
+        $eff = if (Get-Command Get-EffectiveConfig -ErrorAction SilentlyContinue) { Get-EffectiveConfig -Key 'StaleGuestDays' } else { $null }
+        $DaysSinceSignIn = if ($eff) { [int]$eff } else { 90 }
+    }
     return @(Get-Guests | Where-Object { $_.DaysSinceSignIn -ge $DaysSinceSignIn })
 }
 

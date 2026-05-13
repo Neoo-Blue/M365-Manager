@@ -70,6 +70,7 @@ if (-not $ScriptRoot) {
 $loadErrors = @()
 $modules = @(
     "UI.ps1","Auth.ps1","Audit.ps1","Preview.ps1","Templates.ps1",
+    "Notifications.ps1","TenantRegistry.ps1","TenantSwitch.ps1","TenantOverrides.ps1",
     "Onboard.ps1","BulkOnboard.ps1","Offboard.ps1","BulkOffboard.ps1",
     "License.ps1","Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
     "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
@@ -77,7 +78,8 @@ $modules = @(
     "AuditViewer.ps1","Undo.ps1","SignInLookup.ps1","UnifiedAuditLog.ps1",
     "MFAManager.ps1","OneDriveManager.ps1","TeamsManager.ps1","SharePoint.ps1",
     "GuestUsers.ps1","LicenseOptimizer.ps1","Scheduler.ps1","BreakGlass.ps1",
-    "Notifications.ps1","AICostTracker.ps1","AISessionStore.ps1","AIUx.ps1","AIToolDispatch.ps1","AIPlanner.ps1","AIAssistant.ps1"
+    "MSPReports.ps1","MSPDashboard.ps1",
+    "AICostTracker.ps1","AISessionStore.ps1","AIUx.ps1","AIToolDispatch.ps1","AIPlanner.ps1","AIAssistant.ps1"
 )
 
 foreach ($mod in $modules) {
@@ -142,6 +144,11 @@ function Start-M365Admin {
         return
     }
 
+    # ---- Phase 6: first-run migration. Offer to register the current
+    #      interactive tenant as a profile so future runs can /tenant
+    #      switch without re-walking the partner-center picker.
+    if (Get-Command Test-FirstRunMigration -ErrorAction SilentlyContinue) { Test-FirstRunMigration }
+
     Write-AuditBanner
 
     $running = $true
@@ -152,9 +159,15 @@ function Start-M365Admin {
         $b = $script:Box
 
         # ---- Tenant + connection status bar ----
-        Write-Host ("  " + $b.TL + [string]::new($b.H, 1) + " Tenant " + [string]::new($b.H, 49) + $b.TR) -ForegroundColor $script:Colors.Accent
-        Write-Host ("  " + $b.V + "  ") -ForegroundColor $script:Colors.Accent -NoNewline
-        if ($script:SessionState.TenantMode -eq "Partner") {
+        # Phase 6: per-tenant color when a registered profile is active.
+        $tenantHeaderColor = if (Get-Command Get-TenantBannerColor -ErrorAction SilentlyContinue) { Get-TenantBannerColor -Name $script:SessionState.TenantName } else { $script:Colors.Accent }
+        Write-Host ("  " + $b.TL + [string]::new($b.H, 1) + " Tenant " + [string]::new($b.H, 49) + $b.TR) -ForegroundColor $tenantHeaderColor
+        Write-Host ("  " + $b.V + "  ") -ForegroundColor $tenantHeaderColor -NoNewline
+        if ($script:SessionState.TenantMode -eq "Profile") {
+            Write-Host "Profile " -NoNewline -ForegroundColor $tenantHeaderColor
+            Write-Host $script:SessionState.TenantName -NoNewline -ForegroundColor White
+            if ($script:SessionState.TenantDomain) { Write-Host " ($($script:SessionState.TenantDomain))" -NoNewline -ForegroundColor $script:Colors.Info }
+        } elseif ($script:SessionState.TenantMode -eq "Partner") {
             Write-Host "GDAP " -NoNewline -ForegroundColor $script:Colors.Highlight
             Write-Host $script:SessionState.TenantName -NoNewline -ForegroundColor White
             if ($script:SessionState.TenantDomain) { Write-Host " ($($script:SessionState.TenantDomain))" -NoNewline -ForegroundColor $script:Colors.Info }
@@ -210,7 +223,7 @@ function Start-M365Admin {
             "Guest Users...",
             "License & Cost...",
             "Scheduled Health Checks...",
-            "Switch Tenant"
+            "Tenants..."
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
 
         switch ($sel) {
@@ -237,13 +250,20 @@ function Start-M365Admin {
             20 { Start-SchedulerMenu }
             99 { Start-AIAssistant }
             21 {
-                Write-Host ""
-                if (Confirm-Action "Disconnect ALL sessions and switch tenant?") {
-                    Reset-AllSessions
-                    if (-not (Select-TenantMode)) {
-                        Write-Warn "No tenant selected. Defaulting to direct mode."
-                        $script:SessionState.TenantMode = "Direct"
-                        $script:SessionState.TenantName = "Own Tenant"
+                # Phase 6: Tenants submenu drives switch / register / edit /
+                # remove / dashboard. Legacy "Switch Tenant" path falls back
+                # to Select-TenantMode when the registry is empty.
+                if ((Get-Command Start-TenantMenu -ErrorAction SilentlyContinue) -and (Get-Tenants).Count -gt 0) {
+                    Start-TenantMenu
+                } else {
+                    Write-Host ""
+                    if (Confirm-Action "Disconnect ALL sessions and switch tenant?") {
+                        Reset-AllSessions
+                        if (-not (Select-TenantMode)) {
+                            Write-Warn "No tenant selected. Defaulting to direct mode."
+                            $script:SessionState.TenantMode = "Direct"
+                            $script:SessionState.TenantName = "Own Tenant"
+                        }
                     }
                 }
             }

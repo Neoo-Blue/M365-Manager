@@ -196,9 +196,18 @@ function Add-AICostEvent {
 
     # Budget alert check
     $alertFired = $null
-    $budget = if ($Config.ContainsKey('MonthlyBudgetUsd')) { [double]$Config.MonthlyBudgetUsd } else { 0.0 }
-    if ($budget -gt 0) {
+    # Phase 6: budget + threshold are tenant-overridable. Tenant
+    # override wins over the global Config value, env var beats both.
+    if (Get-Command Get-EffectiveConfig -ErrorAction SilentlyContinue) {
+        $budgetRaw = Get-EffectiveConfig -Key 'AI.MonthlyBudgetUsd' -GlobalConfig $Config
+        $budget    = if ($budgetRaw) { [double]$budgetRaw } else { 0.0 }
+        $alertPctRaw = Get-EffectiveConfig -Key 'AI.AlertAtPct' -GlobalConfig $Config
+        $alertPct  = if ($alertPctRaw) { [int]$alertPctRaw } else { 80 }
+    } else {
+        $budget   = if ($Config.ContainsKey('MonthlyBudgetUsd')) { [double]$Config.MonthlyBudgetUsd } else { 0.0 }
         $alertPct = if ($Config.ContainsKey('AlertAtPct')) { [int]$Config.AlertAtPct } else { 80 }
+    }
+    if ($budget -gt 0) {
         $used = [double]$roll[$month].totalUsd
         $pctNow = ($used / $budget) * 100.0
         $crossings = @(50, $alertPct, 100, 150) | Sort-Object -Unique
