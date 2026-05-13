@@ -445,6 +445,7 @@ function Start-AuditReportingMenu {
             "Sign-in lookup (search Graph signIns)",
             "Sign-in lookup (recent activity for one user)",
             "Unified audit log (Search-UnifiedAuditLog)",
+            "Guest user reports...",
             "Reporting (existing reports menu)"
         )
         $sel = Show-Menu -Title "Audit & Reporting" -Options $opts -BackLabel "Back to Main Menu"
@@ -454,7 +455,8 @@ function Start-AuditReportingMenu {
             2  { if (Get-Command Start-SignInSearch -ErrorAction SilentlyContinue) { Start-SignInSearch } else { Write-Warn "Sign-in lookup unavailable."; Pause-ForUser } }
             3  { if (Get-Command Show-UserRecentActivity -ErrorAction SilentlyContinue) { Show-UserRecentActivity } else { Write-Warn "Sign-in lookup unavailable."; Pause-ForUser } }
             4  { if (Get-Command Start-UnifiedAuditSearch -ErrorAction SilentlyContinue) { Start-UnifiedAuditSearch } else { Write-Warn "Unified audit log unavailable."; Pause-ForUser } }
-            5  { if (Get-Command Start-ReportingMenu -ErrorAction SilentlyContinue) { Start-ReportingMenu } else { Write-Warn "Reporting menu unavailable."; Pause-ForUser } }
+            5  { if (Get-Command Start-GuestUsersMenu -ErrorAction SilentlyContinue) { Start-GuestUsersMenu } else { Write-Warn "Guest user module unavailable."; Pause-ForUser } }
+            6  { if (Get-Command Start-ReportingMenu -ErrorAction SilentlyContinue) { Start-ReportingMenu } else { Write-Warn "Reporting menu unavailable."; Pause-ForUser } }
             -1 { return }
         }
     }

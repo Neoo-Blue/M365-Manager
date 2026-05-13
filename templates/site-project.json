@@ -1,0 +1,9 @@
+{
+  "_comment":   "EXAMPLE site template -- adjust alias / hub URL to your tenant. Used by SharePoint.ps1 New-ProjectSite.",
+  "alias":      "project-template",
+  "template":   "STS#3",
+  "name":       "Project Workspace",
+  "description":"Standard project workspace site (modern team without M365 group)",
+  "hubSiteUrl": "",
+  "permissions": []
+}

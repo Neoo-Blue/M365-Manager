@@ -1,0 +1,5 @@
+UPN,TeamName,Action,Role
+jane.smith@contoso.com,Sales Team,Add,Member
+bob.jones@contoso.com,Engineering,Promote,
+carol.davis@contoso.com,Exec Office,Add,Owner
+old.intern@contoso.com,Sales Team,Remove,

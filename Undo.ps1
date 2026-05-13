@@ -105,6 +105,48 @@ $script:UndoHandlers = @{
         param($Target)
         Update-MgUser -UserId $Target.userId -AccountEnabled:$false -ErrorAction Stop | Out-Null
     }
+
+    # -- OneDrive site collection admin (Phase 3) --
+    'RevokeOneDriveAccess' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.granteeUpn -IsSiteCollectionAdmin $false -ErrorAction Stop | Out-Null
+    }
+    'GrantOneDriveAccess' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.granteeUpn -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+    }
+
+    # -- SharePoint site owners (Phase 3) --
+    'RemoveSiteOwner' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.userUpn -IsSiteCollectionAdmin $false -ErrorAction Stop | Out-Null
+    }
+    'AddSiteOwner' = {
+        param($Target)
+        Set-SPOUser -Site $Target.siteUrl -LoginName $Target.userUpn -IsSiteCollectionAdmin $true -ErrorAction Stop | Out-Null
+    }
+
+    # -- Teams membership / ownership (Phase 3) --
+    'RemoveFromTeam' = {
+        param($Target)
+        $segment = if ($Target.role -eq 'Owner') { 'owners' } else { 'members' }
+        Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$($Target.teamId)/$segment/$($Target.userId)/`$ref" -ErrorAction Stop | Out-Null
+    }
+    'AddToTeam' = {
+        param($Target)
+        $segment = if ($Target.role -eq 'Owner') { 'owners' } else { 'members' }
+        $body = @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($Target.userId)" } | ConvertTo-Json -Compress
+        Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/groups/$($Target.teamId)/$segment/`$ref" -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    }
+    'DemoteTeamOwner' = {
+        param($Target)
+        Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$($Target.teamId)/owners/$($Target.userId)/`$ref" -ErrorAction Stop | Out-Null
+    }
+    'PromoteTeamOwner' = {
+        param($Target)
+        $body = @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$($Target.userId)" } | ConvertTo-Json -Compress
+        Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/groups/$($Target.teamId)/owners/`$ref" -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    }
 }
 
 # ============================================================

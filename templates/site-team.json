@@ -1,0 +1,9 @@
+{
+  "_comment":   "EXAMPLE site template -- Microsoft 365 group-backed team site (also creates the underlying group). Adjust alias / hubSiteUrl for your tenant.",
+  "alias":      "team-template",
+  "template":   "GROUP#0",
+  "name":       "Team Workspace",
+  "description":"M365 group-backed team site with a backing mail-enabled group",
+  "hubSiteUrl": "",
+  "permissions": []
+}
