@@ -346,15 +346,23 @@ function Invoke-AIChat {
         $usage = @{ InputTokens = 0; OutputTokens = 0 }
         switch ($p) {
             "Ollama" {
-                $body = @{
-                    model    = $m
-                    stream   = $false
-                    messages = @(@{ role='system'; content=$safeSystemPrompt }) + $safeMessages
-                } | ConvertTo-Json -Depth 10
-                $resp = Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop
-                $rawResponse = $resp.message.content
-                if ($resp.prompt_eval_count) { $usage.InputTokens  = [int]$resp.prompt_eval_count }
-                if ($resp.eval_count)        { $usage.OutputTokens = [int]$resp.eval_count }
+                # Real streaming -- print the response as it arrives.
+                if (Get-Command Invoke-OllamaStream -ErrorAction SilentlyContinue) {
+                    $stream = Invoke-OllamaStream -Endpoint $ep -Model $m -SystemPrompt $safeSystemPrompt -SafeMessages $safeMessages
+                    $rawResponse = $stream.Text
+                    $usage = $stream.Usage
+                    $script:LastAIChatStreamed = $true
+                } else {
+                    $body = @{
+                        model    = $m
+                        stream   = $false
+                        messages = @(@{ role='system'; content=$safeSystemPrompt }) + $safeMessages
+                    } | ConvertTo-Json -Depth 10
+                    $resp = Invoke-RestMethod -Uri "$ep/api/chat" -Method POST -ContentType "application/json" -Body $body -TimeoutSec 180 -ErrorAction Stop
+                    $rawResponse = $resp.message.content
+                    if ($resp.prompt_eval_count) { $usage.InputTokens  = [int]$resp.prompt_eval_count }
+                    if ($resp.eval_count)        { $usage.OutputTokens = [int]$resp.eval_count }
+                }
             }
             "Anthropic" {
                 $body = @{
@@ -1007,7 +1015,7 @@ function Start-AIAssistant {
     $pd="$($config['Provider']) ($($config['Model']))"; if($pd.Length -gt 52){$pd=$pd.Substring(0,49)+"..."}
     Write-Host ("  " + $b.DV + "   $("{0,-52}" -f $pd)" + $b.DV) -ForegroundColor "Gray"
     Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor "Cyan"
-    Write-Host ""; Write-Host "  /help  /config  /tools  /plan  /noplan  /cost  /costs  /list  /load  /save  /ephemeral  /export  /quit" -ForegroundColor "DarkGray"; Write-Host ""
+    Write-Host ""; Write-Host "  /help  /about  /tools  /plan  /noplan  /dryrun  /cost  /costs  /list  /load  /save  /ephemeral  /export  /quit" -ForegroundColor "DarkGray"; Write-Host ""
 
     # Phase 5: pre-load the tool catalog and probe provider capability.
     if (Get-Command Get-AIToolCatalog -ErrorAction SilentlyContinue) { Get-AIToolCatalog | Out-Null }
@@ -1048,7 +1056,9 @@ function Start-AIAssistant {
         if ($cmd -eq '/help') {
             Write-Host ""
             Write-Host "  /config /models /privacy /clear /context /tools" -ForegroundColor "DarkGray"
+            Write-Host "  /about                 diagnostic snapshot" -ForegroundColor "DarkGray"
             Write-Host "  /plan /noplan          plan-mode controls" -ForegroundColor "DarkGray"
+            Write-Host "  /dryrun                toggle PREVIEW (no tenant changes)" -ForegroundColor "DarkGray"
             Write-Host "  /cost /costs           cost summary / history" -ForegroundColor "DarkGray"
             Write-Host "  /list /load <id>       saved sessions" -ForegroundColor "DarkGray"
             Write-Host "  /save [title]          persist this chat" -ForegroundColor "DarkGray"
@@ -1104,6 +1114,20 @@ function Start-AIAssistant {
         if ($cmd -eq '/ephemeral') {
             Set-AISessionEphemeral -On $true
             Write-InfoMsg "Ephemeral mode ON -- this chat will NOT be auto-saved on /quit."
+            continue
+        }
+        if ($cmd -eq '/about') {
+            if (Get-Command Show-AIAbout -ErrorAction SilentlyContinue) { Show-AIAbout -Config $config }
+            else { Write-Warn "AIUx module not loaded." }
+            continue
+        }
+        if ($cmd -eq '/dryrun') {
+            if (Get-Command Set-PreviewMode -ErrorAction SilentlyContinue) {
+                $newState = -not (Get-PreviewMode)
+                Set-PreviewMode -Enabled $newState
+                if ($newState) { Write-Warn "PREVIEW MODE ON -- mutating tools will be logged but not executed." }
+                else           { Write-InfoMsg "PREVIEW MODE OFF -- mutating tools will apply to the tenant." }
+            } else { Write-Warn "Preview module not loaded." }
             continue
         }
         if ($cmd -like '/export *' -or $cmd -eq '/export') {
@@ -1250,11 +1274,27 @@ function Start-AIAssistant {
                     if ($ans -match '^[Aa]') { $runAll = $true; $ans = 'y' }
                     if ($ans -match '^[Qq]') { break }
                     if ($ans -notmatch '^[Yy]') {
-                        [void]$results.Add(@{ id = $tu.id; content = '{"ok":false,"error":"operator_declined"}'; isError = $true })
+                        # Ask for an optional reason so the AI gets context to adapt.
+                        $note = if (Get-NonInteractiveMode) { '' } else {
+                            Write-Host "  (optional) what should change? " -ForegroundColor DarkGray -NoNewline
+                            Read-Host
+                        }
+                        $rejectPayload = if (Get-Command Build-RejectionToolResult -ErrorAction SilentlyContinue) {
+                            Build-RejectionToolResult -ToolName $tu.name -Note $note
+                        } else { '{"ok":false,"error":"operator_declined"}' }
+                        [void]$results.Add(@{ id = $tu.id; content = $rejectPayload; isError = $true })
                         continue
                     }
                     $inputHt = @{}; foreach ($k in $tu.input.Keys) { $inputHt[$k] = $tu.input[$k] }
-                    $out = Invoke-AIToolCall -ToolName $tu.name -Params $inputHt -Config $config
+                    $spin = $null
+                    if (Get-Command Start-AISpinner -ErrorAction SilentlyContinue) {
+                        $spin = Start-AISpinner -Label ("running " + $tu.name)
+                    }
+                    try {
+                        $out = Invoke-AIToolCall -ToolName $tu.name -Params $inputHt -Config $config
+                    } finally {
+                        if ($spin -and (Get-Command Stop-AISpinner -ErrorAction SilentlyContinue)) { Stop-AISpinner -Token $spin }
+                    }
                     $payload = (Format-AIToolResultPayload -Result $out -MaxBytes 4000)
                     [void]$results.Add(@{ id = $tu.id; content = $payload; isError = (-not $out.ok) })
                 }
@@ -1290,8 +1330,12 @@ function Start-AIAssistant {
         $hasCmd = Test-HasCommands -Response $response
         $cleanText = Get-CleanResponse $response
 
-        # Show only the clean (non-hallucinated) text
-        if ($cleanText) { Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline; Write-MarkResponse $cleanText }
+        # Show only the clean (non-hallucinated) text -- skip when we
+        # already streamed it (Ollama path printed inline).
+        if ($cleanText -and -not $script:LastAIChatStreamed) {
+            Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": " -NoNewline; Write-MarkResponse $cleanText
+        }
+        $script:LastAIChatStreamed = $false
 
         if ($hasCmd) {
             $cmdResults = Invoke-MarkCommands -Response $response -Config $config
