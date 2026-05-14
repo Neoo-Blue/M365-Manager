@@ -288,9 +288,11 @@ function Invoke-BulkTeamsMembership {
         $idOrName = if ($r.TeamId) { [string]$r.TeamId } elseif ($r.TeamName) { [string]$r.TeamName } else { '' }
         $act = [string]$r.Action
         $role = if ($r.Role) { [string]$r.Role } else { 'Member' }
-        if ([string]::IsNullOrWhiteSpace($upn))      { $errors += "Row $row: missing UPN" }
-        if ([string]::IsNullOrWhiteSpace($idOrName)) { $errors += "Row $row: missing TeamId/TeamName" }
-        if ($act -notin @('Add','Remove','Promote','Demote')) { $errors += "Row $row: invalid Action '$act'" }
+        # ${row} delimiter is required -- "$row:" parses as a drive
+        # reference and breaks the whole script at tokenize time.
+        if ([string]::IsNullOrWhiteSpace($upn))      { $errors += "Row ${row}: missing UPN" }
+        if ([string]::IsNullOrWhiteSpace($idOrName)) { $errors += "Row ${row}: missing TeamId/TeamName" }
+        if ($act -notin @('Add','Remove','Promote','Demote')) { $errors += "Row ${row}: invalid Action '$act'" }
         $normalized += [PSCustomObject]@{ UPN = $upn; IdOrName = $idOrName; Action = $act; Role = $role; RowNum = $row }
     }
     if ($errors.Count -gt 0) {
