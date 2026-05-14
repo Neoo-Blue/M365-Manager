@@ -635,13 +635,23 @@ function Convert-ToSafePayload {
         }
     }
 
+    # The .NET regex engine invokes MatchEvaluator scriptblocks from
+    # outside the PowerShell function-resolution scope, so a bare
+    # call to Get-OrCreatePrivacyToken inside the lambda fails with
+    # "CommandNotFoundException" whenever Convert-ToSafePayload is
+    # called from a child scope (which is most of the call sites:
+    # Pester It blocks, Invoke-Action scriptblocks, the chat REPL
+    # tool-hop loop). Capture the function as a scriptblock ref so
+    # GetNewClosure() can pin it into the lambda's closure.
+    $tokenFn = ${function:Get-OrCreatePrivacyToken}
+
     foreach ($pat in $script:PrivacyPatterns) {
         if ($SecretsOnly -and -not $pat.SecretsOnly) { continue }
         $patType = $pat.Type
         $countsRef = $Counts
         $evaluator = [System.Text.RegularExpressions.MatchEvaluator] {
             param($m)
-            $tok = Get-OrCreatePrivacyToken -Value $m.Value -Type $patType
+            $tok = & $tokenFn -Value $m.Value -Type $patType
             if ($countsRef) { $countsRef[$patType] = (($countsRef[$patType]) + 1) }
             return $tok
         }.GetNewClosure()
@@ -665,7 +675,7 @@ function Convert-ToSafePayload {
             $prefix = $m.Groups[1].Value
             $val = if ($m.Groups[2].Success -and $m.Groups[2].Value) { $m.Groups[2].Value } else { $m.Groups[3].Value }
             if (-not $val -or $val -like '<*_*>' -or $val -eq '<TENANT>') { return $m.Value }
-            $tok = Get-OrCreatePrivacyToken -Value $val -Type 'NAME'
+            $tok = & $tokenFn -Value $val -Type 'NAME'
             if ($nameCountsRef) { $nameCountsRef['NAME'] = (($nameCountsRef['NAME']) + 1) }
             return ('{0}"{1}"' -f $prefix, $tok)
         }.GetNewClosure()
@@ -675,7 +685,7 @@ function Convert-ToSafePayload {
             $prefix = $m.Groups[1].Value
             $val = $m.Groups[2].Value
             if (-not $val -or $val -like '<*_*>' -or $val -eq '<TENANT>') { return $m.Value }
-            $tok = Get-OrCreatePrivacyToken -Value $val -Type 'NAME'
+            $tok = & $tokenFn -Value $val -Type 'NAME'
             if ($nameCountsRef) { $nameCountsRef['NAME'] = (($nameCountsRef['NAME']) + 1) }
             return ('{0}{1}' -f $prefix, $tok)
         }.GetNewClosure()
