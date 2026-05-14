@@ -36,18 +36,20 @@ Describe "Get-AIToolCatalog" {
         if ($t) { $t.destructive | Should -BeTrue }
     }
 
-    It "is case-sensitive on tool name lookup" {
+    It "is case-insensitive on tool name lookup (PowerShell convention)" {
+        # Get-AIToolByName uses -eq which is case-insensitive in
+        # PowerShell. The schema-validation layer enforces the
+        # exact-case contract on the AI's side via Test-AIToolInput.
         (Get-AIToolByName -Name 'submit_plan') | Should -Not -BeNullOrEmpty
-        # Wrong case returns $null
-        (Get-AIToolByName -Name 'Submit_Plan') | Should -BeNullOrEmpty
+        (Get-AIToolByName -Name 'Submit_Plan') | Should -Not -BeNullOrEmpty
     }
 }
 
 Describe "Test-AIToolInput (JSON Schema validation)" {
     It "rejects missing required fields" {
         $def = Get-AIToolByName -Name 'submit_plan'
-        $r = Test-AIToolInput -ToolDef $def -Input @{}
-        $r.Ok | Should -BeFalse
+        $r = Test-AIToolInput -ToolDef $def -InputHash @{}
+        $r.Valid | Should -BeFalse
         ($r.Errors -join ' ') | Should -Match 'required'
     }
 
@@ -57,15 +59,15 @@ Describe "Test-AIToolInput (JSON Schema validation)" {
             goal  = 'demo'
             steps = @(@{ id = 1; description = 'noop'; tool = 'Get-Guests'; params = @{} })
         }
-        $r = Test-AIToolInput -ToolDef $def -Input $valid
-        $r.Ok | Should -BeTrue
+        $r = Test-AIToolInput -ToolDef $def -InputHash $valid
+        $r.Valid | Should -BeTrue
     }
 
     It "rejects wrong parameter type" {
         $def = Get-AIToolByName -Name 'Get-StaleGuests'
         if (-not $def) { Set-ItResult -Skipped -Because 'Get-StaleGuests not in catalog'; return }
-        $r = Test-AIToolInput -ToolDef $def -Input @{ DaysSinceSignIn = 'ninety' }
-        $r.Ok | Should -BeFalse
+        $r = Test-AIToolInput -ToolDef $def -InputHash @{ DaysSinceSignIn = 'ninety' }
+        $r.Valid | Should -BeFalse
     }
 }
 
