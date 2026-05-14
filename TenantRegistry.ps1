@@ -62,11 +62,15 @@ function Save-TenantRegistry {
         clean if the operator checks the file into a config-mgmt
         system.
     #>
-    param([Parameter(Mandatory)][array]$Tenants)
+    # AllowEmptyCollection so Remove-Tenant on the last remaining
+    # tenant can pass @() through without a binding error.
+    param([Parameter(Mandatory)][AllowEmptyCollection()][array]$Tenants)
     $sorted = @($Tenants | Sort-Object { [string]$_.name })
     $p = Get-TenantRegistryPath
     $tmp = "$p.tmp"
-    Set-Content -LiteralPath $tmp -Value ($sorted | ConvertTo-Json -Depth 8) -Encoding UTF8 -Force
+    # -AsArray keeps a single-tenant registry serialized as [...] so
+    # the read path's @(ConvertFrom-Json) wrap stays consistent.
+    Set-Content -LiteralPath $tmp -Value ($sorted | ConvertTo-Json -Depth 8 -AsArray) -Encoding UTF8 -Force
     Move-Item -LiteralPath $tmp -Destination $p -Force
 }
 

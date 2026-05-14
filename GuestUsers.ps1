@@ -126,10 +126,14 @@ function Read-RecertState {
 }
 
 function Write-RecertState {
-    param([Parameter(Mandatory)][array]$Records)
+    # AllowEmptyCollection: a fully-resolved recert campaign should
+    # be writable as an empty array (clears the state file).
+    # -AsArray keeps a single-record file in array shape so Read
+    # round-trip via @(ConvertFrom-Json) stays consistent.
+    param([Parameter(Mandatory)][AllowEmptyCollection()][array]$Records)
     $p = Get-RecertStatePath
     if (-not $p) { return }
-    try { ($Records | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $p -Encoding UTF8 -Force }
+    try { ($Records | ConvertTo-Json -Depth 5 -AsArray) | Set-Content -LiteralPath $p -Encoding UTF8 -Force }
     catch { Write-Warn "Could not write recert state: $_" }
 }
 

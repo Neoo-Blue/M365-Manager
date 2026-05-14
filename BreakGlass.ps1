@@ -30,10 +30,14 @@ function Read-BreakGlassRegistry {
 }
 
 function Write-BreakGlassRegistry {
-    param([Parameter(Mandatory)][array]$Records)
+    param([Parameter(Mandatory)][AllowEmptyCollection()][array]$Records)
     $p = Get-BreakGlassStatePath
     if (-not $p) { return }
-    try { ($Records | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $p -Encoding UTF8 -Force }
+    # -AsArray (PS 6+) forces [...] even for a single record so the
+    # round-trip Read-BreakGlassRegistry -> @(ConvertFrom-Json) keeps
+    # an array shape. Without it a 1-record file serializes as a
+    # bare object and the next caller hits op_Addition on +=.
+    try { ($Records | ConvertTo-Json -Depth 5 -AsArray) | Set-Content -LiteralPath $p -Encoding UTF8 -Force }
     catch { Write-Warn "Could not write break-glass registry: $_" }
 }
 
@@ -51,7 +55,12 @@ function Register-BreakGlassAccount {
         [Parameter(Mandatory)][string]$UPN,
         [string]$AttestationEmail
     )
-    $regs = Read-BreakGlassRegistry
+    # @(...) on the return value: PowerShell unwraps single-element
+    # arrays during assignment, so without this Read-BreakGlassRegistry
+    # returns a PSCustomObject when there's exactly one registered
+    # account -- and `$regs += ...` then fails with op_Addition because
+    # PSObject doesn't define operator+.
+    $regs = @(Read-BreakGlassRegistry)
     $existing = $regs | Where-Object { $_.UPN -eq $UPN } | Select-Object -First 1
     $designatedBy = 'unknown'
     if (Get-Command Get-MgContext -ErrorAction SilentlyContinue) {
@@ -80,7 +89,7 @@ function Register-BreakGlassAccount {
 
 function Unregister-BreakGlassAccount {
     param([Parameter(Mandatory)][string]$UPN)
-    $regs = Read-BreakGlassRegistry
+    $regs = @(Read-BreakGlassRegistry)
     $remaining = @($regs | Where-Object { $_.UPN -ne $UPN })
     if ($remaining.Count -eq $regs.Count) { Write-Warn "No break-glass record for '$UPN'."; return }
     Write-BreakGlassRegistry -Records $remaining
@@ -164,7 +173,7 @@ function Test-BreakGlassPosture {
 }
 
 function Test-AllBreakGlassPosture {
-    $regs = Read-BreakGlassRegistry
+    $regs = @(Read-BreakGlassRegistry)
     if ($regs.Count -eq 0) { Write-Warn "No break-glass accounts registered."; return @() }
     $out = New-Object System.Collections.ArrayList
     foreach ($r in $regs) {
@@ -186,7 +195,7 @@ function Get-BreakGlassSignInActivity {
         scheduled health-breakglass-signins.ps1 check.
     #>
     param([int]$Days = 30)
-    $regs = Read-BreakGlassRegistry
+    $regs = @(Read-BreakGlassRegistry)
     if ($regs.Count -eq 0) { return @() }
     if (-not (Get-Command Search-SignIns -ErrorAction SilentlyContinue)) {
         Write-Warn "SignInLookup.ps1 not loaded."
@@ -236,7 +245,7 @@ function Invoke-QuarterlyBreakGlassAttestation {
         manually -- this just fires the campaign + records
         intent.
     #>
-    $regs = Read-BreakGlassRegistry
+    $regs = @(Read-BreakGlassRegistry)
     if ($regs.Count -eq 0) { Write-Warn "No break-glass accounts registered."; return }
     foreach ($r in $regs) {
         $w = Test-BreakGlassPosture -UPN $r.UPN
