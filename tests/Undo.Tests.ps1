@@ -68,8 +68,14 @@ Describe "ConvertTo-UndoTargetHashtable" {
 Describe "Get-UndoableEntries (using mixed fixture)" {
     BeforeAll {
         $script:FixturePath = Join-Path $PSScriptRoot 'fixtures/audit-mixed.jsonl'
-        # Stub Read-AuditEntries to return ONLY the fixture, not the real machine logs.
-        Mock -CommandName Read-AuditEntries -MockWith { Read-AuditEntries -Path @($script:FixturePath) }
+        # Stub Read-AuditEntries with a ParameterFilter so the mock
+        # only intercepts the no-args call -- the explicit -Path call
+        # inside the mock body delegates to the real function.
+        # Without the filter the mock recurses into itself until the
+        # PowerShell call-depth limit (12 sec, then ScriptCallDepthException).
+        Mock -CommandName Read-AuditEntries -ParameterFilter { -not $Path -or @($Path).Count -eq 0 } -MockWith {
+            Read-AuditEntries -Path @($script:FixturePath)
+        }
         # Stub Read-UndoState / Get-UndoStatePath so we don't touch the real sidecar.
         $script:TempState = @{}
         Mock -CommandName Read-UndoState -MockWith { $script:TempState }
