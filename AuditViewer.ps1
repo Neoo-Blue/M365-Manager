@@ -24,7 +24,7 @@ function ConvertFrom-AuditLine {
     if ($trimmed.StartsWith('{')) {
         try {
             $obj = $trimmed | ConvertFrom-Json -ErrorAction Stop
-            $ts = $null
+            $ts = [DateTime]::MinValue
             if ($obj.ts) { [DateTime]::TryParse($obj.ts, [ref]$ts) | Out-Null }
             return [PSCustomObject]@{
                 ts           = $ts
@@ -48,7 +48,9 @@ function ConvertFrom-AuditLine {
 
     # 2. Legacy session line: [ts] [event] [MODE=X] detail
     if ($trimmed -match '^\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[MODE=(\w+)\]\s*(.*)$') {
-        $ts = $null; [DateTime]::TryParse($Matches[1], [ref]$ts) | Out-Null
+        # PS 7 requires the [ref] target to be a non-null DateTime; the
+        # 2-arg TryParse overload won't bind when the variable is $null.
+        $ts = [DateTime]::MinValue; [DateTime]::TryParse($Matches[1], [ref]$ts) | Out-Null
         return [PSCustomObject]@{
             ts           = $ts
             entryId      = $null
@@ -70,7 +72,7 @@ function ConvertFrom-AuditLine {
 
     # 3. AI assistant log: [ts] [event] detail (no MODE= tag)
     if ($trimmed -match '^\[([^\]]+)\]\s*\[([^\]]+)\]\s*(.*)$') {
-        $ts = $null; [DateTime]::TryParse($Matches[1], [ref]$ts) | Out-Null
+        $ts = [DateTime]::MinValue; [DateTime]::TryParse($Matches[1], [ref]$ts) | Out-Null
         return [PSCustomObject]@{
             ts           = $ts
             entryId      = $null
@@ -186,7 +188,10 @@ function Filter-AuditEntries {
         if ($Filter.EventType  -and $e.event      -and ($e.event     -notlike $Filter.EventType)) { return $false }
         if ($Filter.ActionType -and $e.actionType -and ($e.actionType -notlike $Filter.ActionType)) { return $false }
         if ($Filter.ActionType -and -not $e.actionType) { return $false }
-        if ($Filter.Result     -and $e.result     -and ($e.result    -ne $Filter.Result))       { return $false }
+        # Result: missing $e.result is treated as not-matching, so a
+        # filter on 'failure' doesn't smuggle through legacy lines
+        # whose parser set result=$null.
+        if ($Filter.Result     -and ($e.result    -ne $Filter.Result))                          { return $false }
         if ($Filter.Tenant) {
             $t = $e.tenant
             $tStr = if ($t -is [string]) { $t } elseif ($t) { "$($t.name) $($t.id) $($t.domain)" } else { '' }
