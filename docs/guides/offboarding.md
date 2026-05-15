@@ -126,4 +126,4 @@ Soft-fail rules: if SPO is not connectable (license / role missing), Steps 8 and
 | 9    | ExtendOneDriveRetention | no          | intent-only record           |
 | 10   | SendOffboardSummary     | no          | email sent                   |
 
-See `docs/audit-format.md` for the JSONL audit record shape and `Undo.ps1` for the full dispatch table.
+See `docs/reference/audit-format.md` for the JSONL audit record shape and `Undo.ps1` for the full dispatch table.

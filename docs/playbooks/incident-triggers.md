@@ -141,7 +141,7 @@ Close-Incident -Id INC-... -Resolution "Legitimate user travel to Frankfurt; man
 
 ## See also
 
-- [`incident-response.md`](incident-response.md) — the playbook the framework opens incidents against.
-- [`incident-runbook-template.md`](incident-runbook-template.md) — printable IR runbook.
-- [`scheduled-checks.md`](scheduled-checks.md) — wiring health checks into Task Scheduler.
-- [`pre-merge-review.md`](pre-merge-review.md) §1 — the now-closed retrofit item for tenant-scoped incidents.
+- [`incident-response.md`](../guides/incident-response.md) — the playbook the framework opens incidents against.
+- [`incident-runbook-template.md`](compromised-account.md) — printable IR runbook.
+- [`scheduled-checks.md`](../guides/scheduled-checks.md) — wiring health checks into Task Scheduler.
+- [`pre-merge-review.md`](../operations/pre-merge-review.md) §1 — the now-closed retrofit item for tenant-scoped incidents.

@@ -51,7 +51,7 @@ Each emits a structured `health-result-<name>-<ts>.json` to the audit directory.
 | `health-conditional-access-conflicts.ps1`    | Three heuristics over `/identity/conditionalAccess/policies`: disabled critical policies, all-users-with-large-exclusion, missing legacy-auth block. |
 | `health-breakglass-signins.ps1`              | Pulls every registered break-glass account's last-24-hour sign-ins (Phase 4 Commit C). Normal state is zero rows. |
 
-Sample outputs for each are under `docs/sample-health-output/`.
+Sample outputs for each are under `docs/samples/health-output/`.
 
 ## Default behavior
 

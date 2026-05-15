@@ -325,7 +325,7 @@ You: /export <id> ./smoke-export.json
 
 ## 4. Critical-but-untested paths to watch
 
-From `docs/pre-merge-review.md` §2, ranked by blast radius.
+From `docs/operations/pre-merge-review.md` §2, ranked by blast radius.
 Trace through each during your live PREVIEW run:
 
 1. **`Offboard.ps1` end-to-end** — already covered by §2a above.
@@ -410,7 +410,7 @@ You're done when ALL of these are true:
   any `Switch-Tenant` or `Select-TenantMode`.
 
 If anything is unchecked, file the finding in
-`docs/pre-merge-review.md` or open an issue.
+`docs/operations/pre-merge-review.md` or open an issue.
 
 ## 6. Cleanup
 
@@ -424,11 +424,11 @@ If anything is unchecked, file the finding in
 
 ## See also
 
-- `docs/audit-format.md` — JSONL field reference.
-- `docs/offboard-flow.md` — the canonical 12-step flow + diagram.
-- `docs/multi-tenant.md` — tenant profile / switch / audit semantics.
-- `docs/ai-tools.md` — catalog schema + dispatch contract.
-- `docs/ai-planning.md` — submit_plan + approval UX.
-- `docs/pre-merge-review.md` — the unfixed deferred items
+- `docs/reference/audit-format.md` — JSONL field reference.
+- `docs/guides/offboarding.md` — the canonical 12-step flow + diagram.
+- `docs/concepts/multi-tenant.md` — tenant profile / switch / audit semantics.
+- `docs/guides/ai-tools-overview.md` — catalog schema + dispatch contract.
+- `docs/guides/ai-planning.md` — submit_plan + approval UX.
+- `docs/operations/pre-merge-review.md` — the unfixed deferred items
   (chat-sessions / break-glass / scheduler not yet tenant-scoped,
   10 of 13 override keys not yet wired through Get-EffectiveConfig).

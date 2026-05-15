@@ -109,7 +109,7 @@ if ($ok -and -not (Get-PreviewMode)) { Write-Success "Sign-in blocked." }
 
 Bulk operations accept `-WhatIf` independently — it flips `$script:PreviewMode` to `$true` for the duration of that single call (try/finally restores it on return) so a one-off dry-run does not disturb the rest of the session.
 
-Audit log location: `%LOCALAPPDATA%\M365Manager\audit\session-<ts>-<pid>.log` (Windows) or `~/.m365manager/audit/session-<ts>-<pid>.log` (POSIX, mode `0700`). Every line is tagged `MODE=PREVIEW` or `MODE=LIVE` — grep one or the other to filter. A sample preview log shape is at `docs/preview-sample.log`.
+Audit log location: `%LOCALAPPDATA%\M365Manager\audit\session-<ts>-<pid>.log` (Windows) or `~/.m365manager/audit/session-<ts>-<pid>.log` (POSIX, mode `0700`). Every line is tagged `MODE=PREVIEW` or `MODE=LIVE` — grep one or the other to filter. A sample preview log shape is at `docs/samples/preview-session.log`.
 
 ## Audit & reporting
 
@@ -121,7 +121,7 @@ A new "Audit & Reporting..." main-menu entry groups everything an operator might
 4. **Sign-in lookup (recent activity for one user)** — UPN one-shot, last 30 days.
 5. **Unified audit log** — wraps `Search-UnifiedAuditLog`; health-checks ingestion is enabled first.
 
-The session log itself is now JSON-per-line. See `docs/audit-format.md` for the field reference. The viewer transparently handles both new JSONL and pre-Phase-2 human-readable lines.
+The session log itself is now JSON-per-line. See `docs/reference/audit-format.md` for the field reference. The viewer transparently handles both new JSONL and pre-Phase-2 human-readable lines.
 
 ## Undo recent operations
 
@@ -197,7 +197,7 @@ Bulk via `Invoke-BulkGuestRemoval -Path .csv [-WhatIf]` (sample: `templates/bulk
 
 ## Offboarding (canonical 12-step flow)
 
-See `docs/offboard-flow.md` for the diagram and the per-step Graph / EXO / SPO connectivity requirements. The step order, in both single-user and bulk modes:
+See `docs/guides/offboarding.md` for the diagram and the per-step Graph / EXO / SPO connectivity requirements. The step order, in both single-user and bulk modes:
 
 | # | Step                                          | Skippable? |
 |---|-----------------------------------------------|------------|
@@ -256,7 +256,7 @@ Each emits a `health-result-<name>-<ts>.json` next to the audit log with `status
 
 **Default output**: file + email to `SecurityTeamRecipients` on `findings`. Tune with `-Output` / `-NotifyOn`.
 
-**Non-interactive contract**: every check runs with `-NonInteractive` which flips a session flag in `UI.ps1`. `Read-UserInput` returns empty, `Confirm-Action` returns `$false` (DECLINE — a scheduled run never silently auto-approves), `Show-Menu` returns -1, `Pause-ForUser` is a no-op. See `docs/scheduled-checks.md` for the credential model (`Register-SchedulerCredential` stores a DPAPI-protected `{TenantId, AppId, encryptedSecret}` triple).
+**Non-interactive contract**: every check runs with `-NonInteractive` which flips a session flag in `UI.ps1`. `Read-UserInput` returns empty, `Confirm-Action` returns `$false` (DECLINE — a scheduled run never silently auto-approves), `Show-Menu` returns -1, `Pause-ForUser` is a no-op. See `docs/guides/scheduled-checks.md` for the credential model (`Register-SchedulerCredential` stores a DPAPI-protected `{TenantId, AppId, encryptedSecret}` triple).
 
 ## Break-glass accounts
 
@@ -273,7 +273,7 @@ Posture warnings (`Test-BreakGlassPosture`):
 
 `Invoke-QuarterlyBreakGlassAttestation` runs the posture check on every registered account, emails the attestation contact via the Notifications framework, and stamps `LastAttestedAt`. Sign-off is captured manually.
 
-See `docs/breakglass-best-practices.md` for the Microsoft-recommended cadence and the mapping of each recommendation to a `Test-BreakGlassPosture` warning.
+See `docs/guides/breakglass-accounts.md` for the Microsoft-recommended cadence and the mapping of each recommendation to a `Test-BreakGlassPosture` warning.
 
 ## Notifications
 
@@ -342,7 +342,7 @@ Invoke-CompromisedAccountResponse -UPN alice@contoso.com -Severity High
 #   Export incident for compliance handoff
 ```
 
-See [`docs/incident-response.md`](docs/incident-response.md) for the operator reference, [`docs/incident-runbook-template.md`](docs/incident-runbook-template.md) for the printable paper runbook (compliance audits), and [`docs/incident-triggers.md`](docs/incident-triggers.md) for the auto-detection framework.
+See [`docs/guides/incident-response.md`](docs/guides/incident-response.md) for the operator reference, [`docs/playbooks/compromised-account.md`](docs/playbooks/compromised-account.md) for the printable paper runbook (compliance audits), and [`docs/playbooks/incident-triggers.md`](docs/playbooks/incident-triggers.md) for the auto-detection framework.
 
 ## Multi-tenant / MSP mode (Phase 6)
 
@@ -361,7 +361,7 @@ forensics work cleanly.
   `<stateDir>/secrets/tenant-<name>.dat` (DPAPI-encrypted on
   Windows). Three auth modes: Interactive (no creds at rest),
   CertThumbprint (recommended for app-only), ClientSecret
-  (encrypted but warned). See [docs/multi-tenant.md](docs/multi-tenant.md).
+  (encrypted but warned). See [docs/concepts/multi-tenant.md](docs/concepts/multi-tenant.md).
 - **Fast switching** — `Switch-Tenant -Name <name>` (or `/tenant
   <name>` from chat) disconnects current sessions, swaps in the
   profile, reconnects app-only when creds are wired, and paints a
@@ -379,8 +379,8 @@ forensics work cleanly.
   latest.html` with one card per tenant (users, monthly USD, MFA
   %, stale guests, orphan teams, break-glass posture) plus
   portfolio totals. No JavaScript / no CDNs — safe to email or
-  open offline. See [docs/msp-dashboard.md](docs/msp-dashboard.md)
-  and [docs/sample-msp-dashboard/](docs/sample-msp-dashboard/).
+  open offline. See [docs/guides/msp-dashboard.md](docs/guides/msp-dashboard.md)
+  and [docs/samples/msp-dashboard/](docs/samples/msp-dashboard/).
 - **Per-tenant configuration overrides** —
   `Get-EffectiveConfig -Key <name>` resolves a value through
   global config → `<stateDir>/tenant-overrides/<name>.json` →
@@ -391,7 +391,7 @@ forensics work cleanly.
   the remaining 10 (notification recipients, OneDrive retention,
   default role template, license prices, etc.) are tracked for
   mechanical conversion in a follow-up — their consuming modules
-  still read `$Config` directly. See [docs/tenant-overrides.md](docs/tenant-overrides.md).
+  still read `$Config` directly. See [docs/concepts/tenant-overrides.md](docs/concepts/tenant-overrides.md).
 
 New PowerShell entry points:
 
@@ -434,26 +434,26 @@ sane.
   dispatcher runs them via `Invoke-Action` (so PREVIEW + undo + audit
   still apply). The regex `RUN:` path stays as a fallback for Ollama
   models that lack tool support but logs a deprecation warning on
-  first use. See [docs/ai-tools.md](docs/ai-tools.md).
+  first use. See [docs/guides/ai-tools-overview.md](docs/guides/ai-tools-overview.md).
 - **Multi-step plans** — for 3+ tool calls (configurable) Mark must
   submit a structured plan via the `submit_plan` meta-tool. The
   operator approves the whole thing (`[A]` all / `[S]` step-by-step /
   `[E]` edit / `[R]` reject) before any step runs. Topological
   execution honors `dependsOn`; `failureMode: ask` opens a revise
-  loop. See [docs/ai-planning.md](docs/ai-planning.md) and a sample
+  loop. See [docs/guides/ai-planning.md](docs/guides/ai-planning.md) and a sample
   in [docs/samples/sample-plan.json](docs/samples/sample-plan.json).
 - **Cost tracking** — token usage from every call lands in
   `<stateDir>/ai-cost/events-YYYY-MM.jsonl` priced against
   `templates/ai-prices.json`. `/cost` shows session totals, `/costs`
   rolls up 6 months and the last 7 days; `MonthlyBudgetUsd` +
   `AlertAtPct` trigger one-per-month threshold alerts written into
-  the audit log. See [docs/ai-cost-model.md](docs/ai-cost-model.md).
+  the audit log. See [docs/guides/ai-costs.md](docs/guides/ai-costs.md).
 - **Persistent chat sessions** — `/save` writes a DPAPI-encrypted
   blob under `<stateDir>/chat-sessions/`. `/list`, `/load`,
   `/rename`, `/delete`, `/ephemeral`, and `/export` (writes a
   *redacted* JSON safe for sharing) round out the lifecycle. Chats
   auto-save on `/quit` unless `/ephemeral` is on. See
-  [docs/ai-session-persistence.md](docs/ai-session-persistence.md)
+  [docs/guides/ai-sessions.md](docs/guides/ai-sessions.md)
   and [docs/samples/sample-session-export.json](docs/samples/sample-session-export.json).
 - **UX polish** — real Ollama streaming (deltas print as they
   arrive), background spinner while a cloud call is in flight,

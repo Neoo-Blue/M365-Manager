@@ -131,8 +131,8 @@ The bundle may contain sensitive forensic data (UPNs, sign-in IPs, mail subjects
 
 ## See also
 
-- [`docs/incident-runbook-template.md`](incident-runbook-template.md) — printable paper runbook for compliance audits demonstrating IR process.
-- [`docs/incident-triggers.md`](incident-triggers.md) — auto-detection framework details.
-- [`docs/sample-incident/`](sample-incident/) — anonymized example for training / demos.
-- [`docs/audit-format.md`](audit-format.md) — the JSONL audit format the playbook emits to.
-- [`docs/pre-merge-review.md`](pre-merge-review.md) — what was deferred in earlier phases (incidents-per-tenant retrofit landed here).
+- [`docs/playbooks/compromised-account.md`](../playbooks/compromised-account.md) — printable paper runbook for compliance audits demonstrating IR process.
+- [`docs/playbooks/incident-triggers.md`](../playbooks/incident-triggers.md) — auto-detection framework details.
+- [`docs/samples/incident/`](sample-incident/) — anonymized example for training / demos.
+- [`docs/reference/audit-format.md`](../reference/audit-format.md) — the JSONL audit format the playbook emits to.
+- [`docs/operations/pre-merge-review.md`](../operations/pre-merge-review.md) — what was deferred in earlier phases (incidents-per-tenant retrofit landed here).

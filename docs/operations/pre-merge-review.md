@@ -77,15 +77,15 @@ Top 10 ranked by "what would real damage look like":
 
 ## 3. Documentation gaps
 
-- `docs/ai-cost-model.md` mentions `Test-AIBudgetCap` as a
+- `docs/guides/ai-costs.md` mentions `Test-AIBudgetCap` as a
   "future hook" — that function does not exist anywhere. Either
   build it or drop the reference. (caught by grep; pre-merge fix
   candidate.)
-- `docs/audit-format.md` was updated for Phase 6's structured
+- `docs/reference/audit-format.md` was updated for Phase 6's structured
   tenant field but the JSON example still shows the legacy
   `"tenant":"contoso.onmicrosoft.com"` string shape. Confusing for
   someone scanning the doc.
-- `docs/tenant-overrides.md` declares 13 overrideable keys; only
+- `docs/concepts/tenant-overrides.md` declares 13 overrideable keys; only
   3 are actually consulted via `Get-EffectiveConfig` today
   (`AI.MonthlyBudgetUsd`, `AI.AlertAtPct`, `StaleGuestDays`). The
   doc honestly flags this as "follow-up" but the README's bullet
@@ -120,7 +120,7 @@ Six raw SDK / Exchange cmdlets run without going through
 `AIToolCall` audit line (`AIToolDispatch.ps1:289`) but no
 `EXEC` line with `actionType` / `reverse` / `noUndoReason`.
 That breaks undo, retroactive PREVIEW-only forensics, and the
-contract documented in `docs/audit-format.md`.
+contract documented in `docs/reference/audit-format.md`.
 
 **Pre-merge fix candidate.** Either:
 - Add explicit `case` branches in `Invoke-AIToolImpl` for the
@@ -210,9 +210,9 @@ Tenant\* → feature modules → MSP\* → AI\*). Clean.
   Documented in `TenantSwitch.ps1:113-115`.
 - **`Invoke-AcrossTenants -Parallel` is accepted but ignored**
   (sequential under the hood). Documented in
-  `docs/multi-tenant.md`.
+  `docs/concepts/multi-tenant.md`.
 - **MSP dashboard does not deep-link to per-tenant detail
-  reports** — flagged in commit D body and `docs/msp-dashboard.md`.
+  reports** — flagged in commit D body and `docs/guides/msp-dashboard.md`.
 - **PowerShell 5.1 vs 7 compat** — only 5.1 was specifically
   tested per smoke. Phase 5 streaming uses HttpWebRequest which
   works on both, but `Start-Job` background spinner behavior may
@@ -229,9 +229,9 @@ ratio.
    bypass audit on AI-driven invocation. ~30 lines, high impact.
    **Will fix before merge.**
 2. **Remove `Test-AIBudgetCap` phantom reference from
-   `docs/ai-cost-model.md`** (finding #3). One-line fix.
+   `docs/guides/ai-costs.md`** (finding #3). One-line fix.
    **Will fix before merge.**
-3. **Update `docs/audit-format.md` JSON example to the Phase 6
+3. **Update `docs/reference/audit-format.md` JSON example to the Phase 6
    structured tenant shape** (finding #3). The legacy string
    example still in the doc is misleading.
    **Will fix before merge.**
