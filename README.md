@@ -2,6 +2,8 @@
 
 A modular PowerShell TUI application for common Microsoft 365 admin tasks. Blue background, multi-color interface, confirmation prompts on every change, and browser-based OAuth authentication.
 
+> See [RELATIONSHIPS.md](RELATIONSHIPS.md) for the three-repo architecture.
+
 ## Prerequisites
 
 Install the required PowerShell modules (the tool will auto-install if missing):
