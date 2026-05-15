@@ -367,7 +367,25 @@ function Invoke-AIPlanApprovalFlow {
             return @{ Status = 'rejected'; Reason = 'validation_failed'; ValidationErrors = $check.Errors; PlanFinal = $plan }
         }
         Show-AIPlan -Plan $plan
+        # Phase 7: scan for steps whose tool has requiresExplicitApproval=true
+        # in the catalog (currently Invoke-CompromisedAccountResponse). If any
+        # are present, [A]pprove-all is forcibly downgraded to stepByStep --
+        # the operator must confirm each step regardless.
+        $hasExplicitApprovalStep = $false
+        if (Get-Command Get-AIToolByName -ErrorAction SilentlyContinue) {
+            foreach ($s in @($plan.steps)) {
+                $td = Get-AIToolByName -Name ([string]$s.tool)
+                if ($td -and $td.requiresExplicitApproval) { $hasExplicitApprovalStep = $true; break }
+            }
+        }
+        if ($hasExplicitApprovalStep) {
+            Write-Warn "Plan contains step(s) flagged requiresExplicitApproval -- [A]pprove-all is disabled for this plan."
+        }
         $decision = Read-PlanApproval
+        if ($hasExplicitApprovalStep -and $decision -eq 'approveAll') {
+            Write-InfoMsg "Downgrading approveAll to stepByStep because a step requires explicit approval."
+            $decision = 'stepByStep'
+        }
         switch ($decision) {
             'reject' {
                 Write-Warn "Plan rejected."

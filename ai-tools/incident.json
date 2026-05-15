@@ -1,0 +1,66 @@
+[
+  {
+    "name": "Invoke-CompromisedAccountResponse",
+    "description": "Run the 13-step compromised-account playbook against a UPN. Snapshots state, contains (block / revoke / rotate), audits 24h activity + 7d sent mail + 7d outbound shares, optionally quarantines sent mail, notifies security team, generates an HTML report. Highest-blast-radius operation in the tool. ALWAYS requires explicit per-step operator approval; plan-level [A]pprove-all is forcibly disabled when this tool appears in a plan.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "UPN":                { "type": "string", "description": "Compromised user principal name (e.g. alice@contoso.com)." },
+        "Severity":           { "type": "string", "enum": ["Low","Medium","High","Critical"], "description": "Low=forensic only; Medium=contain; High=default; Critical=add quarantine prompt." },
+        "Reason":             { "type": "string", "description": "Free-text reason recorded with the incident registry record." },
+        "QuarantineSentMail": { "type": "boolean", "description": "Enable step 11 (purge 7d sent items). Always requires the operator to type PURGE to confirm even in non-interactive mode." }
+      },
+      "required": ["UPN","Severity"]
+    },
+    "destructive": true,
+    "requiresExplicitApproval": true,
+    "minimumSeverityToInvoke": "High",
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-IncidentTimeline",
+    "description": "Read-only. Returns a chronological list of audit entries tied to one incident id. Useful when the operator asks 'walk me through what happened in INC-XXXX'. No state changes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "IncidentId": { "type": "string", "description": "Like INC-2026-05-14-a3f2" }
+      },
+      "required": ["IncidentId"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Get-IncidentList",
+    "description": "Read-only. List incidents in the current tenant, filtered by status / days / severity. Returns the same shape as Get-Incidents.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "Status":   { "type": "string", "enum": ["Open","Closed","All"], "description": "Default Open" },
+        "Days":     { "type": "integer", "description": "Only incidents started within N days" },
+        "Severity": { "type": "string", "enum": ["Low","Medium","High","Critical"] }
+      },
+      "required": []
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  },
+  {
+    "name": "Summarize-AuditEvents",
+    "description": "Generate a human-readable narrative ('In the last 24h this account signed in from Lagos and Sao Paulo within 6 minutes of each other, downloaded 187 files, and sent 23 emails to external recipients containing the phrase \"wire transfer urgent\"') from a list of audit / sign-in events captured during an incident. Sends events through the existing privacy-redaction pass before calling the configured AI provider. Gated by config: IncidentResponse.UseAIForNarrative must be 'Enabled' or this returns ai_narrative_disabled -- off by default so sensitive forensic data is not sent to an external LLM unless the operator explicitly opted in.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "IncidentId": { "type": "string" },
+        "MaxRows":    { "type": "integer", "description": "Cap events sent to the model (default 100)" }
+      },
+      "required": ["IncidentId"]
+    },
+    "destructive": false,
+    "wrapInInvokeAction": false,
+    "reverseTool": null
+  }
+]

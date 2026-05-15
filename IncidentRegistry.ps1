@@ -340,6 +340,128 @@ function Export-Incident {
 }
 
 # ============================================================
+#  AI helper surface (read-only)
+# ============================================================
+
+function Get-IncidentTimeline {
+    <#
+        Chronological list of audit entries for one incident. Used
+        by the AI assistant's Get-IncidentTimeline tool so the
+        operator can ask "walk me through what happened in INC-X".
+        Read-only -- no Invoke-Action wrapping.
+    #>
+    param([Parameter(Mandatory)][string]$IncidentId)
+    if (-not (Get-Command Read-AuditEntries -ErrorAction SilentlyContinue)) {
+        return @{ ok = $false; error = 'auditviewer_not_loaded'; details = 'Read-AuditEntries unavailable.' }
+    }
+    $entries = @(Read-AuditEntries | Where-Object {
+        $_.target -and $_.target.incidentId -eq $IncidentId
+    } | Sort-Object { $_.ts })
+    if ($entries.Count -eq 0) {
+        return @{ ok = $true; result = @{ incidentId = $IncidentId; entries = @() } }
+    }
+    $simplified = @($entries | ForEach-Object {
+        @{
+            ts          = if ($_.ts) { $_.ts.ToString('o') } else { $null }
+            event       = [string]$_.event
+            actionType  = [string]$_.actionType
+            description = [string]$_.description
+            result      = [string]$_.result
+            mode        = [string]$_.mode
+            entryId     = [string]$_.entryId
+            isReversible= [bool]$_.reverse
+        }
+    })
+    return @{ ok = $true; result = @{ incidentId = $IncidentId; count = $simplified.Count; entries = $simplified } }
+}
+
+function Get-IncidentList {
+    <#
+        Thin wrapper around Get-Incidents that returns the same
+        shape every other AI tool returns (ok / result). Used by
+        the ai-tools/incident.json catalog entry.
+    #>
+    param(
+        [ValidateSet('Open','Closed','All')][string]$Status = 'Open',
+        [int]$Days,
+        [ValidateSet('Low','Medium','High','Critical')][string]$Severity
+    )
+    $args = @{ Status = $Status }
+    if ($Days)     { $args.Days     = $Days }
+    if ($Severity) { $args.Severity = $Severity }
+    $list = Get-Incidents @args
+    $simplified = @($list | ForEach-Object {
+        @{
+            id           = [string]$_.id
+            upn          = [string]$_.upn
+            severity     = [string]$_.severity
+            status       = [string]$_.status
+            startedUtc   = [string]$_.startedUtc
+            completedUtc = [string]$_.completedUtc
+            reportPath   = [string]$_.reportPath
+        }
+    })
+    return @{ ok = $true; result = @{ count = $simplified.Count; incidents = $simplified } }
+}
+
+function Summarize-AuditEvents {
+    <#
+        Build a natural-language narrative from one incident's
+        audit + sign-in + UAL rows. Gated by
+        IncidentResponse.UseAIForNarrative (default Disabled) so
+        sensitive forensic data never reaches an external LLM
+        unless the operator explicitly opted in. Re-uses
+        Invoke-AIChat for the call -- the existing redaction layer
+        applies automatically.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$IncidentId,
+        [int]$MaxRows = 100
+    )
+    # Config gate
+    $useAi = 'Disabled'
+    if (Get-Command Get-EffectiveConfig -ErrorAction SilentlyContinue) {
+        $v = Get-EffectiveConfig -Key 'IncidentResponse.UseAIForNarrative'
+        if ($v) { $useAi = [string]$v }
+    }
+    if ($useAi -ne 'Enabled') {
+        return @{ ok = $false; error = 'ai_narrative_disabled'; details = "IncidentResponse.UseAIForNarrative is '$useAi'. Set to 'Enabled' in config to allow the playbook to send (redacted) audit data to the AI provider for narrative generation." }
+    }
+
+    $i = Get-Incident -Id $IncidentId
+    if (-not $i) { return @{ ok = $false; error = 'incident_not_found'; details = "No incident '$IncidentId'." } }
+
+    # Collect events: registry trail + the 3 audit JSONs (24h / sent mail / shares)
+    $events = New-Object System.Collections.ArrayList
+    foreach ($name in 'audit-24h.json','mail-sent-7d.json','shares-7d.json') {
+        $p = Join-Path $i.directory $name
+        if (Test-Path -LiteralPath $p) {
+            try { [void]$events.Add(@{ source = $name; content = (Get-Content -LiteralPath $p -Raw | ConvertFrom-Json) }) } catch {}
+        }
+    }
+    # Cap rows to keep token use sane
+    $eventsJson = ($events | ConvertTo-Json -Depth 10 -Compress)
+    if ($eventsJson.Length -gt ($MaxRows * 800)) {
+        $eventsJson = $eventsJson.Substring(0, $MaxRows * 800) + ' /* TRUNCATED */'
+    }
+
+    if (-not (Get-Command Invoke-AIChat -ErrorAction SilentlyContinue) -or -not (Get-Command Get-AIConfig -ErrorAction SilentlyContinue)) {
+        return @{ ok = $false; error = 'ai_unavailable'; details = 'Invoke-AIChat / Get-AIConfig not loaded.' }
+    }
+    $config = Get-AIConfig
+    if (-not $config) { return @{ ok = $false; error = 'ai_not_configured'; details = 'No AI provider configured.' } }
+    if ($config -is [PSCustomObject]) { $ht = @{}; $config.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }; $config = $ht }
+
+    $prompt = "You are a security analyst. Read the following audit / sign-in / sent-mail / shares JSON for incident $IncidentId and produce a concise narrative (3-6 sentences) of what the account did during the incident window. Highlight: anomalous locations, mass downloads, external recipients, unusual subject lines, after-hours activity. End with a 'Recommended follow-up' line.`n`n$eventsJson"
+    try {
+        $resp = Invoke-AIChat -Config $config -Messages @(@{ role='user'; content=$prompt })
+        return @{ ok = $true; result = @{ incidentId = $IncidentId; narrative = $resp } }
+    } catch {
+        return @{ ok = $false; error = 'ai_call_failed'; details = $_.Exception.Message }
+    }
+}
+
+# ============================================================
 #  Menu (slot 22)
 # ============================================================
 
