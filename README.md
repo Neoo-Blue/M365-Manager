@@ -2,6 +2,8 @@
 
 A modular PowerShell TUI for Microsoft 365 administration. Blue background, multi-color menus, confirmation prompts on every change, browser-based OAuth, full audit log, undo system, AI assistant, multi-tenant / MSP mode, and a compromised-account incident-response playbook.
 
+> See [RELATIONSHIPS.md](RELATIONSHIPS.md) for the three-repo architecture.
+
 ```text
 +================================================================+
 |  M365 Admin                       [LIVE]                       |
