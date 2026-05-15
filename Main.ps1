@@ -79,7 +79,7 @@ $modules = @(
     "MFAManager.ps1","OneDriveManager.ps1","TeamsManager.ps1","SharePoint.ps1",
     "GuestUsers.ps1","LicenseOptimizer.ps1","Scheduler.ps1","BreakGlass.ps1",
     "MSPReports.ps1","MSPDashboard.ps1",
-    "IncidentResponse.ps1",
+    "IncidentResponse.ps1","IncidentRegistry.ps1",
     "AICostTracker.ps1","AISessionStore.ps1","AIUx.ps1","AIToolDispatch.ps1","AIPlanner.ps1","AIAssistant.ps1"
 )
 
@@ -224,7 +224,8 @@ function Start-M365Admin {
             "Guest Users...",
             "License & Cost...",
             "Scheduled Health Checks...",
-            "Tenants..."
+            "Tenants...",
+            "Incident Response..."
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
 
         switch ($sel) {
@@ -266,6 +267,13 @@ function Start-M365Admin {
                             $script:SessionState.TenantName = "Own Tenant"
                         }
                     }
+                }
+            }
+            22 {
+                if (Get-Command Start-IncidentResponseMenu -ErrorAction SilentlyContinue) {
+                    Start-IncidentResponseMenu
+                } else {
+                    Write-Warn "Incident response module not loaded."
                 }
             }
             -1 {
