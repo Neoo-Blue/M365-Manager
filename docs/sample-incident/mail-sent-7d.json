@@ -1,0 +1,14 @@
+{
+  "capturedAtUtc": "2026-05-14T17:42:35.000Z",
+  "upn": "alice@contoso.com",
+  "windowDays": 7,
+  "messages": [
+    { "id": "msg-001", "subject": "URGENT: wire transfer authorization required", "sentUtc": "2026-05-14T17:40:01.000Z", "recipients": ["cfo@contoso.com","controller@contoso.com"] },
+    { "id": "msg-002", "subject": "Updated banking details for May payroll",       "sentUtc": "2026-05-14T17:40:18.000Z", "recipients": ["finance@contoso.com"] },
+    { "id": "msg-003", "subject": "Verify your access -- click within 30 minutes", "sentUtc": "2026-05-14T17:40:32.000Z", "recipients": ["bob@contoso.com","carol@contoso.com","dave@contoso.com","eve@contoso.com"] },
+    { "id": "msg-004", "subject": "Re: Q1 sales review",                            "sentUtc": "2026-05-13T15:22:11.000Z", "recipients": ["bob@contoso.com"] },
+    { "id": "msg-005", "subject": "Lunch tomorrow?",                                "sentUtc": "2026-05-12T11:08:44.000Z", "recipients": ["carol@contoso.com"] }
+  ],
+  "externalRecipients": [],
+  "errors": []
+}

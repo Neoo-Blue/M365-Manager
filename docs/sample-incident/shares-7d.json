@@ -1,0 +1,11 @@
+{
+  "capturedAtUtc": "2026-05-14T17:42:40.000Z",
+  "upn": "alice@contoso.com",
+  "windowDays": 7,
+  "shares": [
+    { "ts": "2026-05-14T17:41:08.000Z", "target": "external-attacker@protonmail.example", "item": "Q1-Customer-List.xlsx",  "site": "https://contoso.sharepoint.com/sites/sales",   "permission": "edit" },
+    { "ts": "2026-05-14T17:41:14.000Z", "target": "external-attacker@protonmail.example", "item": "Banking-Routing-Info.pdf", "site": "https://contoso.sharepoint.com/sites/finance", "permission": "read" }
+  ],
+  "externalDomains": ["protonmail.example"],
+  "errors": []
+}

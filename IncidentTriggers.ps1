@@ -156,11 +156,15 @@ function Detect-AnomalousLocationSignIn {
     $latest = $sorted[-1]
     $baseline = $sorted[0..($sorted.Count - 2)]
 
-    $latestCountry = if ($latest.Location -is [hashtable]) { [string]$latest.Location.countryOrRegion } elseif ($latest.PSObject.Properties.Name -contains 'Location') { [string]$latest.Location } else { '' }
+    # Accept both PSCustomObject (Graph SDK shape) and hashtable
+    # (test fixture shape). Both support .Location and .countryOrRegion
+    # member access; we just have to handle the nested-hashtable case
+    # where Search-SignIns surfaces Location as a structured object.
+    $latestCountry = Get-IncidentSignInCountry -SignIn $latest
     if (-not $latestCountry) { return $null }
     $baselineCountries = @{}
     foreach ($s in $baseline) {
-        $c = if ($s.Location -is [hashtable]) { [string]$s.Location.countryOrRegion } elseif ($s.PSObject.Properties.Name -contains 'Location') { [string]$s.Location } else { '' }
+        $c = Get-IncidentSignInCountry -SignIn $s
         if ($c) { $baselineCountries[$c] = $true }
     }
     if ($baselineCountries.ContainsKey($latestCountry)) { return $null }
@@ -173,6 +177,36 @@ function Detect-AnomalousLocationSignIn {
             lookbackDays  = [int]$cfg.AnomalousLocationLookbackDays
         } `
         -RecommendedAction "Verify the user is travelling. If not, run /incident $UPN High."
+}
+
+function Get-IncidentSignInCountry {
+    <#
+        Extract a country string from a sign-in record, tolerating
+        the three shapes we see in practice:
+          1. Search-SignIns / Graph SDK shape: .Location is a
+             hashtable with .countryOrRegion / .city
+          2. Pre-normalized shape: .Location is a string already
+          3. Snapshot.json round-trip via ConvertFrom-Json:
+             a PSCustomObject with Location as either string or
+             nested object.
+    #>
+    param($SignIn)
+    if (-not $SignIn) { return '' }
+    $loc = $null
+    try { $loc = $SignIn.Location } catch { return '' }
+    if ($null -eq $loc) { return '' }
+    if ($loc -is [string]) { return $loc }
+    # Nested hashtable / PSCustomObject -- look for countryOrRegion
+    if ($loc -is [hashtable]) {
+        if ($loc.ContainsKey('countryOrRegion')) { return [string]$loc['countryOrRegion'] }
+        if ($loc.ContainsKey('country'))         { return [string]$loc['country'] }
+        return ''
+    }
+    try {
+        $c = $loc.countryOrRegion
+        if ($c) { return [string]$c }
+    } catch {}
+    return ''
 }
 
 function Detect-ImpossibleTravel {
@@ -194,8 +228,8 @@ function Detect-ImpossibleTravel {
     $sorted = @($SignIns | Sort-Object { [DateTime]$_.CreatedDateTime })
     for ($i = 1; $i -lt $sorted.Count; $i++) {
         $a = $sorted[$i - 1]; $b = $sorted[$i]
-        $cA = if ($a.Location -is [hashtable]) { [string]$a.Location.countryOrRegion } elseif ($a.PSObject.Properties.Name -contains 'Location') { [string]$a.Location } else { '' }
-        $cB = if ($b.Location -is [hashtable]) { [string]$b.Location.countryOrRegion } elseif ($b.PSObject.Properties.Name -contains 'Location') { [string]$b.Location } else { '' }
+        $cA = Get-IncidentSignInCountry -SignIn $a
+        $cB = Get-IncidentSignInCountry -SignIn $b
         if (-not $cA -or -not $cB -or $cA -eq $cB) { continue }
         $km = Get-CountryDistanceKm -Country1 $cA -Country2 $cB
         if ($null -eq $km) { continue }
