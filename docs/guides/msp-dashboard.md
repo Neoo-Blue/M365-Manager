@@ -78,7 +78,7 @@ rather than waiting for the refresh interactively.
 
 ## Performance / scale notes
 
-- **Sequential by design** -- see [multi-tenant.md](multi-tenant.md)
+- **Sequential by design** -- see [multi-tenant.md](../concepts/multi-tenant.md)
   for why parallelism is unsafe with SDK singletons.
 - **Failed tenants get rendered as red cards** rather than
   silently dropping. The Error field is captured but not currently

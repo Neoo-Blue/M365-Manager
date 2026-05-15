@@ -147,5 +147,5 @@ before any destructive operation -- visual verification beats trust.
 ## See also
 
 - [tenant-overrides.md](tenant-overrides.md) -- per-tenant config keys.
-- [msp-dashboard.md](msp-dashboard.md) -- HTML portfolio overview.
-- [audit-format.md](audit-format.md) -- structured tenant field details.
+- [msp-dashboard.md](../guides/msp-dashboard.md) -- HTML portfolio overview.
+- [audit-format.md](../reference/audit-format.md) -- structured tenant field details.

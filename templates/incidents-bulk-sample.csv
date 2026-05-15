@@ -1,0 +1,5 @@
+UPN,Severity,Reason,QuarantineSentMail
+alice@contoso.com,High,Phishing campaign on 2026-05-14,false
+bob@contoso.com,High,Phishing campaign on 2026-05-14,false
+charlie@contoso.com,Critical,AiTM compromise with rule signature,true
+dave@contoso.com,Medium,Suspicious sign-in from anomalous location only,false

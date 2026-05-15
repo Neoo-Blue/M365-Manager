@@ -1,0 +1,21 @@
+{
+  "name": "insider-mass-download",
+  "description": "Departing employee suddenly downloads hundreds of files from SharePoint / OneDrive in a short window. Trigger: Detect-MassFileDownload (>50 files in 5 minutes).",
+  "severity": "High",
+  "trigger": "MassFileDownload detector + recent termination notice.",
+  "expectedActions": [
+    "Snapshot",
+    "BlockSignIn",
+    "RevokeSessions",
+    "Audit24h",
+    "AuditShares",
+    "Notify",
+    "Report"
+  ],
+  "expectedFindings": [
+    ">50 files downloaded within the detection window",
+    "Outbound shares to personal Gmail / Hotmail / proton domains",
+    "Activity outside normal business hours"
+  ],
+  "recoveryNotes": "Engage legal + HR before deleting data the user may have legitimately authored. Preserve the snapshot for the duration of any litigation hold. Do NOT force password change until legal has captured device images."
+}

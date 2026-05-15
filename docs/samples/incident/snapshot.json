@@ -1,0 +1,47 @@
+{
+  "capturedAtUtc": "2026-05-14T17:42:11.000Z",
+  "upn": "alice@contoso.com",
+  "userId": "abcd-1234-aaaa-0000-000000000001",
+  "displayName": "Alice Example",
+  "accountEnabled": true,
+  "signInActivity": {
+    "lastSignInDateTime": "2026-05-14T17:38:02.000Z"
+  },
+  "manager": {
+    "id": "abcd-1234-aaaa-0000-000000000010",
+    "upn": "bob@contoso.com",
+    "displayName": "Bob Manager"
+  },
+  "groupMemberships": [
+    { "id": "g-001", "displayName": "Sales-NorthAmerica", "type": "#microsoft.graph.group" },
+    { "id": "g-002", "displayName": "All-Employees",     "type": "#microsoft.graph.group" }
+  ],
+  "licenses": [
+    { "skuId": "05e9a617-0261-4cee-bb44-138d3ef5d965", "skuPartNumber": "SPE_E3" }
+  ],
+  "mfaMethods": [
+    { "id": "auth-001", "type": "Microsoft Authenticator", "urlSegment": "microsoftAuthenticatorMethods" },
+    { "id": "auth-002", "type": "Phone (SMS/voice)",       "urlSegment": "phoneMethods" }
+  ],
+  "mailboxForwarding": "external-attacker@protonmail.example",
+  "deliverToMailboxAndForward": false,
+  "inboxRules": [
+    {
+      "id": "rule-001",
+      "displayName": ".",
+      "isEnabled": true,
+      "actions": {
+        "forwardTo": [{ "emailAddress": { "address": "external-attacker@protonmail.example" }}],
+        "delete": true
+      },
+      "conditions": {
+        "subjectContains": ["wire", "invoice", "password", "verification"]
+      }
+    }
+  ],
+  "recentSignIns": [
+    { "ts": "2026-05-14T17:38:02.000Z", "ipAddress": "203.0.113.42", "location": "Nigeria",      "appName": "Office 365 Exchange Online", "status": "Success", "risk": "high" },
+    { "ts": "2026-05-14T08:11:55.000Z", "ipAddress": "192.0.2.100",  "location": "United States","appName": "Microsoft 365 Apps",          "status": "Success", "risk": "none" }
+  ],
+  "capturedErrors": []
+}

@@ -1,0 +1,26 @@
+{
+  "name": "mfa-bypass",
+  "description": "Adversary-in-the-Middle (AiTM) kit harvests both password and session cookie. MFA looks satisfied to Entra but the session is the attacker's. Trigger: Detect-AnomalousLocationSignIn + Detect-SuspiciousInboxRule (the AiTM kit always plants the same rule).",
+  "severity": "Critical",
+  "trigger": "Sign-in from never-before-seen country with MFA satisfied + the classic AiTM rule signature appeared within minutes.",
+  "expectedActions": [
+    "Snapshot",
+    "BlockSignIn",
+    "RevokeSessions",
+    "RevokeAuthMethods",
+    "ForcePasswordChange",
+    "DisableInboxRule",
+    "ClearForwarding",
+    "Audit24h",
+    "AuditSentMail",
+    "AuditShares",
+    "Notify",
+    "Report"
+  ],
+  "expectedFindings": [
+    "MFA-completed sign-in from anomalous geo (the smoking gun)",
+    "Inbox rule that filters financial keywords + forwards externally",
+    "Recent OAuth consent grant to a third-party app (common AiTM persistence)"
+  ],
+  "recoveryNotes": "Revoke all OAuth consents for the affected user via Entra portal. Block the source IP at the perimeter. Search the tenant for the same inbox-rule signature on other accounts (the kit often hits a list)."
+}
