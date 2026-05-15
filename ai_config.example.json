@@ -20,6 +20,26 @@
     "TrustedProviders":        []
   },
 
+  "IncidentResponse": {
+    "_comment_autoexec":     "AutoExecuteOnSeverity controls whether the detector framework auto-runs the destructive playbook when a finding's severity is high enough. Default 'None' -- every finding opens a Low (forensic) incident and alerts the security team, but containment + cleanup require operator confirmation. Set to 'Critical' for only-most-extreme auto-containment, or 'HighAndCritical' for aggressive shops. DOCUMENT THE CHOICE -- this is the single most consequential config key in the tool.",
+    "_comment_ai_narrative": "UseAIForNarrative controls whether Summarize-AuditEvents may send (redacted) incident audit data to the configured AI provider. Default 'Disabled' -- the operator must opt in because even with redaction, an incident bundle may include behavioral patterns the operator does not want a 3rd-party LLM to see.",
+    "_comment_tabletop":     "TabletopUPN is the sandbox account Invoke-IncidentTabletop targets when no -TabletopUPN flag is passed. Set this to a known disposable account in your tenant (e.g. ir-sandbox@yourdomain.com). The scenarios run in PREVIEW so the account is never actually mutated.",
+
+    "AutoExecuteOnSeverity":         "None",
+    "UseAIForNarrative":             "Disabled",
+    "SnapshotRetentionDays":         365,
+    "DetectorIntervalMinutes":       15,
+    "ImpossibleTravelMaxKmPerHour":  900,
+    "MassDownloadFileCount":         50,
+    "MassDownloadWindowMinutes":     5,
+    "MassShareCount":                20,
+    "MassShareWindowMinutes":        60,
+    "MFAFatigueRejectCount":         10,
+    "MFAFatigueWindowMinutes":       60,
+    "AnomalousLocationLookbackDays": 90,
+    "TabletopUPN":                   ""
+  },
+
   "Notifications": {
     "_comment_email":     "DefaultEmailFrom is the UPN /me/sendMail will spoof when set; leave empty to use the operator's mailbox. SecurityTeamRecipients / OperationsTeamRecipients route Critical / Warning / Info severities respectively (see Notifications.ps1 dispatcher).",
     "_comment_webhooks":  "Teams webhook URLs are sensitive (anyone with the URL can post). Stored DPAPI-encrypted on save (DPAPI:... prefix). Set via /privacy menu or Start-NotificationsSetup -- never paste raw URLs into this file in source control.",

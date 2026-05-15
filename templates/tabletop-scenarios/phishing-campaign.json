@@ -1,0 +1,26 @@
+{
+  "name": "phishing-campaign",
+  "description": "Active credential-phishing campaign hits one or more accounts. Threat actor harvests password, signs in from anomalous geo, sets a delete-inbound-from-bank inbox rule, and starts sending more phishing internally.",
+  "severity": "High",
+  "trigger": "Identity Protection flags high-risk sign-in plus a SuspiciousInboxRule detector match.",
+  "expectedActions": [
+    "Snapshot",
+    "BlockSignIn",
+    "RevokeSessions",
+    "RevokeAuthMethods",
+    "ForcePasswordChange",
+    "DisableInboxRule",
+    "ClearForwarding",
+    "Audit24h",
+    "AuditSentMail",
+    "AuditShares",
+    "Notify",
+    "Report"
+  ],
+  "expectedFindings": [
+    "Sign-in from unusual location",
+    "Suspicious inbox rule (filter + delete + forward)",
+    "Outbound mail to other internal users (phishing propagation)"
+  ],
+  "recoveryNotes": "Issue Temporary Access Pass to the legitimate user; have them re-enroll MFA in person if possible. Audit accounts that received phishing from the compromised user."
+}

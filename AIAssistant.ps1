@@ -1078,8 +1078,32 @@ function Start-AIAssistant {
             Write-Host "  /delete <id>           delete" -ForegroundColor "DarkGray"
             Write-Host "  /ephemeral             do not auto-save on quit" -ForegroundColor "DarkGray"
             Write-Host "  /export <id> [path]    redacted JSON for sharing" -ForegroundColor "DarkGray"
+            Write-Host "  /incident <upn> [sev]  compromised-account response playbook" -ForegroundColor "DarkGray"
             Write-Host "  /quit                  exit" -ForegroundColor "DarkGray"
             Write-Host ""; continue
+        }
+        if ($cmd -like '/incident *' -or $cmd -eq '/incident') {
+            # Phase 7: route the compromised-account playbook through
+            # the AI so the model walks the operator through each step
+            # and per-step approval is mandatory. We force plan mode
+            # for this prompt (regardless of AutoPlanThreshold) by
+            # synthesizing a user message that demands submit_plan
+            # first, then falling through into the normal handler.
+            if (-not (Get-Command Invoke-CompromisedAccountResponse -ErrorAction SilentlyContinue)) {
+                Write-Warn "IncidentResponse module not loaded."; Write-Host ""; continue
+            }
+            $rest = if ($cmd.Length -gt 10) { $userMsg.Substring(10).Trim() } else { '' }
+            $parts = $rest -split '\s+', 2
+            $targetUpn = if ($parts.Count -ge 1) { $parts[0] } else { '' }
+            $severity  = if ($parts.Count -ge 2 -and $parts[1] -in 'Low','Medium','High','Critical') { $parts[1] } else { 'High' }
+            if (-not $targetUpn) {
+                Write-Warn "Usage: /incident <upn> [Low|Medium|High|Critical]"; Write-Host ""; continue
+            }
+            if (Get-Command Set-AIPlanMode -ErrorAction SilentlyContinue) { Set-AIPlanMode -Mode 'force' }
+            $userMsg = "Run a $severity-severity compromised-account response against $targetUpn. Submit a plan first using submit_plan (this is non-optional for incident response). After approval, call Invoke-CompromisedAccountResponse with UPN='$targetUpn' Severity='$severity'."
+            # Fall through -- $userMsg now contains the synthesized
+            # prompt; plan-mode latch is forced. The submit_plan
+            # intercept (Phase 5 Commit B) handles the rest.
         }
         if ($cmd -eq '/cost') {
             if (Get-Command Show-AICostSummary -ErrorAction SilentlyContinue) { Show-AICostSummary }
@@ -1286,16 +1310,29 @@ function Start-AIAssistant {
                     }
                     $toolDef = Get-AIToolByName -Name $tu.name
                     $destFlag = if ($toolDef -and $toolDef.destructive) { '[DESTRUCTIVE] ' } else { '' }
+                    $requiresExplicit = $toolDef -and $toolDef.requiresExplicitApproval
                     Write-Host ""
+                    if ($requiresExplicit) {
+                        # Phase 7: the explicit-approval banner. Tools tagged
+                        # requiresExplicitApproval (currently
+                        # Invoke-CompromisedAccountResponse) ignore the
+                        # operator's prior [A]pprove-all decision -- every
+                        # call needs a fresh yes.
+                        Write-Host "  +--------------------------------------------------------------+" -ForegroundColor Yellow
+                        Write-Host "  | EXPLICIT APPROVAL REQUIRED -- highest-blast-radius operation |" -ForegroundColor Yellow
+                        Write-Host "  +--------------------------------------------------------------+" -ForegroundColor Yellow
+                    }
                     Write-Host ("  Mark wants to call: " + $destFlag + $tu.name) -ForegroundColor Yellow
                     foreach ($k in $tu.input.Keys) {
                         Write-Host ("      {0}: {1}" -f $k, ($tu.input[$k])) -ForegroundColor DarkGray
                     }
-                    $ans = if ($runAll) { 'y' } else {
-                        Write-Host "  [Y]es  [N]o  [A]ll  [Q]uit" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                    $effectiveRunAll = $runAll -and -not $requiresExplicit
+                    $ans = if ($effectiveRunAll) { 'y' } else {
+                        $opts = if ($requiresExplicit) { "[Y]es  [N]o  [Q]uit" } else { "[Y]es  [N]o  [A]ll  [Q]uit" }
+                        Write-Host "  $opts" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
                         Read-Host
                     }
-                    if ($ans -match '^[Aa]') { $runAll = $true; $ans = 'y' }
+                    if ($ans -match '^[Aa]' -and -not $requiresExplicit) { $runAll = $true; $ans = 'y' }
                     if ($ans -match '^[Qq]') { break }
                     if ($ans -notmatch '^[Yy]') {
                         # Ask for an optional reason so the AI gets context to adapt.

@@ -236,6 +236,22 @@ function Invoke-AIToolImpl {
             return (Search-SignIns @args)
         }
 
+        # ---- Phase 7 incident-response tools ----
+        '^Invoke-CompromisedAccountResponse$' {
+            # The function manages Invoke-Action internally per step,
+            # so don't wrap again. Pass through splat verbatim.
+            return (Invoke-CompromisedAccountResponse @splat)
+        }
+        '^Get-IncidentTimeline$' {
+            return (Get-IncidentTimeline @splat)
+        }
+        '^Get-IncidentList$' {
+            return (Get-IncidentList @splat)
+        }
+        '^Summarize-AuditEvents$' {
+            return (Summarize-AuditEvents @splat)
+        }
+
         # ---- Search-UAL date rename ----
         '^Search-UAL$' {
             $args = @{}

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html><head><meta charset='utf-8'>
+<title>Incident INC-2026-05-14-a3f2 -- alice@contoso.com</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; color: #222; max-width: 980px; margin: 1em auto; padding: 0 1em; }
+  h1 { color: #a00; border-bottom: 2px solid #a00; padding-bottom: 4px; }
+  h2 { color: #444; margin-top: 1.5em; }
+  table { border-collapse: collapse; font-size: 13px; width: 100%; }
+  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+  th { background: #f4f4f4; }
+  .meta th { width: 12em; }
+  ul li { margin: 4px 0; }
+  code { background: #f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+</style></head><body>
+<h1>Compromised-account response: alice@contoso.com</h1>
+<table class='meta'>
+  <tr><th>Incident</th><td><code>INC-2026-05-14-a3f2</code></td></tr>
+  <tr><th>Severity</th><td>High</td></tr>
+  <tr><th>Tenant</th><td>Contoso (Sample / Anonymized)</td></tr>
+  <tr><th>Started (UTC)</th><td>2026-05-14T17:42:11.000Z</td></tr>
+  <tr><th>User account enabled (pre-incident)</th><td>True</td></tr>
+  <tr><th>Groups (pre-incident)</th><td>2</td></tr>
+  <tr><th>Licenses (pre-incident)</th><td>1</td></tr>
+  <tr><th>MFA methods (pre-incident)</th><td>2</td></tr>
+  <tr><th>Mailbox forwarding (pre-incident)</th><td>external-attacker@protonmail.example</td></tr>
+  <tr><th>Inbox rules (pre-incident)</th><td>1</td></tr>
+</table>
+
+<h2>Step outcomes</h2>
+<table>
+  <tr><th>#</th><th>Step</th><th>Status</th><th>Detail</th></tr>
+  <tr><td>1</td><td>Snapshot</td><td><span style='color:#080'>OK</span></td><td>snapshot.json written; 2 groups, 1 licenses, 2 mfa methods, 1 inbox rules</td></tr>
+  <tr><td>2</td><td>BlockSignIn</td><td><span style='color:#080'>OK</span></td><td>accountEnabled=false</td></tr>
+  <tr><td>3</td><td>RevokeSessions</td><td><span style='color:#080'>OK</span></td><td>all sign-in sessions revoked</td></tr>
+  <tr><td>4</td><td>RevokeAuthMethods</td><td><span style='color:#080'>OK</span></td><td>removed 2 methods (snapshot has originals)</td></tr>
+  <tr><td>5</td><td>ForcePasswordChange</td><td><span style='color:#080'>OK</span></td><td>forceChangeNextSignIn + new random password</td></tr>
+  <tr><td>6</td><td>DisableInboxRules</td><td><span style='color:#080'>OK</span></td><td>1 rule(s) disabled</td></tr>
+  <tr><td>7</td><td>ClearForwarding</td><td><span style='color:#080'>OK</span></td><td>forwarding cleared</td></tr>
+  <tr><td>8</td><td>Audit24h</td><td><span style='color:#080'>OK</span></td><td>audit-24h.json written</td></tr>
+  <tr><td>9</td><td>AuditSentMail</td><td><span style='color:#080'>OK</span></td><td>5 messages, 0 external recipients</td></tr>
+  <tr><td>10</td><td>AuditShares</td><td><span style='color:#080'>OK</span></td><td>2 shares, 1 external domains</td></tr>
+  <tr><td>12</td><td>Notify</td><td><span style='color:#080'>OK</span></td><td>security team notified</td></tr>
+  <tr><td>13</td><td>Report</td><td><span style='color:#080'>OK</span></td><td>report.html written</td></tr>
+</table>
+
+<h2>Findings</h2>
+<ul>
+  <li>Last 24h: 4 sign-ins, 4 unified-audit rows.</li>
+  <li>Sent mail (7d): 5 messages to 0 external recipient(s). NOTE: 3 internal messages sent in the 1-minute window of compromise -- likely phishing propagation. Recipients: cfo, controller, finance, bob, carol, dave, eve. Investigate inbox of each.</li>
+  <li>Outbound shares (7d): 2 shares to 1 external domain(s).</li>
+  <li>External share domains: protonmail.example</li>
+</ul>
+
+<h2>Recommended next steps</h2>
+<ol>
+  <li>Communicate the incident to the user via a side channel (call, in-person) -- do NOT email the affected account.</li>
+  <li>Audit downstream systems the user had access to (CRM, code repos, finance systems, partner portals).</li>
+  <li>If phishing was sent from this account, notify recipients to disregard and report received messages.</li>
+  <li>Schedule a credential rotation for any shared service accounts the user managed.</li>
+  <li>Review session activity in connected SaaS apps (Slack, GitHub, Salesforce, etc.) for the same time window.</li>
+  <li>Close the incident with Close-Incident -Id INC-2026-05-14-a3f2 once recovery is complete.</li>
+</ol>
+
+<h2>Artifacts</h2>
+<ul>
+  <li><code>snapshot.json</code> -- pre-incident state</li>
+  <li><code>audit-24h.json</code> -- sign-in + UAL activity (last 24h)</li>
+  <li><code>mail-sent-7d.json</code> -- sent mail audit</li>
+  <li><code>shares-7d.json</code> -- outbound shares audit</li>
+  <li><code>inbox-rules.json</code> -- captured rules at time of incident</li>
+</ul>
+
+<p style='color:#888;font-size:12px;margin-top:2em'><b>NOTE:</b> This sample report uses fully anonymized / fabricated data. All UPNs, IPs, and identifiers are illustrative.</p>
+</body></html>

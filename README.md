@@ -310,6 +310,40 @@ Severity routing in `Send-Notification`:
 
 The three Phase 3 notifiers (`Send-OneDriveHandoffSummary`, `Send-OffboardManagerSummary`, `Send-GuestRecertEmail`) all delegate to `Send-Email` when `Notifications.ps1` is loaded, with a Get-Command-guarded fallback to the original `/me/sendMail` path. This means a tenant that hasn't configured the Notifications block yet still gets the same emails — they just don't honor `DryRunNotifications`.
 
+## Incident response (Phase 7)
+
+The compromised-account playbook is the highest-blast-radius operation in M365 Manager. Six commits ship a complete IR surface: orchestrator, registry, AI integration, bulk + tabletop, auto-detection, docs.
+
+- **`Invoke-CompromisedAccountResponse -UPN <upn> -Severity High`** — 13-step playbook: snapshot (forensic baseline) → contain (block / revoke sessions / revoke MFA / force password) → cleanup (disable inbox rules / clear forwarding) → audit (24h activity / 7d sent mail / 7d shares) → optional purge (Critical only, operator types PURGE to confirm) → notify → HTML report. Every state-mutating step is `Invoke-Action`-wrapped with a reverse recipe where reversal is possible.
+- **Severity matrix** — `Low` runs forensic-only (no state changes), `Medium` adds containment, `High` (default) adds cleanup + notify, `Critical` adds the quarantine prompt.
+- **Per-incident artifacts** at `<stateDir>/<tenant-slug>/incidents/<incident-id>/`: snapshot.json, inbox-rules.json, audit-24h.json, mail-sent-7d.json, shares-7d.json, report.html. **Tenant-scoped** — closes one of the deferred Phase 6 retrofits.
+- **Registry + undo** — `Get-Incident`, `Get-Incidents`, `Close-Incident` (`-FalsePositive` triggers an undo walk), `Undo-Incident` (per-step confirmation), `Export-Incident` (compliance bundle ZIP).
+- **AI integration** — `/incident <upn> [severity]` chat command synthesizes a forced-plan-mode prompt; the `requiresExplicitApproval` catalog flag disables `[A]pprove-all` in both the tool-use loop and the planner; `Summarize-AuditEvents` produces a natural-language narrative of an incident's activity (gated behind `IncidentResponse.UseAIForNarrative=Enabled` to avoid sending forensic data to an external LLM by default).
+- **Bulk + tabletop** — `Invoke-BulkIncidentResponse -Path incidents.csv` handles phishing-campaign scenarios with the validate-first / per-row pattern from Phase 1. `Invoke-IncidentTabletop -ScenarioName <name>` runs a scenario against a sandbox user in PREVIEW and grades against expected actions. Four shipping scenarios: phishing-campaign, insider-mass-download, mfa-bypass, compromised-vendor.
+- **Auto-detection** — seven detectors in `IncidentTriggers.ps1`: anomalous location, impossible travel, high-risk sign-in, mass file download, mass external share, suspicious inbox rule (AiTM signature), MFA fatigue. Each finding auto-opens a `Low` (forensic) incident + notifies the security team. **`AutoExecuteOnSeverity` defaults to `None`** — a human always confirms before any auto-escalation, regardless of trigger confidence. Set to `Critical` or `HighAndCritical` only after a documented review.
+- **Scheduled sweep** — `health-checks/health-incident-triggers.ps1` runs the detectors every `IncidentResponse.DetectorIntervalMinutes` (default 15).
+
+```powershell
+# From PowerShell:
+Invoke-CompromisedAccountResponse -UPN alice@contoso.com -Severity High
+
+# From the AI assistant:
+/incident alice@contoso.com Critical
+
+# From the menu (slot 22 -> Incident Response):
+#   Run compromised-account response (single UPN)
+#   Run bulk incident response (CSV)
+#   Run tabletop exercise
+#   List open incidents
+#   View incident report
+#   Close incident
+#   Mark incident as false positive (with undo walk)
+#   Undo an incident's reversible steps
+#   Export incident for compliance handoff
+```
+
+See [`docs/incident-response.md`](docs/incident-response.md) for the operator reference, [`docs/incident-runbook-template.md`](docs/incident-runbook-template.md) for the printable paper runbook (compliance audits), and [`docs/incident-triggers.md`](docs/incident-triggers.md) for the auto-detection framework.
+
 ## Multi-tenant / MSP mode (Phase 6)
 
 Phase 6 turns the tool from "single-tenant operator console" into

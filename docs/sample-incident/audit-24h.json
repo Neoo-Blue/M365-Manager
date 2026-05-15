@@ -1,0 +1,18 @@
+{
+  "capturedAtUtc": "2026-05-14T17:42:30.000Z",
+  "upn": "alice@contoso.com",
+  "windowHours": 24,
+  "signIns": [
+    { "CreatedDateTime": "2026-05-14T17:38:02.000Z", "IpAddress": "203.0.113.42",  "Location": "Nigeria",        "AppDisplayName": "Office 365 Exchange Online", "Status": "Success",           "RiskLevel": "high" },
+    { "CreatedDateTime": "2026-05-14T17:32:14.000Z", "IpAddress": "203.0.113.42",  "Location": "Nigeria",        "AppDisplayName": "Microsoft Graph",            "Status": "Success",           "RiskLevel": "high" },
+    { "CreatedDateTime": "2026-05-14T17:30:00.000Z", "IpAddress": "203.0.113.41",  "Location": "Nigeria",        "AppDisplayName": "Office 365 Exchange Online", "Status": "Authentication cancelled", "RiskLevel": "high" },
+    { "CreatedDateTime": "2026-05-14T08:11:55.000Z", "IpAddress": "192.0.2.100",   "Location": "United States",  "AppDisplayName": "Microsoft 365 Apps",         "Status": "Success",           "RiskLevel": "none" }
+  ],
+  "unifiedAudit": [
+    { "CreationDate": "2026-05-14T17:39:05.000Z", "UserId": "alice@contoso.com", "Operation": "New-InboxRule",  "ResultStatus": "Succeeded" },
+    { "CreationDate": "2026-05-14T17:40:01.000Z", "UserId": "alice@contoso.com", "Operation": "Send",           "ResultStatus": "Succeeded" },
+    { "CreationDate": "2026-05-14T17:40:18.000Z", "UserId": "alice@contoso.com", "Operation": "Send",           "ResultStatus": "Succeeded" },
+    { "CreationDate": "2026-05-14T17:40:32.000Z", "UserId": "alice@contoso.com", "Operation": "Send",           "ResultStatus": "Succeeded" }
+  ],
+  "errors": []
+}
