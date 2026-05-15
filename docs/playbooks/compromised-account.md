@@ -2,7 +2,7 @@
 
 A printable plain-English walkthrough of the M365 Manager incident-response playbook. Designed for compliance audits that want documented IR process and for IR team members who need a step-by-step away from the keyboard.
 
-This is the "what does the tool do" companion to [`incident-response.md`](incident-response.md) (which is the operator reference).
+This is the "what does the tool do" companion to [`incident-response.md`](../guides/incident-response.md) (which is the operator reference).
 
 ---
 
@@ -119,7 +119,7 @@ For tabletop exercises:
 
 ## Audit log
 
-Every step is individually audited with the `incidentId` in the `target` field. The audit log lives at `%LOCALAPPDATA%\M365Manager\audit\session-<ts>-<pid>-<tenant>.log` (or `~/.m365manager/audit/` on POSIX). One JSON object per line; structured fields described in [`audit-format.md`](audit-format.md).
+Every step is individually audited with the `incidentId` in the `target` field. The audit log lives at `%LOCALAPPDATA%\M365Manager\audit\session-<ts>-<pid>-<tenant>.log` (or `~/.m365manager/audit/` on POSIX). One JSON object per line; structured fields described in [`audit-format.md`](../reference/audit-format.md).
 
 Filter the audit log to one incident:
 
@@ -162,6 +162,6 @@ The tabletop runs in PREVIEW so no tenant state changes. The sandbox account is 
 
 ## See also
 
-- [`incident-response.md`](incident-response.md) — operator reference, full step-by-step technical detail.
+- [`incident-response.md`](../guides/incident-response.md) — operator reference, full step-by-step technical detail.
 - [`incident-triggers.md`](incident-triggers.md) — auto-detection framework.
-- [`audit-format.md`](audit-format.md) — audit log schema.
+- [`audit-format.md`](../reference/audit-format.md) — audit log schema.
