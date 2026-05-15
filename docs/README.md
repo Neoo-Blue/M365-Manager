@@ -97,4 +97,4 @@ Scenario-specific runbooks. Each is a full walkthrough — when does this apply,
 ## See also
 
 - Top-level [`README.md`](../README.md) — project landing page.
-- [`CHANGELOG.md`](../CHANGELOG.md) — *(future)* version-by-version delta.
+- `CHANGELOG.md` — *(planned, not yet shipped)* version-by-version delta. See [`operations/upgrade-guide.md`](operations/upgrade-guide.md) until then.
