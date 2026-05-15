@@ -1,0 +1,21 @@
+{
+  "name": "compromised-vendor",
+  "description": "A trusted external vendor's account (a Guest in your tenant) is compromised. The attacker uses the existing share permissions to access internal files instead of needing fresh credentials. Trigger: Detect-MassExternalShare on a Guest user or Detect-AnomalousLocationSignIn for a Guest.",
+  "severity": "Medium",
+  "trigger": "Guest user activity from a country the vendor is not based in, or sudden bulk-access to files outside the vendor's normal project scope.",
+  "expectedActions": [
+    "Snapshot",
+    "BlockSignIn",
+    "RevokeSessions",
+    "Audit24h",
+    "AuditShares",
+    "Notify",
+    "Report"
+  ],
+  "expectedFindings": [
+    "Guest user accessing sites / files outside their normal project",
+    "External shares created during the incident window",
+    "Sign-in from outside the vendor organization's known geo"
+  ],
+  "recoveryNotes": "Notify the vendor immediately (they may not know they are compromised). Consider revoking the Guest user entirely rather than just blocking sign-in -- you can always re-invite when the vendor confirms recovery. Audit shared files for unauthorized access in the same audit window."
+}

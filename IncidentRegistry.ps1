@@ -475,6 +475,8 @@ function Start-IncidentResponseMenu {
         Write-SectionHeader "Incident Response"
         $sel = Show-Menu -Title "Pick an action" -Options @(
             "Run compromised-account response (single UPN)",
+            "Run bulk incident response (CSV)",
+            "Run tabletop exercise",
             "List open incidents",
             "List incidents (all)",
             "View incident report",
@@ -497,29 +499,56 @@ function Start-IncidentResponseMenu {
                 }
                 Invoke-CompromisedAccountResponse -UPN $upn -Severity $sev -Reason $reason -QuarantineSentMail:$quarantine | Out-Null
             }
-            1 { Show-Incidents -Status Open }
-            2 { Show-Incidents -Status All }
-            3 {
+            1 {
+                if (-not (Get-Command Invoke-BulkIncidentResponse -ErrorAction SilentlyContinue)) {
+                    Write-Warn "IncidentBulk module not loaded."
+                } else {
+                    $path = Read-UserInput "Path to incidents CSV (see templates/incidents-bulk-sample.csv)"
+                    if ($path) { Invoke-BulkIncidentResponse -Path $path | Out-Null }
+                }
+            }
+            2 {
+                if (-not (Get-Command Invoke-IncidentTabletop -ErrorAction SilentlyContinue)) {
+                    Write-Warn "IncidentBulk module not loaded."
+                } else {
+                    $scenarios = @(Get-TabletopScenarios)
+                    if ($scenarios.Count -eq 0) {
+                        Write-Warn "No scenarios in templates/tabletop-scenarios/."
+                    } else {
+                        $opts = @($scenarios | ForEach-Object { "$($_.Name) -- $($_.Description)" })
+                        $idx = Show-Menu -Title "Pick a tabletop scenario" -Options $opts -BackLabel "Cancel"
+                        if ($idx -ge 0) {
+                            $name = $scenarios[$idx].Name
+                            $tt = Read-UserInput "Sandbox UPN (blank to use IncidentResponse.TabletopUPN config)"
+                            if ($tt) { Invoke-IncidentTabletop -ScenarioName $name -TabletopUPN $tt | Out-Null }
+                            else     { Invoke-IncidentTabletop -ScenarioName $name | Out-Null }
+                        }
+                    }
+                }
+            }
+            3 { Show-Incidents -Status Open }
+            4 { Show-Incidents -Status All }
+            5 {
                 $id = Read-UserInput "Incident id"
                 if ($id) { Show-IncidentReport -Id $id | Out-Null }
             }
-            4 {
+            6 {
                 $id = Read-UserInput "Incident id"
                 if (-not $id) { continue }
                 $res = Read-UserInput "Resolution notes"
                 if ($res) { Close-Incident -Id $id -Resolution $res | Out-Null }
             }
-            5 {
+            7 {
                 $id = Read-UserInput "Incident id"
                 if (-not $id) { continue }
                 $res = Read-UserInput "False-positive reason"
                 if ($res) { Close-Incident -Id $id -Resolution $res -FalsePositive | Out-Null }
             }
-            6 {
+            8 {
                 $id = Read-UserInput "Incident id"
                 if ($id) { Undo-Incident -Id $id | Out-Null }
             }
-            7 {
+            9 {
                 $id = Read-UserInput "Incident id"
                 if (-not $id) { continue }
                 $p = Read-UserInput "Destination path (blank = current dir)"
