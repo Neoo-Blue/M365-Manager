@@ -373,32 +373,33 @@ function Pause-ForUser {
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 }
 
-function Resolve-UPN {
+function Find-UPNByName {
     <#
     .SYNOPSIS
-        Prompt for a user UPN OR a display-name search. Returns the UPN
-        string, or $null if the operator cancelled / nothing matched.
+        Resolve a string (email OR partial display name) to a UPN by
+        searching Microsoft Graph. Returns the UPN string, or $null when
+        no match was found and the operator cancelled.
     .DESCRIPTION
-        Accepts either an email (contains '@') or a partial display name.
-        With a name, runs Get-MgUser -Search and picks the single match
-        or shows a chooser menu. Falls back to the raw entry when Graph
-        isn't connected so legacy callers still work.
+        Used by Resolve-UPN (which adds an interactive prompt) and by
+        callers that already have an input string from elsewhere (parsed
+        from a CSV / file, harvested from another menu, etc).
+
+        - Input contains '@'  : assumed to be a UPN, returned as-is.
+        - Graph not loaded    : returns the raw input with a warning so
+                                legacy code paths keep working.
+        - 0 matches           : prints an error and returns $null.
+        - 1 match             : returns that UPN automatically.
+        - >1 matches          : shows a chooser menu; returns selected
+                                UPN or $null if the operator cancels.
     #>
     param(
-        [string]$Prompt = "User UPN or name",
-        [switch]$AllowEmpty
+        [Parameter(Mandatory)][string]$Input
     )
-    $raw = Read-UserInput $Prompt
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        if ($AllowEmpty) { return '' }
-        return $null
-    }
-    $raw = $raw.Trim()
+    $raw = $Input.Trim()
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
 
-    # Already a UPN / email: return as-is.
     if ($raw -match '@') { return $raw }
 
-    # Need Graph for name search.
     if (-not (Get-Command Get-MgUser -ErrorAction SilentlyContinue)) {
         Write-Warn "Graph not loaded, using raw input '$raw' as UPN."
         return $raw
@@ -437,6 +438,24 @@ function Resolve-UPN {
     $sel = Show-Menu -Title "Select user ($($users.Count) matches)" -Options $labels -BackLabel "Cancel"
     if ($sel -eq -1) { return $null }
     return [string]$users[$sel].UserPrincipalName
+}
+
+function Resolve-UPN {
+    <#
+    .SYNOPSIS
+        Prompt for a user UPN OR a display-name search. Returns the UPN
+        string, or $null if the operator cancelled / nothing matched.
+    #>
+    param(
+        [string]$Prompt = "User UPN or name",
+        [switch]$AllowEmpty
+    )
+    $raw = Read-UserInput $Prompt
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        if ($AllowEmpty) { return '' }
+        return $null
+    }
+    return (Find-UPNByName -Input $raw)
 }
 
 # ---- License SKU friendly name mapping ----

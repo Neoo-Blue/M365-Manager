@@ -106,14 +106,24 @@ function Start-Offboard {
         foreach ($f in $fields) { if (-not $userData.ContainsKey($f)) { $userData[$f] = "" } }
         $userData = Edit-UserDataTable -Data $userData -FieldOrder $fields
     } else {
-        $userData["UserPrincipalName"] = Read-UserInput "Enter User Principal Name (email)"
+        $userData["UserPrincipalName"] = Read-UserInput "Enter User Principal Name OR display name"
         $userData["ForwardingEmail"] = ""; $userData["OOOMessage"] = ""
     }
 
     $upn = $userData["UserPrincipalName"]
-    if ([string]::IsNullOrWhiteSpace($upn)) { Write-ErrorMsg "UPN is required."; Pause-ForUser; return }
+    if ([string]::IsNullOrWhiteSpace($upn)) { Write-ErrorMsg "UPN or name is required."; Pause-ForUser; return }
 
     if (-not (Connect-ForTask "Offboard")) { Pause-ForUser; return }
+
+    # If the operator typed a display name instead of an email, resolve
+    # it to a UPN now that Graph is connected. Find-UPNByName returns the
+    # input unchanged when it already looks like an email.
+    if (Get-Command Find-UPNByName -ErrorAction SilentlyContinue) {
+        $resolved = Find-UPNByName -Input $upn
+        if (-not $resolved) { Write-ErrorMsg "Could not resolve '$upn' to a user."; Pause-ForUser; return }
+        $upn = $resolved
+        $userData["UserPrincipalName"] = $upn
+    }
 
     try {
         $user = Get-MgUser -UserId $upn -Property "Id,DisplayName,UserPrincipalName" -ErrorAction Stop
@@ -330,7 +340,9 @@ function Start-Offboard {
     if (Get-Command Invoke-OneDriveHandoff -ErrorAction SilentlyContinue) {
         Write-SectionHeader "Step 9 - OneDrive Handoff"
         if (Confirm-Action "Hand off $upn's OneDrive to a successor?") {
-            $successor = Read-UserInput "Successor UPN (typically the manager)"
+            $successor = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) {
+                Resolve-UPN -Prompt "Successor UPN or display name (typically the manager)"
+            } else { Read-UserInput "Successor UPN (typically the manager)" }
             if (-not [string]::IsNullOrWhiteSpace($successor)) {
                 $retention = 60
                 $rt = Read-UserInput "Retention extension days (default 60)"
@@ -350,8 +362,12 @@ function Start-Offboard {
     # ---- Step 10: Manager summary email ----
     if (Get-Command Send-OffboardManagerSummary -ErrorAction SilentlyContinue) {
         Write-SectionHeader "Step 10 - Manager Summary Email"
-        $sendTo = Read-UserInput ("Send offboard summary to (UPN; Enter for '{0}', blank to skip)" -f $managerEmail)
+        $sendTo = Read-UserInput ("Send offboard summary to (UPN or name; Enter for '{0}', blank to skip)" -f $managerEmail)
         if (-not $sendTo) { $sendTo = $managerEmail }
+        if ($sendTo -and ($sendTo -notmatch '@') -and (Get-Command Find-UPNByName -ErrorAction SilentlyContinue)) {
+            $resolved = Find-UPNByName -Input $sendTo
+            if ($resolved) { $sendTo = $resolved }
+        }
         if ($sendTo -and (Confirm-Action "Send summary email to $sendTo ?")) {
             Send-OffboardManagerSummary -ManagerUPN $sendTo -LeaverUPN $upn -Summary ([hashtable]$summary) | Out-Null
             Write-Success "Summary emailed to $sendTo."
