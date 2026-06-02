@@ -169,10 +169,29 @@ function Test-MgGraphVersionCoherence {
 function Repair-MgGraphSiblings {
     <#
         Reinstall every Microsoft.Graph.* sibling we use, pinned to the
-        same -RequiredVersion (the newest currently on disk). Cheapest
-        cure for version drift; skipped when the operator declines.
+        same -RequiredVersion (the newest currently on disk).
+
+        IMPORTANT: an in-process Install-Module CANNOT replace a sibling
+        whose DLLs are already loaded into this session. If we detect
+        any Microsoft.Graph.* in Get-Module (loaded), we refuse the
+        in-place repair and steer the operator to Invoke-MgGraphFullRepair
+        (hidden main-menu option 98) which spawns an elevated, fresh
+        PowerShell where nothing is loaded yet.
     #>
     param([string[]]$Names)
+    $loaded = @(Get-Module -Name 'Microsoft.Graph.*' | Where-Object { $_.Name -ne 'Microsoft.Graph' })
+    if ($loaded.Count -gt 0) {
+        Write-Host ""
+        Write-Warn ("Already loaded into this session: {0}" -f (($loaded | ForEach-Object { "$($_.Name) v$($_.Version)" }) -join ', '))
+        Write-Host "  In-process repair cannot replace DLLs that are already loaded." -ForegroundColor Yellow
+        Write-Host "  At the main menu, type " -NoNewline -ForegroundColor Yellow
+        Write-Host "98" -NoNewline -ForegroundColor Cyan
+        Write-Host " ('Repair Microsoft.Graph modules' hidden option)." -ForegroundColor Yellow
+        Write-Host "  That spawns an elevated, fresh PowerShell window which CAN replace the modules." -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
     $authMod = Get-Module -ListAvailable Microsoft.Graph.Authentication |
                Sort-Object Version -Descending | Select-Object -First 1
     if (-not $authMod) {
@@ -181,13 +200,27 @@ function Repair-MgGraphSiblings {
     }
     $target = $authMod.Version
     Write-InfoMsg "Aligning Microsoft.Graph.* siblings to v$target..."
+    $inUseCount = 0
     foreach ($n in $Names) {
+        $beforeWarn = $Error.Count
+        $warned = $null
         try {
-            Install-Module $n -RequiredVersion $target -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+            Install-Module $n -RequiredVersion $target -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -WarningVariable warned -ErrorAction Stop
             Write-Success "  $n -> v$target"
+            if ($warned -and (($warned | Out-String) -match 'in use|currently in use')) { $inUseCount++ }
         } catch {
-            Write-Warn "  $n : $_"
+            $emsg = "$_"
+            Write-Warn "  $n : $emsg"
+            if ($emsg -match 'in use|currently in use') { $inUseCount++ }
         }
+    }
+    if ($inUseCount -gt 0) {
+        Write-Host ""
+        Write-Warn ("{0} module(s) reported 'currently in use'. This is NOT a failure --" -f $inUseCount)
+        Write-Host "  the v$target files ARE on disk now. The current PowerShell session" -ForegroundColor Yellow
+        Write-Host "  still has the old DLLs loaded and won't pick up the new ones until" -ForegroundColor Yellow
+        Write-Host "  you close this window and re-launch the tool." -ForegroundColor Yellow
+        Write-Host ""
     }
 }
 
