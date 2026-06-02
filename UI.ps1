@@ -406,15 +406,18 @@ function Find-UPNByName {
     }
 
     Write-InfoMsg "Searching for users matching '$raw'..."
+    $props = "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,Mail"
     $users = @()
     try {
-        $users = @(Get-MgUser -Search "displayName:$raw" -ConsistencyLevel eventual `
-                  -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" `
-                  -Top 25 -ErrorAction Stop)
+        # 1. Whole-token search across displayName, mail, UPN.
+        $users = @(Get-MgUser -Search "`"displayName:$raw`" OR `"mail:$raw`" OR `"userPrincipalName:$raw`"" `
+                  -ConsistencyLevel eventual -Property $props -Top 25 -ErrorAction Stop)
+        # 2. Prefix fallback (handles partial names that don't tokenize).
         if ($users.Count -eq 0) {
-            $users = @(Get-MgUser -Filter "startsWith(displayName,'$raw')" `
-                      -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" `
-                      -Top 25 -ErrorAction Stop)
+            $esc = $raw -replace "'", "''"
+            $users = @(Get-MgUser -Filter "startsWith(displayName,'$esc') or startsWith(givenName,'$esc') or startsWith(surname,'$esc') or startsWith(userPrincipalName,'$esc') or startsWith(mail,'$esc')" `
+                      -ConsistencyLevel eventual `
+                      -Property $props -Top 25 -ErrorAction Stop)
         }
     } catch {
         Write-Warn "Search failed: $($_.Exception.Message). Using raw input."
@@ -422,7 +425,7 @@ function Find-UPNByName {
     }
 
     if ($users.Count -eq 0) {
-        Write-ErrorMsg "No users found matching '$raw'."
+        Write-ErrorMsg "No users found matching '$raw' in displayName, givenName, surname, mail, or UPN."
         return $null
     }
     if ($users.Count -eq 1) {

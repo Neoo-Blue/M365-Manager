@@ -70,9 +70,10 @@ function Request-AdminElevation {
     if ($ans -notmatch '^[Yy]') { return $false }
 
     $installCmd = ($ModulesToInstall | ForEach-Object {
-        "Install-Module $_ -Scope AllUsers -Force -AllowClobber -ErrorAction Continue"
+        "Install-Module $_ -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue"
     }) -join '; '
     $bootstrap = "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force; " +
+                 "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; " +
                  "if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -Force -ForceBootstrap | Out-Null }; " +
                  "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue; " +
                  "$installCmd; Write-Host ''; Write-Host 'Done. You may close this elevated window.' -ForegroundColor Green; Read-Host 'Press Enter to close'"
@@ -103,8 +104,97 @@ function Test-ModuleSmoke {
     return @{ Ok = $true; Reason = "v$($loaded.Version)" }
 }
 
+function Initialize-PSGalleryBootstrap {
+    <#
+        One-time-per-session bootstrap of the things PSGallery needs to
+        work on Windows PowerShell 5.1 from a clean machine:
+          1. Force TLS 1.2. PS 5.1 defaults to TLS 1.0/1.1; PSGallery
+             dropped sub-1.2 ages ago. Without this, Install-Module
+             silently fails with "no module found" style errors.
+          2. Bootstrap the NuGet PackageProvider. Without it, the
+             first Install-Module prompts interactively (blocks
+             unattended runs) or returns an opaque PackageProvider
+             error.
+          3. Trust PSGallery for this session so Install-Module doesn't
+             stop on an "Untrusted repository" Y/N prompt.
+        All steps are idempotent and safe to re-run.
+    #>
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {}
+
+    if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+        Write-InfoMsg "Bootstrapping NuGet PackageProvider..."
+        try {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ForceBootstrap -Scope CurrentUser -ErrorAction Stop | Out-Null
+        } catch {
+            Write-Warn "NuGet bootstrap failed: $_"
+        }
+    }
+
+    try {
+        $repo = Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue
+        if ($repo -and $repo.InstallationPolicy -ne 'Trusted') {
+            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+
+function Test-MgGraphVersionCoherence {
+    <#
+        Each Microsoft.Graph.* submodule has its own version. When a
+        new sibling (e.g. Microsoft.Graph.Users 2.20) is installed but
+        Microsoft.Graph.Authentication is still 2.10, importing the
+        new sibling errors with "The required module ... is not
+        installed at version ...". This helper returns @() when all
+        Microsoft.Graph.* siblings on disk are at the same version,
+        or an array of complaints describing the mismatch.
+    #>
+    $sibs = @(Get-Module -ListAvailable -Name 'Microsoft.Graph.*' |
+              Where-Object { $_.Name -ne 'Microsoft.Graph' } |
+              Group-Object Name | ForEach-Object {
+                  $_.Group | Sort-Object Version -Descending | Select-Object -First 1
+              })
+    if ($sibs.Count -lt 2) { return @() }
+    $versions = $sibs | ForEach-Object { [string]$_.Version } | Sort-Object -Unique
+    if ($versions.Count -le 1) { return @() }
+    $msgs = @("Multiple Microsoft.Graph.* versions installed: $($versions -join ', ')")
+    foreach ($s in $sibs) {
+        $msgs += "    $($s.Name) v$($s.Version)"
+    }
+    return $msgs
+}
+
+function Repair-MgGraphSiblings {
+    <#
+        Reinstall every Microsoft.Graph.* sibling we use, pinned to the
+        same -RequiredVersion (the newest currently on disk). Cheapest
+        cure for version drift; skipped when the operator declines.
+    #>
+    param([string[]]$Names)
+    $authMod = Get-Module -ListAvailable Microsoft.Graph.Authentication |
+               Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $authMod) {
+        Write-Warn "Microsoft.Graph.Authentication isn't installed yet; nothing to align to."
+        return
+    }
+    $target = $authMod.Version
+    Write-InfoMsg "Aligning Microsoft.Graph.* siblings to v$target..."
+    foreach ($n in $Names) {
+        try {
+            Install-Module $n -RequiredVersion $target -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+            Write-Success "  $n -> v$target"
+        } catch {
+            Write-Warn "  $n : $_"
+        }
+    }
+}
+
 function Assert-ModulesInstalled {
     Write-SectionHeader "Checking Dependencies"
+
+    Initialize-PSGalleryBootstrap
 
     # ---- Define required modules with test commands ----
     # IMPORTANT: ExchangeOnlineManagement MUST be first.
@@ -114,11 +204,28 @@ function Assert-ModulesInstalled {
         @{ Name = "ExchangeOnlineManagement";                    TestCmd = "Connect-ExchangeOnline" },
         @{ Name = "Microsoft.Graph.Authentication";              TestCmd = "Get-MgContext" },
         @{ Name = "Microsoft.Graph.Users";                       TestCmd = "Get-MgUser" },
-        @{ Name = "Microsoft.Graph.Users.Actions";               TestCmd = $null },
+        @{ Name = "Microsoft.Graph.Users.Actions";               TestCmd = "Revoke-MgUserSignInSession" },
         @{ Name = "Microsoft.Graph.Groups";                      TestCmd = "Get-MgGroup" },
         @{ Name = "Microsoft.Graph.Identity.DirectoryManagement"; TestCmd = "Get-MgSubscribedSku" },
         @{ Name = "Microsoft.Online.SharePoint.PowerShell";      TestCmd = "Connect-SPOService"; Optional = $true }
     )
+
+    # ---- Pre-flight: detect Microsoft.Graph sibling version drift. ----
+    # If we don't fix this BEFORE the install/import loop, importing a
+    # newer Users module against an older Authentication will throw and
+    # the operator will see a confusing nested-import error.
+    $coherence = Test-MgGraphVersionCoherence
+    if ($coherence.Count -gt 0) {
+        Write-Warn "Microsoft.Graph submodule version mismatch detected:"
+        foreach ($l in $coherence) { Write-Host "    $l" -ForegroundColor Yellow }
+        $ans = Read-UserInput "Reinstall all Microsoft.Graph.* siblings to a single version now? (Y/n)"
+        if ($ans -notmatch '^[Nn]') {
+            $graphNames = @($requiredModules | Where-Object { $_.Name -like 'Microsoft.Graph.*' } | ForEach-Object { $_.Name })
+            Repair-MgGraphSiblings -Names $graphNames
+        } else {
+            Write-Warn "Continuing with mismatched versions; import may fail."
+        }
+    }
 
     # ---- Pass 1: figure out what's actually missing ----
     $missingRequired = @()
@@ -180,14 +287,30 @@ function Assert-ModulesInstalled {
             }
             Write-Warn "$modName is not installed. Installing for CurrentUser..."
             try {
-                Install-Module $modName -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+                # -SkipPublisherCheck so PSGallery's signing cert change
+                # in 2023 doesn't block 5.1 installs (the modules ARE
+                # signed by Microsoft; the prior PSGallery publisher is
+                # marked untrusted by default on older PowerShellGet).
+                Install-Module $modName -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
                 Write-Success "$modName installed."
                 $installed = Get-Module -ListAvailable -Name $modName | Sort-Object Version -Descending | Select-Object -First 1
             } catch {
                 $msg = "$_"
                 Write-ErrorMsg "Failed to install $modName : $msg"
-                if ($msg -match 'Administrator|elevation|Access.*denied|Unauthorized') {
+                if ($msg -match 'TLS|SSL|underlying connection') {
+                    Write-InfoMsg "TLS handshake failed. Run this once, then retry:"
+                    Write-Host "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" -ForegroundColor Cyan
+                }
+                elseif ($msg -match 'NuGet|PackageProvider') {
+                    Write-InfoMsg "Run this once, then retry:"
+                    Write-Host "    Install-PackageProvider -Name NuGet -Force -ForceBootstrap" -ForegroundColor Cyan
+                }
+                elseif ($msg -match 'Administrator|elevation|Access.*denied|Unauthorized') {
                     Write-InfoMsg "This looks like a permission issue. Re-run elevated, or retry with -Scope CurrentUser."
+                }
+                elseif ($msg -match 'Untrusted|Untrusted repository') {
+                    Write-InfoMsg "Run this once, then retry:"
+                    Write-Host "    Set-PSRepository -Name PSGallery -InstallationPolicy Trusted" -ForegroundColor Cyan
                 }
                 $allGood = $false
                 [void]$smokeResults.Add([PSCustomObject]@{ Module = $modName; Ok = $false; Reason = "install failed" })
@@ -849,7 +972,11 @@ function Get-SPOAdminUrlSuggestions {
         } catch {}
     }
 
-    return ,@($out)
+    # Return a plain string[] -- using `,@($out)` here wrapped the list
+    # in an extra array on the caller side, so Connect-SPOService later
+    # got an Object[] for -Url and threw "Cannot convert ... Specified
+    # method is not supported."
+    return [string[]]$out
 }
 
 function Connect-SPO {
@@ -922,7 +1049,7 @@ function Connect-SPO {
 
     Write-InfoMsg "Connecting to SharePoint Online ($adminUrl)..."
     try {
-        Connect-SPOService -Url $adminUrl -ErrorAction Stop
+        Connect-SPOService -Url ([string]$adminUrl) -ErrorAction Stop
         $script:SessionState.SharePointOnline   = $true
         $script:SessionState.SharePointAdminUrl = $adminUrl
         Set-SPOAdminUrlCache -TenantKey $tenantKey -AdminUrl $adminUrl
