@@ -129,7 +129,7 @@ function Start-M365Admin {
         "PREVIEW  -- dry-run, no tenant changes"
     ) -BackLabel "Quit"
     if ($modeSel -eq -1) {
-        Write-Host ""; Write-Host "  Goodbye!" -ForegroundColor $script:Colors.Title; return
+        Write-Host ""; Write-Host "  Goodbye!" -ForegroundColor $Global:M365Colors.Title; return
     }
     Set-PreviewMode -Enabled ($modeSel -eq 1)
     if (Get-PreviewMode) {
@@ -141,7 +141,7 @@ function Start-M365Admin {
 
     if (-not (Select-TenantMode)) {
         Write-Host ""
-        Write-Host "  Goodbye!" -ForegroundColor $script:Colors.Title
+        Write-Host "  Goodbye!" -ForegroundColor $Global:M365Colors.Title
         return
     }
 
@@ -157,43 +157,43 @@ function Start-M365Admin {
         Initialize-UI
         Write-Banner
 
-        $b = $script:Box
+        $b = $Global:M365Box
 
         # ---- Tenant + connection status bar ----
         # Phase 6: per-tenant color when a registered profile is active.
-        $tenantHeaderColor = if (Get-Command Get-TenantBannerColor -ErrorAction SilentlyContinue) { Get-TenantBannerColor -Name $script:SessionState.TenantName } else { $script:Colors.Accent }
+        $tenantHeaderColor = if (Get-Command Get-TenantBannerColor -ErrorAction SilentlyContinue) { Get-TenantBannerColor -Name $script:SessionState.TenantName } else { $Global:M365Colors.Accent }
         Write-Host ("  " + $b.TL + [string]::new($b.H, 1) + " Tenant " + [string]::new($b.H, 49) + $b.TR) -ForegroundColor $tenantHeaderColor
         Write-Host ("  " + $b.V + "  ") -ForegroundColor $tenantHeaderColor -NoNewline
         if ($script:SessionState.TenantMode -eq "Profile") {
             Write-Host "Profile " -NoNewline -ForegroundColor $tenantHeaderColor
             Write-Host $script:SessionState.TenantName -NoNewline -ForegroundColor White
-            if ($script:SessionState.TenantDomain) { Write-Host " ($($script:SessionState.TenantDomain))" -NoNewline -ForegroundColor $script:Colors.Info }
+            if ($script:SessionState.TenantDomain) { Write-Host " ($($script:SessionState.TenantDomain))" -NoNewline -ForegroundColor $Global:M365Colors.Info }
         } elseif ($script:SessionState.TenantMode -eq "Partner") {
-            Write-Host "GDAP " -NoNewline -ForegroundColor $script:Colors.Highlight
+            Write-Host "GDAP " -NoNewline -ForegroundColor $Global:M365Colors.Highlight
             Write-Host $script:SessionState.TenantName -NoNewline -ForegroundColor White
-            if ($script:SessionState.TenantDomain) { Write-Host " ($($script:SessionState.TenantDomain))" -NoNewline -ForegroundColor $script:Colors.Info }
+            if ($script:SessionState.TenantDomain) { Write-Host " ($($script:SessionState.TenantDomain))" -NoNewline -ForegroundColor $Global:M365Colors.Info }
         } else {
             Write-Host "Direct (own organization)" -NoNewline -ForegroundColor White
         }
         $cursorPos = $Host.UI.RawUI.CursorPosition.X; $remaining = 62 - $cursorPos
         if ($remaining -gt 0) { Write-Host (" " * $remaining) -NoNewline }
-        Write-Host ($b.V) -ForegroundColor $script:Colors.Accent
+        Write-Host ($b.V) -ForegroundColor $Global:M365Colors.Accent
 
         $gs = if ($script:SessionState.MgGraph) { "OK" } else { "---" }
         $es = if ($script:SessionState.ExchangeOnline) { "OK" } else { "---" }
         $ss = if ($script:SessionState.ComplianceCenter) { "OK" } else { "---" }
 
-        Write-Host ("  " + $b.V + "  Graph: ") -ForegroundColor $script:Colors.Accent -NoNewline
+        Write-Host ("  " + $b.V + "  Graph: ") -ForegroundColor $Global:M365Colors.Accent -NoNewline
         Write-Host ("{0,-6}" -f $gs) -ForegroundColor $(if ($script:SessionState.MgGraph) { "Green" } else { "Gray" }) -NoNewline
-        Write-Host " EXO: " -ForegroundColor $script:Colors.Accent -NoNewline
+        Write-Host " EXO: " -ForegroundColor $Global:M365Colors.Accent -NoNewline
         Write-Host ("{0,-6}" -f $es) -ForegroundColor $(if ($script:SessionState.ExchangeOnline) { "Green" } else { "Gray" }) -NoNewline
-        Write-Host " SCC: " -ForegroundColor $script:Colors.Accent -NoNewline
+        Write-Host " SCC: " -ForegroundColor $Global:M365Colors.Accent -NoNewline
         Write-Host ("{0,-6}" -f $ss) -ForegroundColor $(if ($script:SessionState.ComplianceCenter) { "Green" } else { "Gray" }) -NoNewline
         $cursorPos = $Host.UI.RawUI.CursorPosition.X; $remaining = 62 - $cursorPos
         if ($remaining -gt 0) { Write-Host (" " * $remaining) -NoNewline }
-        Write-Host ($b.V) -ForegroundColor $script:Colors.Accent
+        Write-Host ($b.V) -ForegroundColor $Global:M365Colors.Accent
 
-        Write-Host ("  " + $b.BL + [string]::new($b.H, 58) + $b.BR) -ForegroundColor $script:Colors.Accent
+        Write-Host ("  " + $b.BL + [string]::new($b.H, 58) + $b.BR) -ForegroundColor $Global:M365Colors.Accent
 
         # ---- Mode banner (Preview / Live) ----
         $modeText  = if (Get-PreviewMode) { '  [ PREVIEW MODE -- dry-run, no tenant changes ]  ' } else { '  [ LIVE MODE -- changes apply to the tenant ]  ' }
@@ -303,7 +303,7 @@ function Start-M365Admin {
     }
 
     Write-Host ""
-    Write-Host "  Goodbye!" -ForegroundColor $script:Colors.Title
+    Write-Host "  Goodbye!" -ForegroundColor $Global:M365Colors.Title
     Write-Host ""
 }
 
