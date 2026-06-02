@@ -143,26 +143,46 @@ function Initialize-PSGalleryBootstrap {
 
 function Test-MgGraphVersionCoherence {
     <#
-        Each Microsoft.Graph.* submodule has its own version. When a
-        new sibling (e.g. Microsoft.Graph.Users 2.20) is installed but
-        Microsoft.Graph.Authentication is still 2.10, importing the
-        new sibling errors with "The required module ... is not
-        installed at version ...". This helper returns @() when all
-        Microsoft.Graph.* siblings on disk are at the same version,
-        or an array of complaints describing the mismatch.
+        Each Microsoft.Graph.* submodule has its own version. Returns
+        @() when everything is coherent, otherwise an array of human-
+        readable lines describing the problem(s).
+
+        Checks two failure modes:
+          (a) Different highest-version per sibling (sibling drift).
+              E.g. Users v2.30 but Authentication v2.20 on disk.
+          (b) Multiple versions of the same sibling on disk. Even when
+              the highest version matches across siblings, an older
+              copy lurking in another module path can load first and
+              trigger "Could not load file or assembly ... Version=X"
+              for the matching .Core DLL. This is the case the
+              previous version of the check missed.
     #>
-    $sibs = @(Get-Module -ListAvailable -Name 'Microsoft.Graph.*' |
-              Where-Object { $_.Name -ne 'Microsoft.Graph' } |
-              Group-Object Name | ForEach-Object {
-                  $_.Group | Sort-Object Version -Descending | Select-Object -First 1
-              })
-    if ($sibs.Count -lt 2) { return @() }
-    $versions = $sibs | ForEach-Object { [string]$_.Version } | Sort-Object -Unique
-    if ($versions.Count -le 1) { return @() }
-    $msgs = @("Multiple Microsoft.Graph.* versions installed: $($versions -join ', ')")
-    foreach ($s in $sibs) {
-        $msgs += "    $($s.Name) v$($s.Version)"
+    $all = @(Get-Module -ListAvailable -Name 'Microsoft.Graph.*' |
+             Where-Object { $_.Name -ne 'Microsoft.Graph' })
+    if ($all.Count -lt 2) { return @() }
+    $msgs = @()
+
+    # (a) Sibling drift.
+    $tops = @($all | Group-Object Name | ForEach-Object {
+        $_.Group | Sort-Object Version -Descending | Select-Object -First 1
+    })
+    $topVersions = $tops | ForEach-Object { [string]$_.Version } | Sort-Object -Unique
+    if ($topVersions.Count -gt 1) {
+        $msgs += "Microsoft.Graph.* sibling drift: $($topVersions -join ', ')"
+        foreach ($t in $tops) { $msgs += "    $($t.Name) v$($t.Version)" }
     }
+
+    # (b) Multiple installed versions of the same sibling.
+    $multi = @($all | Group-Object Name | Where-Object { $_.Count -gt 1 })
+    if ($multi.Count -gt 0) {
+        $msgs += "Multiple installed versions of the same Microsoft.Graph.* module(s):"
+        foreach ($g in $multi) {
+            $vers = ($g.Group | ForEach-Object { [string]$_.Version } | Sort-Object -Unique) -join ', '
+            $msgs += "    $($g.Name) -> $vers"
+        }
+        $msgs += "    (PowerShell may load an old copy first. Run option 98 to clean up.)"
+    }
+
     return $msgs
 }
 
@@ -228,8 +248,9 @@ function Write-MgGraphAssemblyMismatchHelp {
     <#
         If $Message looks like a "Could not load file or assembly
         Microsoft.Graph.* Version=X.Y.Z" error, print a clear
-        remediation block and return $true so the caller can short-
-        circuit further error chatter. Returns $false otherwise.
+        remediation block and OFFER to run the elevated repair now.
+        Returns $true so the caller can short-circuit further error
+        chatter; $false when the message doesn't match.
     #>
     param([Parameter(Mandatory)][string]$Message)
     if ($Message -notmatch 'Could not load file or assembly.*Microsoft\.Graph') { return $false }
@@ -237,31 +258,41 @@ function Write-MgGraphAssemblyMismatchHelp {
     if ($Message -match 'Version=([\d\.]+)') { $version = $Matches[1] }
 
     Write-Host ""
-    Write-ErrorMsg "Microsoft.Graph module version mismatch detected."
+    Write-ErrorMsg "Microsoft.Graph module version mismatch / incomplete install."
     if ($version) {
-        Write-Host ("    Looking for Microsoft.Graph.Authentication.Core v{0} but it isn't on disk." -f $version) -ForegroundColor Yellow
+        Write-Host ("    Looking for Microsoft.Graph.Authentication.Core v{0} but it isn't on disk" -f $version) -ForegroundColor Yellow
+        Write-Host  "    (or an older sibling version got loaded first and is masking it)." -ForegroundColor Yellow
     }
     Write-Host ""
-    Write-Host "  The DLLs already loaded in THIS PowerShell session can't be unloaded," -ForegroundColor Yellow
-    Write-Host "  so the fix has to run in a fresh window. Steps:" -ForegroundColor Yellow
+    Write-Host "  Why a plain re-launch didn't fix it: PowerShell can load an OLDER" -ForegroundColor Yellow
+    Write-Host "  sibling first when MULTIPLE versions are installed on disk. The" -ForegroundColor Yellow
+    Write-Host "  reliable cure is to uninstall ALL Microsoft.Graph.* versions and" -ForegroundColor Yellow
+    Write-Host "  reinstall a clean coherent set." -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "    1. Close this window." -ForegroundColor White
-    Write-Host "    2. Open a NEW PowerShell as Administrator." -ForegroundColor White
-    Write-Host "    3. Run these commands one at a time:" -ForegroundColor White
+
+    $ans = Read-UserInput "Run the elevated Repair-Microsoft.Graph fix now? (Y/n)"
+    if ($ans -notmatch '^[Nn]') {
+        if (Get-Command Invoke-MgGraphFullRepair -ErrorAction SilentlyContinue) {
+            Invoke-MgGraphFullRepair
+            Write-Host ""
+            Write-Warn "Repair done. You MUST close this M365 Manager window and re-launch."
+            Write-Host "  Press any key to return..." -ForegroundColor Gray
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        } else {
+            Write-Warn "Repair helper not loaded; at the main menu type 98 <enter>."
+        }
+        return $true
+    }
+
     Write-Host ""
-    Write-Host "       Get-Module Microsoft.Graph.* -ListAvailable | Uninstall-Module -AllVersions -Force -ErrorAction SilentlyContinue" -ForegroundColor Cyan
-    Write-Host "       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" -ForegroundColor Cyan
-    Write-Host "       Install-Module Microsoft.Graph.Authentication              -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
-    Write-Host "       Install-Module Microsoft.Graph.Users                       -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
-    Write-Host "       Install-Module Microsoft.Graph.Users.Actions               -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
-    Write-Host "       Install-Module Microsoft.Graph.Groups                      -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
-    Write-Host "       Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "    4. Close that window, re-launch this tool." -ForegroundColor White
-    Write-Host ""
-    Write-Host "  Faster path inside the tool: at the main menu, type" -ForegroundColor Yellow
-    Write-Host "    98" -ForegroundColor Cyan -NoNewline
-    Write-Host " <enter>  ('Repair Microsoft.Graph modules' hidden option)." -ForegroundColor Yellow
+    Write-Host "  Manual recovery from a NEW elevated PowerShell window:" -ForegroundColor Yellow
+    Write-Host "    Get-Module Microsoft.Graph.* -ListAvailable | Uninstall-Module -AllVersions -Force -ErrorAction SilentlyContinue" -ForegroundColor Cyan
+    Write-Host "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" -ForegroundColor Cyan
+    Write-Host "    Install-Module Microsoft.Graph.Authentication              -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "    Install-Module Microsoft.Graph.Users                       -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "    Install-Module Microsoft.Graph.Users.Actions               -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "    Install-Module Microsoft.Graph.Groups                      -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "    Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
     Write-Host ""
     return $true
 }
