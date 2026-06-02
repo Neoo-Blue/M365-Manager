@@ -3,6 +3,11 @@
 #  User lookup uses Microsoft Graph PowerShell SDK
 # ============================================================
 
+# NOTE: Colors / Box are published to BOTH $script: AND $Global: so callers
+# in any scope can read them. Windows PowerShell 5.1's dot-source scope
+# binding occasionally drops $script: references when the entry script
+# (Main.ps1) reads them from inside a nested function — globals make
+# the lookup unambiguous.
 $script:Colors = @{
     BG          = "DarkBlue"
     Title       = "Cyan"
@@ -15,6 +20,7 @@ $script:Colors = @{
     Prompt      = "Magenta"
     Accent      = "DarkCyan"
 }
+$Global:M365Colors = $script:Colors
 
 $script:Box = @{
     TL  = [char]0x250C
@@ -30,10 +36,16 @@ $script:Box = @{
     DH  = [char]0x2550
     DV  = [char]0x2551
 }
+$Global:M365Box = $script:Box
 
 function Initialize-UI {
-    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $Host.UI.RawUI.BackgroundColor = $script:Colors.BG
+    # Idempotently re-publish to both scopes so a lost binding gets fixed.
+    if (-not $Global:M365Colors) { $Global:M365Colors = $script:Colors }
+    if (-not $Global:M365Box)    { $Global:M365Box    = $script:Box }
+    if (-not $script:Colors)     { $script:Colors     = $Global:M365Colors }
+    if (-not $script:Box)        { $script:Box        = $Global:M365Box }
+    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+    try { $Host.UI.RawUI.BackgroundColor = $script:Colors.BG } catch {}
     Clear-Host
 }
 
