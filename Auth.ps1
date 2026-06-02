@@ -191,6 +191,95 @@ function Repair-MgGraphSiblings {
     }
 }
 
+function Write-MgGraphAssemblyMismatchHelp {
+    <#
+        If $Message looks like a "Could not load file or assembly
+        Microsoft.Graph.* Version=X.Y.Z" error, print a clear
+        remediation block and return $true so the caller can short-
+        circuit further error chatter. Returns $false otherwise.
+    #>
+    param([Parameter(Mandatory)][string]$Message)
+    if ($Message -notmatch 'Could not load file or assembly.*Microsoft\.Graph') { return $false }
+    $version = ''
+    if ($Message -match 'Version=([\d\.]+)') { $version = $Matches[1] }
+
+    Write-Host ""
+    Write-ErrorMsg "Microsoft.Graph module version mismatch detected."
+    if ($version) {
+        Write-Host ("    Looking for Microsoft.Graph.Authentication.Core v{0} but it isn't on disk." -f $version) -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "  The DLLs already loaded in THIS PowerShell session can't be unloaded," -ForegroundColor Yellow
+    Write-Host "  so the fix has to run in a fresh window. Steps:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "    1. Close this window." -ForegroundColor White
+    Write-Host "    2. Open a NEW PowerShell as Administrator." -ForegroundColor White
+    Write-Host "    3. Run these commands one at a time:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "       Get-Module Microsoft.Graph.* -ListAvailable | Uninstall-Module -AllVersions -Force -ErrorAction SilentlyContinue" -ForegroundColor Cyan
+    Write-Host "       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" -ForegroundColor Cyan
+    Write-Host "       Install-Module Microsoft.Graph.Authentication              -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "       Install-Module Microsoft.Graph.Users                       -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "       Install-Module Microsoft.Graph.Users.Actions               -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "       Install-Module Microsoft.Graph.Groups                      -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host "       Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "    4. Close that window, re-launch this tool." -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Faster path inside the tool: at the main menu, type" -ForegroundColor Yellow
+    Write-Host "    98" -ForegroundColor Cyan -NoNewline
+    Write-Host " <enter>  ('Repair Microsoft.Graph modules' hidden option)." -ForegroundColor Yellow
+    Write-Host ""
+    return $true
+}
+
+function Invoke-MgGraphFullRepair {
+    <#
+        Operator-triggered full repair. Spawns an elevated PowerShell
+        that uninstalls every Microsoft.Graph.* module on disk and
+        reinstalls a coherent set, then waits for the operator to
+        close that window and exits the current session (because
+        we can't safely unload the already-loaded assemblies).
+    #>
+    Write-SectionHeader "Repair Microsoft.Graph modules"
+    Write-Host "  This will:" -ForegroundColor $script:Colors.Info
+    Write-Host "    1. Uninstall ALL Microsoft.Graph.* modules from disk." -ForegroundColor White
+    Write-Host "    2. Reinstall a coherent set (Authentication, Users, Users.Actions," -ForegroundColor White
+    Write-Host "       Groups, Identity.DirectoryManagement) at the same version." -ForegroundColor White
+    Write-Host "    3. Require you to close and re-launch this tool." -ForegroundColor White
+    Write-Host ""
+    if (-not (Confirm-Action "Proceed with elevated repair?")) { return }
+
+    $cmds = @(
+        "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
+        "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force",
+        "if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -Force -ForceBootstrap | Out-Null }",
+        "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue",
+        "Write-Host 'Uninstalling existing Microsoft.Graph.* modules...' -ForegroundColor Yellow",
+        "Get-Module Microsoft.Graph.* -ListAvailable | Uninstall-Module -AllVersions -Force -ErrorAction SilentlyContinue",
+        "Write-Host 'Installing coherent set...' -ForegroundColor Yellow",
+        "Install-Module Microsoft.Graph.Authentication              -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Users                       -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Users.Actions               -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Groups                      -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Write-Host ''; Write-Host 'Done. Close this window and re-launch M365 Manager.' -ForegroundColor Green",
+        "Read-Host 'Press Enter to close'"
+    ) -join '; '
+
+    $psExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+    try {
+        Start-Process -FilePath $psExe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-Command', $cmds) -Verb RunAs -ErrorAction Stop -Wait
+        Write-Host ""
+        Write-Success "Repair completed in the elevated window."
+        Write-Warn "You MUST close this M365 Manager session and re-launch it before retrying."
+        Write-Host ""
+    } catch {
+        Write-ErrorMsg "Could not start elevated PowerShell: $_"
+    }
+    Pause-ForUser
+}
+
 function Assert-ModulesInstalled {
     Write-SectionHeader "Checking Dependencies"
 

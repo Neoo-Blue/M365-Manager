@@ -131,14 +131,20 @@ function Start-Offboard {
     } catch {
         $msg = if (Get-Command Resolve-GraphError -ErrorAction SilentlyContinue) { Resolve-GraphError -ErrorRecord $_ } else { "$_" }
         Write-ErrorMsg "User lookup for '$upn' failed: $msg"
-        if ($msg -match '401|Unauthorized|expired|InvalidAuthenticationToken') {
-            Write-InfoMsg "Your Graph token may have expired. Reconnect via the Tenants menu and retry."
+        $shortCircuit = $false
+        if (Get-Command Write-MgGraphAssemblyMismatchHelp -ErrorAction SilentlyContinue) {
+            $shortCircuit = Write-MgGraphAssemblyMismatchHelp -Message $msg
         }
-        elseif ($msg -match '403|Forbidden|Authorization_RequestDenied|Insufficient privileges') {
-            Write-InfoMsg "Required scopes missing. An admin must grant consent for User.Read.All / User.ReadWrite.All."
-        }
-        elseif ($msg -match 'ResourceNotFound|Request_ResourceNotFound|does not exist|404|not found') {
-            Write-InfoMsg "No user exists with that UPN in the connected tenant. Check the tenant banner above."
+        if (-not $shortCircuit) {
+            if ($msg -match '401|Unauthorized|expired|InvalidAuthenticationToken') {
+                Write-InfoMsg "Your Graph token may have expired. Reconnect via the Tenants menu and retry."
+            }
+            elseif ($msg -match '403|Forbidden|Authorization_RequestDenied|Insufficient privileges') {
+                Write-InfoMsg "Required scopes missing. An admin must grant consent for User.Read.All / User.ReadWrite.All."
+            }
+            elseif ($msg -match 'ResourceNotFound|Request_ResourceNotFound|does not exist|404|not found') {
+                Write-InfoMsg "No user exists with that UPN in the connected tenant. Check the tenant banner above."
+            }
         }
         Pause-ForUser
         return

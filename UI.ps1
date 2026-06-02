@@ -471,6 +471,9 @@ function Find-UPNByName {
     } catch {
         $msg = Resolve-GraphError -ErrorRecord $_
         Write-Warn "Search failed: $msg"
+        if (Get-Command Write-MgGraphAssemblyMismatchHelp -ErrorAction SilentlyContinue) {
+            if (Write-MgGraphAssemblyMismatchHelp -Message $msg) { return $raw }
+        }
         if ($msg -match '401|Unauthorized|expired|InvalidAuthenticationToken') {
             Write-InfoMsg "Your Graph token may have expired. Reconnect via the Tenants menu and retry."
         }
