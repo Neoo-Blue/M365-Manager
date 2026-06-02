@@ -143,7 +143,34 @@ function Start-Offboard {
                 Write-InfoMsg "Required scopes missing. An admin must grant consent for User.Read.All / User.ReadWrite.All."
             }
             elseif ($msg -match 'ResourceNotFound|Request_ResourceNotFound|does not exist|404|not found') {
-                Write-InfoMsg "No user exists with that UPN in the connected tenant. Check the tenant banner above."
+                Write-InfoMsg "No user exists with that UPN in the connected tenant."
+                # Show the operator EXACTLY which tenant Graph is talking to,
+                # so a wrong-tenant mistake (cached identity from another org)
+                # is obvious.
+                if (Get-Command Get-MgContext -ErrorAction SilentlyContinue) {
+                    try {
+                        $ctx = Get-MgContext
+                        if ($ctx) {
+                            Write-Host ""
+                            Write-Host "  Graph currently authenticated as:" -ForegroundColor Yellow
+                            Write-Host ("    Account:  {0}" -f $ctx.Account) -ForegroundColor White
+                            Write-Host ("    TenantId: {0}" -f $ctx.TenantId) -ForegroundColor White
+                            if ($ctx.ClientId) { Write-Host ("    AppId:    {0}" -f $ctx.ClientId) -ForegroundColor White }
+                            Write-Host ""
+                            $domain = if ($upn -match '@(.+)$') { $Matches[1] } else { '' }
+                            if ($domain -and $ctx.Account -and $ctx.Account -notmatch [regex]::Escape($domain)) {
+                                Write-Warn ("The signed-in account is in a DIFFERENT domain ({0}) than '{1}'." -f $ctx.Account, $upn)
+                            }
+                            $ans = Read-UserInput "Disconnect Graph and re-authenticate against the right tenant now? (y/N)"
+                            if ($ans -match '^[Yy]') {
+                                if (Get-Command Reconnect-GraphWithConsent -ErrorAction SilentlyContinue) {
+                                    Reconnect-GraphWithConsent | Out-Null
+                                    Write-InfoMsg "Reconnected. Re-run the offboard."
+                                }
+                            }
+                        }
+                    } catch {}
+                }
             }
         }
         Pause-ForUser

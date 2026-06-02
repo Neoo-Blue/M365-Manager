@@ -486,6 +486,23 @@ function Find-UPNByName {
 
     if ($users.Count -eq 0) {
         Write-ErrorMsg "No users found matching '$raw' in displayName, givenName, surname, mail, or UPN."
+        # Surface the Graph context so the operator can spot a
+        # wrong-tenant authentication (cached identity from another
+        # org).
+        if (Get-Command Get-MgContext -ErrorAction SilentlyContinue) {
+            try {
+                $ctx = Get-MgContext
+                if ($ctx) {
+                    Write-Host "    Graph is authenticated as $($ctx.Account) (TenantId $($ctx.TenantId))." -ForegroundColor Yellow
+                    if ($raw -match '@(.+)$') {
+                        $d = $Matches[1]
+                        if ($ctx.Account -and $ctx.Account -notmatch [regex]::Escape($d)) {
+                            Write-Warn "  That account is in a DIFFERENT domain than '$raw'. You may be signed into the wrong tenant."
+                        }
+                    }
+                }
+            } catch {}
+        }
         return $null
     }
     if ($users.Count -eq 1) {
