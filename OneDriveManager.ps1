@@ -347,7 +347,7 @@ function Invoke-OneDriveHandoff {
 }
 
 # ============================================================
-#  OneDrive admin menu — grant / revoke / list / lock
+#  OneDrive admin menu: grant / revoke / list / lock
 # ============================================================
 
 function Get-OneDriveSiteAdmins {

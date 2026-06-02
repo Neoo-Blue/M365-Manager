@@ -66,6 +66,16 @@ if (-not $ScriptRoot) {
     exit 1
 }
 
+# ---- Strip Mark-of-the-Web on all .ps1 files in the folder.
+# Files extracted from a downloaded ZIP get a Zone.Identifier NTFS
+# stream that makes PowerShell refuse to dot-source them, even with
+# -ExecutionPolicy Bypass. Unblock-File removes the tag silently so
+# the dot-source loop below works on freshly-extracted copies.
+try {
+    Get-ChildItem -Path $ScriptRoot -Filter *.ps1 -ErrorAction SilentlyContinue |
+        Unblock-File -ErrorAction SilentlyContinue
+} catch {}
+
 # ---- Load all modules ----
 $loadErrors = @()
 $modules = @(
@@ -103,6 +113,32 @@ if ($loadErrors.Count -gt 0) {
     Write-Host "  WARNING: Some modules failed to load:" -ForegroundColor Yellow
     foreach ($e in $loadErrors) { Write-Host $e -ForegroundColor Red }
     Write-Host "" -ForegroundColor Gray
+}
+
+# ---- Hard-stop if the UI module didn't load. Everything below depends
+# on Initialize-UI / Write-Banner / Show-Menu: if those aren't defined
+# we'd produce a wall of "term not recognized" errors with no fix path.
+# The most common cause is Mark-of-the-Web blocking on a ZIP-extracted
+# copy that Windows Defender hasn't been told to trust yet.
+if (-not (Get-Command Initialize-UI -ErrorAction SilentlyContinue)) {
+    Write-Host ""
+    Write-Host "  ERROR: UI module did not load (Initialize-UI undefined)." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Most likely: files extracted from a downloaded ZIP are still" -ForegroundColor Yellow
+    Write-Host "  tagged with Mark-of-the-Web. Fix with ONE of:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "    1.  Right-click M365-Manager.zip BEFORE extracting, choose" -ForegroundColor White
+    Write-Host "        Properties, tick 'Unblock', then re-extract." -ForegroundColor White
+    Write-Host ""
+    Write-Host "    2.  Run this in an elevated PowerShell window from this folder:" -ForegroundColor White
+    Write-Host "          Get-ChildItem -Recurse | Unblock-File" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "    3.  Move the folder out of Downloads (e.g. C:\\Tools\\M365-Manager)" -ForegroundColor White
+    Write-Host "        and run from there." -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Press any key to exit..." -ForegroundColor Gray
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
 }
 
 # ---- Main Application ----

@@ -6,7 +6,7 @@
 # NOTE: Colors / Box are published to BOTH $script: AND $Global: so callers
 # in any scope can read them. Windows PowerShell 5.1's dot-source scope
 # binding occasionally drops $script: references when the entry script
-# (Main.ps1) reads them from inside a nested function — globals make
+# (Main.ps1) reads them from inside a nested function; globals make
 # the lookup unambiguous.
 $script:Colors = @{
     BG          = "DarkBlue"
@@ -395,12 +395,12 @@ function Resolve-UPN {
     }
     $raw = $raw.Trim()
 
-    # Already a UPN / email — return as-is.
+    # Already a UPN / email: return as-is.
     if ($raw -match '@') { return $raw }
 
     # Need Graph for name search.
     if (-not (Get-Command Get-MgUser -ErrorAction SilentlyContinue)) {
-        Write-Warn "Graph not loaded — using raw input '$raw' as UPN."
+        Write-Warn "Graph not loaded, using raw input '$raw' as UPN."
         return $raw
     }
 
@@ -431,7 +431,7 @@ function Resolve-UPN {
     }
 
     $labels = $users | ForEach-Object {
-        $title = if ($_.JobTitle) { " — $($_.JobTitle)" } else { "" }
+        $title = if ($_.JobTitle) { ", $($_.JobTitle)" } else { "" }
         "{0} <{1}>{2}" -f $_.DisplayName, $_.UserPrincipalName, $title
     }
     $sel = Show-Menu -Title "Select user ($($users.Count) matches)" -Options $labels -BackLabel "Cancel"
