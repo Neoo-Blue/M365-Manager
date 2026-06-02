@@ -888,6 +888,13 @@ function Get-StateDirectory {
 }
 
 function Get-SPOAdminUrlCache {
+    <#
+        Returns a hashtable of tenantKey -> [string[]] of cached admin URLs.
+        Reads spo-tenants.json. Backward-compatible with the legacy
+        format where each tenantKey held a single string -- old strings
+        are migrated to a 1-element array on read. The on-disk file is
+        rewritten in the new format on the next Add/Remove.
+    #>
     $dir = Get-StateDirectory
     if (-not $dir) { return @{} }
     $p = Join-Path $dir 'spo-tenants.json'
@@ -895,19 +902,79 @@ function Get-SPOAdminUrlCache {
     try {
         $raw = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
         $h = @{}
-        foreach ($prop in $raw.PSObject.Properties) { $h[$prop.Name] = [string]$prop.Value }
+        foreach ($prop in $raw.PSObject.Properties) {
+            $val = $prop.Value
+            $list = @()
+            if ($null -eq $val)        { $list = @() }
+            elseif ($val -is [string]) { $list = @([string]$val) }
+            elseif ($val -is [System.Collections.IEnumerable] -and -not ($val -is [string])) {
+                foreach ($v in $val) { if ($v) { $list += [string]$v } }
+            } else {
+                $list = @([string]$val)
+            }
+            # Dedup, preserve order, trim
+            $seen = @{}; $out = @()
+            foreach ($u in $list) {
+                $k = $u.Trim().TrimEnd('/').ToLowerInvariant()
+                if ($k -and -not $seen.ContainsKey($k)) { $seen[$k] = $true; $out += $u.Trim().TrimEnd('/') }
+            }
+            $h[$prop.Name] = $out
+        }
         return $h
     } catch { return @{} }
 }
 
-function Set-SPOAdminUrlCache {
-    param([string]$TenantKey, [string]$AdminUrl)
+function Save-SPOAdminUrlCache {
+    param([hashtable]$Cache)
     $dir = Get-StateDirectory
     if (-not $dir) { return }
     $p = Join-Path $dir 'spo-tenants.json'
-    $h = Get-SPOAdminUrlCache
-    $h[$TenantKey] = $AdminUrl
-    try { ($h | ConvertTo-Json -Depth 3) | Set-Content -LiteralPath $p -Encoding UTF8 -Force } catch {}
+    try { ($Cache | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $p -Encoding UTF8 -Force } catch {}
+}
+
+function Add-SPOAdminUrlCache {
+    <#
+        Append an admin URL to the cache for $TenantKey. Idempotent
+        (dedup, case-insensitive). The most-recently-used URL is moved
+        to the front of the list so the picker shows it first.
+    #>
+    param([string]$TenantKey, [string]$AdminUrl)
+    if ([string]::IsNullOrWhiteSpace($AdminUrl)) { return }
+    $url = $AdminUrl.Trim().TrimEnd('/')
+    $cache = Get-SPOAdminUrlCache
+    $existing = @()
+    if ($cache.ContainsKey($TenantKey)) { $existing = @($cache[$TenantKey]) }
+    # Remove any case-insensitive duplicate, then prepend the new one.
+    $existing = @($existing | Where-Object { $_.ToLowerInvariant() -ne $url.ToLowerInvariant() })
+    $merged = @($url) + $existing
+    $cache[$TenantKey] = $merged
+    Save-SPOAdminUrlCache -Cache $cache
+}
+
+function Remove-SPOAdminUrlCache {
+    <#
+        Remove a single URL from the tenant's cached list. If $AdminUrl
+        is omitted, removes ALL URLs for the tenant.
+    #>
+    param([string]$TenantKey, [string]$AdminUrl)
+    $cache = Get-SPOAdminUrlCache
+    if (-not $cache.ContainsKey($TenantKey)) { return }
+    if ([string]::IsNullOrWhiteSpace($AdminUrl)) {
+        $cache.Remove($TenantKey) | Out-Null
+    } else {
+        $url = $AdminUrl.Trim().TrimEnd('/')
+        $cache[$TenantKey] = @($cache[$TenantKey] | Where-Object { $_.ToLowerInvariant() -ne $url.ToLowerInvariant() })
+        if ($cache[$TenantKey].Count -eq 0) { $cache.Remove($TenantKey) | Out-Null }
+    }
+    Save-SPOAdminUrlCache -Cache $cache
+}
+
+# Compatibility shim for any external caller that still uses the old
+# single-URL setter. Routes through Add-SPOAdminUrlCache so the new
+# multi-URL list grows naturally.
+function Set-SPOAdminUrlCache {
+    param([string]$TenantKey, [string]$AdminUrl)
+    Add-SPOAdminUrlCache -TenantKey $TenantKey -AdminUrl $AdminUrl
 }
 
 function Get-SPOAdminUrlSuggestions {
@@ -947,7 +1014,10 @@ function Get-SPOAdminUrlSuggestions {
                  elseif ($script:SessionState.TenantId) { $script:SessionState.TenantId }
                  else { 'default' }
     $cache = Get-SPOAdminUrlCache
-    if ($cache[$tenantKey]) { Add-Url $cache[$tenantKey] }
+    # Surface every cached URL for this tenant, most-recent first.
+    if ($cache.ContainsKey($tenantKey)) {
+        foreach ($cu in @($cache[$tenantKey])) { Add-Url $cu }
+    }
 
     Add-Url (Derive-FromDomain $script:SessionState.TenantDomain)
 
@@ -1005,12 +1075,26 @@ function Connect-SPO {
     $adminUrl = $null
 
     while (-not $adminUrl) {
-        $opts = @()
-        foreach ($s in $suggestions) { $opts += $s }
-        $opts += "Enter manually..."
-        if ($suggestions.Count -gt 0) { $opts += "Clear cached URL for this tenant" }
+        $cache = Get-SPOAdminUrlCache
+        $cachedForTenant = @()
+        if ($cache.ContainsKey($tenantKey)) { $cachedForTenant = @($cache[$tenantKey]) }
 
-        $sel = Show-Menu -Title "SharePoint admin URL" -Options $opts -BackLabel "Cancel"
+        # Build menu: each suggestion is a row, then manual entry, then
+        # (if anything cached) a per-URL remove option, then clear-all.
+        $opts = @()
+        for ($i = 0; $i -lt $suggestions.Count; $i++) {
+            $tag = ''
+            if ($cachedForTenant -contains $suggestions[$i]) { $tag = '  [saved]' }
+            $opts += ("{0}{1}" -f $suggestions[$i], $tag)
+        }
+        $opts += "Enter manually (will be saved for next time)..."
+        $removeIdx = -1; $clearAllIdx = -1
+        if ($cachedForTenant.Count -gt 0) {
+            $removeIdx = $opts.Count;   $opts += "Remove one saved URL..."
+            $clearAllIdx = $opts.Count; $opts += ("Clear ALL saved URLs for this tenant ({0})" -f $cachedForTenant.Count)
+        }
+
+        $sel = Show-Menu -Title ("SharePoint admin URL ({0} option(s))" -f $suggestions.Count) -Options $opts -BackLabel "Cancel"
         if ($sel -eq -1) { Write-Warn "Cancelled."; return $false }
 
         if ($sel -lt $suggestions.Count) {
@@ -1029,20 +1113,18 @@ function Connect-SPO {
                 $adminUrl = $entered
             }
         }
-        else {
-            # Clear cache for this tenant and rebuild suggestions
-            $dir = Get-StateDirectory
-            if ($dir) {
-                $p = Join-Path $dir 'spo-tenants.json'
-                $h = Get-SPOAdminUrlCache
-                if ($h.ContainsKey($tenantKey)) {
-                    $h.Remove($tenantKey) | Out-Null
-                    try { ($h | ConvertTo-Json -Depth 3) | Set-Content -LiteralPath $p -Encoding UTF8 -Force } catch {}
-                    Write-Success "Cached SharePoint URL cleared for tenant '$tenantKey'."
-                } else {
-                    Write-InfoMsg "No cached URL to clear."
-                }
+        elseif ($sel -eq $removeIdx) {
+            # Pick a specific cached URL to drop.
+            $rsel = Show-Menu -Title "Remove which saved URL?" -Options $cachedForTenant -BackLabel "Cancel"
+            if ($rsel -ne -1) {
+                Remove-SPOAdminUrlCache -TenantKey $tenantKey -AdminUrl $cachedForTenant[$rsel]
+                Write-Success ("Removed: {0}" -f $cachedForTenant[$rsel])
+                $suggestions = @(Get-SPOAdminUrlSuggestions)
             }
+        }
+        elseif ($sel -eq $clearAllIdx) {
+            Remove-SPOAdminUrlCache -TenantKey $tenantKey
+            Write-Success "All saved SharePoint URLs cleared for tenant '$tenantKey'."
             $suggestions = @(Get-SPOAdminUrlSuggestions)
         }
     }
@@ -1052,7 +1134,7 @@ function Connect-SPO {
         Connect-SPOService -Url ([string]$adminUrl) -ErrorAction Stop
         $script:SessionState.SharePointOnline   = $true
         $script:SessionState.SharePointAdminUrl = $adminUrl
-        Set-SPOAdminUrlCache -TenantKey $tenantKey -AdminUrl $adminUrl
+        Add-SPOAdminUrlCache -TenantKey $tenantKey -AdminUrl $adminUrl
         Write-Success "SharePoint Online connected."
         return $true
     } catch {
