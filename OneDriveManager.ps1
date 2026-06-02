@@ -345,3 +345,143 @@ function Invoke-OneDriveHandoff {
     }
     return [PSCustomObject]$result
 }
+
+# ============================================================
+#  OneDrive admin menu — grant / revoke / list / lock
+# ============================================================
+
+function Get-OneDriveSiteAdmins {
+    <#
+        Return the current site-collection admins on a OneDrive site.
+        Filters out the well-known system / SHAREPOINT\system entries.
+    #>
+    param([Parameter(Mandatory)][string]$SiteUrl)
+    if (-not (Get-Command Get-SPOUser -ErrorAction SilentlyContinue)) {
+        Write-Warn "SPO module not loaded."
+        return @()
+    }
+    try {
+        $users = @(Get-SPOUser -Site $SiteUrl -Limit ALL -ErrorAction Stop | Where-Object { $_.IsSiteAdmin })
+        return @($users |
+            Where-Object { $_.LoginName -notmatch '^(c:0|SHAREPOINT\\|app@sharepoint|i:0#\.f\|membership\|app_)' } |
+            ForEach-Object { [PSCustomObject]@{ LoginName = $_.LoginName; DisplayName = $_.DisplayName } })
+    } catch {
+        Write-Warn "Could not read admins of $SiteUrl -- $($_.Exception.Message)"
+        return @()
+    }
+}
+
+function Resolve-OneDriveSite {
+    <#
+        Helper for menu actions: prompt for a user (UPN or name) and
+        return their OneDrive site URL, or $null. Connects to SPO if
+        needed.
+    #>
+    param([string]$PromptText = "OneDrive owner (UPN or name)")
+    if (-not (Connect-ForTask 'OneDrive')) { return $null }
+    $upn = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt $PromptText } else { Read-UserInput $PromptText }
+    if (-not $upn) { return $null }
+    $url = Get-UserOneDriveUrl -UPN $upn
+    if (-not $url) {
+        Write-Warn "No OneDrive site provisioned for $upn."
+        return $null
+    }
+    Write-InfoMsg ("Site: {0}" -f $url)
+    return [PSCustomObject]@{ OwnerUPN = $upn; SiteUrl = $url }
+}
+
+function Start-OneDriveManagerMenu {
+    while ($true) {
+        $sel = Show-Menu -Title "OneDrive Access" -Options @(
+            "List current OneDrive admins for a user",
+            "Grant access (add site-collection admin)",
+            "Revoke access (remove site-collection admin)",
+            "Lock OneDrive read-only",
+            "Show recently modified files (top 20)",
+            "Full leaver handoff (grant + retention + notify)"
+        ) -BackLabel "Back"
+
+        switch ($sel) {
+            0 {
+                $r = Resolve-OneDriveSite
+                if ($r) {
+                    $admins = Get-OneDriveSiteAdmins -SiteUrl $r.SiteUrl
+                    if ($admins.Count -eq 0) { Write-Warn "No non-system admins found." }
+                    else { $admins | Format-Table -AutoSize }
+                    Pause-ForUser
+                }
+            }
+            1 {
+                $r = Resolve-OneDriveSite -PromptText "OneDrive owner (UPN or name)"
+                if ($r) {
+                    $grantee = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Grantee UPN or name" } else { Read-UserInput "Grantee UPN" }
+                    if ($grantee) {
+                        Grant-OneDriveAccess -SiteUrl $r.SiteUrl -GranteeUPN $grantee
+                        Write-Success "Done."
+                    }
+                    Pause-ForUser
+                }
+            }
+            2 {
+                $r = Resolve-OneDriveSite -PromptText "OneDrive owner (UPN or name)"
+                if ($r) {
+                    $admins = Get-OneDriveSiteAdmins -SiteUrl $r.SiteUrl
+                    $grantee = $null
+                    if ($admins.Count -gt 0) {
+                        $labels = $admins | ForEach-Object { "$($_.DisplayName) <$($_.LoginName)>" }
+                        $labels += "Type a UPN..."
+                        $pick = Show-Menu -Title "Pick admin to revoke" -Options $labels -BackLabel "Cancel"
+                        if ($pick -eq -1) { Pause-ForUser; continue }
+                        if ($pick -lt $admins.Count) { $grantee = [string]$admins[$pick].LoginName }
+                        else { $grantee = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Grantee UPN or name to revoke" } else { Read-UserInput "Grantee UPN" } }
+                    } else {
+                        $grantee = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Grantee UPN or name to revoke" } else { Read-UserInput "Grantee UPN" }
+                    }
+                    if ($grantee) {
+                        Revoke-OneDriveAccess -SiteUrl $r.SiteUrl -GranteeUPN $grantee
+                        Write-Success "Done."
+                    }
+                    Pause-ForUser
+                }
+            }
+            3 {
+                $r = Resolve-OneDriveSite -PromptText "OneDrive owner to lock (UPN or name)"
+                if ($r) {
+                    if (Confirm-Action ("Set OneDrive '{0}' to READ-ONLY?" -f $r.SiteUrl)) {
+                        Set-OneDriveReadOnly -SiteUrl $r.SiteUrl
+                        Write-Success "Done."
+                    }
+                    Pause-ForUser
+                }
+            }
+            4 {
+                $r = Resolve-OneDriveSite -PromptText "OneDrive owner (UPN or name)"
+                if ($r) {
+                    $files = Get-OneDriveRecentFiles -SiteUrl $r.SiteUrl -Days 90 -Top 20
+                    if ($files.Count -eq 0) { Write-Warn "No recent files (90d) found." }
+                    else { $files | Format-Table Name,LastModifiedUtc,LastModifiedBy,Size -AutoSize }
+                    Pause-ForUser
+                }
+            }
+            5 {
+                $leaver = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Leaver UPN or name" } else { Read-UserInput "Leaver UPN" }
+                if (-not $leaver) { continue }
+                $succ   = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Successor UPN or name" } else { Read-UserInput "Successor UPN" }
+                if (-not $succ) { continue }
+                $dt     = Read-UserInput "Retention days (default 60)"; $d = 60; [int]::TryParse($dt, [ref]$d) | Out-Null
+                $notify = (Read-UserInput "Notify manager via email? (y/n)") -match '^[Yy]'
+                $manager = $null
+                if ($notify) {
+                    $manager = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Manager UPN or name (blank = use successor)" -AllowEmpty } else { Read-UserInput "Manager UPN (blank = use successor)" }
+                }
+                $params = @{ LeaverUPN = $leaver; SuccessorUPN = $succ; RetentionDays = $d }
+                if ($notify)  { $params.NotifyManager = $true }
+                if ($manager) { $params.ManagerUPN = $manager }
+                $res = Invoke-OneDriveHandoff @params
+                $res | Format-List
+                Pause-ForUser
+            }
+            -1 { return }
+        }
+    }
+}
