@@ -156,7 +156,7 @@ function Assert-ModulesInstalled {
                 }
             }
             elseif ($sel -eq 2) {
-                Write-Warn "Skipping install — features depending on missing modules will fail."
+                Write-Warn "Skipping install. Features depending on missing modules will fail."
                 $missingRequired = @(); $missingOptional = @()  # treat as 'don't try to install'
             }
             # sel -eq 1: fall through to per-module CurrentUser install
@@ -792,7 +792,7 @@ function Get-SPOAdminUrlSuggestions {
         Build a deduped, ordered list of plausible SharePoint admin
         URLs for the active tenant. Sources, in priority order:
           1. Cached URL for this tenant key (what we used last time).
-          2. URL derived from TenantDomain (foo.onmicrosoft.com →
+          2. URL derived from TenantDomain (foo.onmicrosoft.com ->
              https://foo-admin.sharepoint.com).
           3. URLs derived from any verified domain on the tenant
              whose short name doesn't look like a custom vanity
@@ -855,8 +855,8 @@ function Get-SPOAdminUrlSuggestions {
 function Connect-SPO {
     <#
         Connect-SPOService wrapper. Always prompts the operator to
-        confirm which SharePoint admin URL to use — never silently
-        reuses the cached value — but pre-fills the picker with the
+        confirm which SharePoint admin URL to use (never silently
+        reuses the cached value) but pre-fills the picker with the
         best guesses derived from the cache, the tenant domain, and
         Graph's verified-domain list. Pick "Enter manually" to type
         a different URL. The chosen URL is then re-cached.
