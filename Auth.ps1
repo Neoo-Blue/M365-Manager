@@ -35,6 +35,74 @@ $script:MgPartnerScopes = @("Directory.Read.All","Contract.Read.All")
 #  Dependency Management - install, import, verify
 # ============================================================
 
+function Test-IsAdmin {
+    <#
+        True when the current PowerShell process is elevated.
+        On non-Windows we have no UAC, so this is always $false
+        (Install-Module -Scope CurrentUser is always safe there).
+    #>
+    if ($IsWindows -or ($PSVersionTable.PSVersion.Major -lt 6)) {
+        try {
+            $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+            $pr = [System.Security.Principal.WindowsPrincipal]::new($id)
+            return $pr.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+        } catch { return $false }
+    }
+    return $false
+}
+
+function Request-AdminElevation {
+    <#
+        Re-launch PowerShell elevated to install one or more modules
+        for AllUsers, then exit. Returns $false if the operator
+        declines or we're not on Windows.
+    #>
+    param([string[]]$ModulesToInstall)
+    if (-not ($IsWindows -or ($PSVersionTable.PSVersion.Major -lt 6))) {
+        Write-Warn "Elevation only applies on Windows. Skipping."
+        return $false
+    }
+    Write-Host ""
+    Write-Warn "Admin privileges are recommended to install for AllUsers:"
+    foreach ($m in $ModulesToInstall) { Write-Host "    - $m" -ForegroundColor White }
+    Write-Host ""
+    $ans = Read-UserInput "Relaunch elevated and install now? (y/n)"
+    if ($ans -notmatch '^[Yy]') { return $false }
+
+    $installCmd = ($ModulesToInstall | ForEach-Object {
+        "Install-Module $_ -Scope AllUsers -Force -AllowClobber -ErrorAction Continue"
+    }) -join '; '
+    $bootstrap = "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force; " +
+                 "if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -Force -ForceBootstrap | Out-Null }; " +
+                 "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue; " +
+                 "$installCmd; Write-Host ''; Write-Host 'Done. You may close this elevated window.' -ForegroundColor Green; Read-Host 'Press Enter to close'"
+
+    $psExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+    try {
+        Start-Process -FilePath $psExe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-Command', $bootstrap) -Verb RunAs -ErrorAction Stop -Wait
+        Write-Success "Elevated install finished. Re-checking modules..."
+        return $true
+    } catch {
+        Write-ErrorMsg "Could not start elevated PowerShell: $_"
+        return $false
+    }
+}
+
+function Test-ModuleSmoke {
+    <#
+        Verify a module is loaded AND its key cmdlet is callable.
+        Returns @{ Ok = $bool; Reason = '...' }.
+    #>
+    param([string]$ModuleName, [string]$TestCmd)
+    $loaded = Get-Module -Name $ModuleName
+    if (-not $loaded) { return @{ Ok = $false; Reason = "module not in session" } }
+    if ($TestCmd) {
+        $cmd = Get-Command $TestCmd -ErrorAction SilentlyContinue
+        if (-not $cmd) { return @{ Ok = $false; Reason = "cmdlet $TestCmd not exported" } }
+    }
+    return @{ Ok = $true; Reason = "v$($loaded.Version)" }
+}
+
 function Assert-ModulesInstalled {
     Write-SectionHeader "Checking Dependencies"
 
@@ -52,7 +120,51 @@ function Assert-ModulesInstalled {
         @{ Name = "Microsoft.Online.SharePoint.PowerShell";      TestCmd = "Connect-SPOService"; Optional = $true }
     )
 
+    # ---- Pass 1: figure out what's actually missing ----
+    $missingRequired = @()
+    $missingOptional = @()
+    foreach ($mod in $requiredModules) {
+        $inst = Get-Module -ListAvailable -Name $mod.Name | Sort-Object Version -Descending | Select-Object -First 1
+        if (-not $inst) {
+            if ($mod.Optional) { $missingOptional += $mod.Name }
+            else { $missingRequired += $mod.Name }
+        }
+    }
+
+    # ---- Pass 2: if anything is missing, offer elevation up front ----
+    $toInstall = @($missingRequired) + @($missingOptional | Where-Object { $true })
+    if ($toInstall.Count -gt 0) {
+        Write-Host ""
+        Write-Warn ("Missing module(s): {0}" -f ($toInstall -join ', '))
+        $isAdmin = Test-IsAdmin
+        if (-not $isAdmin -and ($IsWindows -or ($PSVersionTable.PSVersion.Major -lt 6))) {
+            $sel = Show-Menu -Title "How would you like to install?" -Options @(
+                "Install for ALL users (request admin elevation)",
+                "Install for CURRENT user only (no elevation)",
+                "Skip install (continue without these modules)"
+            ) -BackLabel "Quit"
+            if ($sel -eq -1) { return $false }
+            if ($sel -eq 0) {
+                if (Request-AdminElevation -ModulesToInstall $toInstall) {
+                    # User elevated and ran installs in another window. Refresh state.
+                    $missingRequired = @($missingRequired | Where-Object {
+                        -not (Get-Module -ListAvailable -Name $_ | Sort-Object Version -Descending | Select-Object -First 1)
+                    })
+                    $missingOptional = @($missingOptional | Where-Object {
+                        -not (Get-Module -ListAvailable -Name $_ | Sort-Object Version -Descending | Select-Object -First 1)
+                    })
+                }
+            }
+            elseif ($sel -eq 2) {
+                Write-Warn "Skipping install — features depending on missing modules will fail."
+                $missingRequired = @(); $missingOptional = @()  # treat as 'don't try to install'
+            }
+            # sel -eq 1: fall through to per-module CurrentUser install
+        }
+    }
+
     $allGood = $true
+    $smokeResults = New-Object System.Collections.ArrayList
 
     foreach ($mod in $requiredModules) {
         $modName  = $mod.Name
@@ -63,16 +175,22 @@ function Assert-ModulesInstalled {
         if (-not $installed) {
             if ($optional) {
                 Write-InfoMsg "$modName not installed (optional -- SPO / OneDrive features will be unavailable until installed)."
+                [void]$smokeResults.Add([PSCustomObject]@{ Module = $modName; Ok = $false; Reason = "not installed (optional)" })
                 continue
             }
-            Write-Warn "$modName is not installed. Installing..."
+            Write-Warn "$modName is not installed. Installing for CurrentUser..."
             try {
                 Install-Module $modName -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
                 Write-Success "$modName installed."
                 $installed = Get-Module -ListAvailable -Name $modName | Sort-Object Version -Descending | Select-Object -First 1
             } catch {
-                Write-ErrorMsg "Failed to install $modName : $_"
+                $msg = "$_"
+                Write-ErrorMsg "Failed to install $modName : $msg"
+                if ($msg -match 'Administrator|elevation|Access.*denied|Unauthorized') {
+                    Write-InfoMsg "This looks like a permission issue. Re-run elevated, or retry with -Scope CurrentUser."
+                }
                 $allGood = $false
+                [void]$smokeResults.Add([PSCustomObject]@{ Module = $modName; Ok = $false; Reason = "install failed" })
                 continue
             }
         }
@@ -93,6 +211,7 @@ function Assert-ModulesInstalled {
                 } catch {
                     Write-ErrorMsg "Failed to import $modName : $_"
                     $allGood = $false
+                    [void]$smokeResults.Add([PSCustomObject]@{ Module = $modName; Ok = $false; Reason = "import failed" })
                     continue
                 }
             }
@@ -100,20 +219,28 @@ function Assert-ModulesInstalled {
             Write-InfoMsg "$modName v$($loaded.Version) already loaded."
         }
 
-        # ---- Step 3: Verify test command exists ----
-        if ($mod.TestCmd) {
-            $cmdExists = Get-Command $mod.TestCmd -ErrorAction SilentlyContinue
-            if (-not $cmdExists) {
-                Write-ErrorMsg "$modName loaded but command '$($mod.TestCmd)' not found."
-                Write-InfoMsg "Try: Remove-Module $modName; Import-Module $modName"
-                $allGood = $false
-            }
+        # ---- Step 3: Verify test command exists (smoke test) ----
+        $smoke = Test-ModuleSmoke -ModuleName $modName -TestCmd $mod.TestCmd
+        if (-not $smoke.Ok) {
+            Write-ErrorMsg "$modName smoke test failed: $($smoke.Reason)"
+            if ($mod.TestCmd) { Write-InfoMsg "Try: Remove-Module $modName; Import-Module $modName" }
+            if (-not $optional) { $allGood = $false }
         }
+        [void]$smokeResults.Add([PSCustomObject]@{ Module = $modName; Ok = $smoke.Ok; Reason = $smoke.Reason })
     }
 
+    # ---- Summary table so the operator can see at a glance what's OK ----
+    Write-Host ""
+    Write-Host "  Dependency status:" -ForegroundColor $script:Colors.Info
+    foreach ($r in $smokeResults) {
+        $mark = if ($r.Ok) { '[OK ]' } else { '[FAIL]' }
+        $color = if ($r.Ok) { 'Green' } else { 'Red' }
+        Write-Host ("    {0} {1,-50} {2}" -f $mark, $r.Module, $r.Reason) -ForegroundColor $color
+    }
+    Write-Host ""
+
     if (-not $allGood) {
-        Write-Host ""
-        Write-ErrorMsg "Some modules have issues. The tool may not work correctly."
+        Write-ErrorMsg "Some required modules have issues. The tool may not work correctly."
         Write-InfoMsg "Try closing PowerShell, reopening, and running again."
         Write-Host ""
         $cont = Read-UserInput "Continue anyway? (y/n)"
@@ -660,11 +787,79 @@ function Set-SPOAdminUrlCache {
     try { ($h | ConvertTo-Json -Depth 3) | Set-Content -LiteralPath $p -Encoding UTF8 -Force } catch {}
 }
 
+function Get-SPOAdminUrlSuggestions {
+    <#
+        Build a deduped, ordered list of plausible SharePoint admin
+        URLs for the active tenant. Sources, in priority order:
+          1. Cached URL for this tenant key (what we used last time).
+          2. URL derived from TenantDomain (foo.onmicrosoft.com →
+             https://foo-admin.sharepoint.com).
+          3. URLs derived from any verified domain on the tenant
+             whose short name doesn't look like a custom vanity
+             (Graph: organization.verifiedDomains, filter to
+             *.onmicrosoft.com).
+          4. URL derived from the current Mg-Graph account's domain.
+        Returns @() of strings.
+    #>
+    $out = [System.Collections.Generic.List[string]]::new()
+    $seen = @{}
+    function Add-Url($u) {
+        if (-not $u) { return }
+        $u = ([string]$u).Trim().TrimEnd('/')
+        if (-not $u) { return }
+        if ($u -notmatch '^https?://') { return }
+        if ($seen.ContainsKey($u.ToLowerInvariant())) { return }
+        $seen[$u.ToLowerInvariant()] = $true
+        $out.Add($u)
+    }
+    function Derive-FromDomain($dom) {
+        if (-not $dom) { return $null }
+        if ($dom -notlike '*.onmicrosoft.com') { return $null }
+        $short = ($dom -split '\.')[0]
+        if (-not $short) { return $null }
+        return "https://$short-admin.sharepoint.com"
+    }
+
+    $tenantKey = if ($script:SessionState.TenantDomain) { $script:SessionState.TenantDomain }
+                 elseif ($script:SessionState.TenantId) { $script:SessionState.TenantId }
+                 else { 'default' }
+    $cache = Get-SPOAdminUrlCache
+    if ($cache[$tenantKey]) { Add-Url $cache[$tenantKey] }
+
+    Add-Url (Derive-FromDomain $script:SessionState.TenantDomain)
+
+    # Verified domains via Graph (only if connected)
+    if ($script:SessionState.MgGraph -and (Get-Command Invoke-MgGraphRequest -ErrorAction SilentlyContinue)) {
+        try {
+            $org = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/organization" -ErrorAction Stop
+            foreach ($o in $org.value) {
+                foreach ($vd in @($o.verifiedDomains)) {
+                    Add-Url (Derive-FromDomain $vd.name)
+                }
+            }
+        } catch {}
+    }
+
+    if (Get-Command Get-MgContext -ErrorAction SilentlyContinue) {
+        try {
+            $ctx = Get-MgContext
+            if ($ctx -and $ctx.Account -and $ctx.Account -match '@(.+)$') {
+                Add-Url (Derive-FromDomain $Matches[1])
+            }
+        } catch {}
+    }
+
+    return ,@($out)
+}
+
 function Connect-SPO {
     <#
-        Connect-SPOService wrapper. Prompts for the tenant admin URL
-        on first use, caches by tenant key (TenantDomain or TenantId)
-        so subsequent runs reuse the same URL silently.
+        Connect-SPOService wrapper. Always prompts the operator to
+        confirm which SharePoint admin URL to use — never silently
+        reuses the cached value — but pre-fills the picker with the
+        best guesses derived from the cache, the tenant domain, and
+        Graph's verified-domain list. Pick "Enter manually" to type
+        a different URL. The chosen URL is then re-cached.
     #>
     if ($script:SessionState.SharePointOnline) { Write-InfoMsg "SharePoint Online already connected."; return $true }
 
@@ -679,17 +874,50 @@ function Connect-SPO {
                  elseif ($script:SessionState.TenantId) { $script:SessionState.TenantId }
                  else { 'default' }
 
-    $cache = Get-SPOAdminUrlCache
-    $adminUrl = $cache[$tenantKey]
-    if (-not $adminUrl) {
-        $hint = ""
-        if ($script:SessionState.TenantDomain -and $script:SessionState.TenantDomain -like '*.onmicrosoft.com') {
-            $shortName = ($script:SessionState.TenantDomain -split '\.')[0]
-            $hint = " (e.g. https://$shortName-admin.sharepoint.com)"
+    $suggestions = @(Get-SPOAdminUrlSuggestions)
+    $adminUrl = $null
+
+    while (-not $adminUrl) {
+        $opts = @()
+        foreach ($s in $suggestions) { $opts += $s }
+        $opts += "Enter manually..."
+        if ($suggestions.Count -gt 0) { $opts += "Clear cached URL for this tenant" }
+
+        $sel = Show-Menu -Title "SharePoint admin URL" -Options $opts -BackLabel "Cancel"
+        if ($sel -eq -1) { Write-Warn "Cancelled."; return $false }
+
+        if ($sel -lt $suggestions.Count) {
+            $adminUrl = $suggestions[$sel]
         }
-        $adminUrl = Read-UserInput "SharePoint admin URL$hint"
-        if ([string]::IsNullOrWhiteSpace($adminUrl)) { Write-Warn "Cancelled."; return $false }
-        $adminUrl = $adminUrl.Trim().TrimEnd('/')
+        elseif ($sel -eq $suggestions.Count) {
+            $hint = ""
+            if ($suggestions.Count -gt 0) { $hint = " (default: $($suggestions[0]))" }
+            $entered = Read-UserInput "SharePoint admin URL$hint"
+            if ([string]::IsNullOrWhiteSpace($entered)) {
+                if ($suggestions.Count -gt 0) { $adminUrl = $suggestions[0] }
+                else { Write-Warn "No URL entered."; continue }
+            } else {
+                $entered = $entered.Trim().TrimEnd('/')
+                if ($entered -notmatch '^https?://') { $entered = "https://$entered" }
+                $adminUrl = $entered
+            }
+        }
+        else {
+            # Clear cache for this tenant and rebuild suggestions
+            $dir = Get-StateDirectory
+            if ($dir) {
+                $p = Join-Path $dir 'spo-tenants.json'
+                $h = Get-SPOAdminUrlCache
+                if ($h.ContainsKey($tenantKey)) {
+                    $h.Remove($tenantKey) | Out-Null
+                    try { ($h | ConvertTo-Json -Depth 3) | Set-Content -LiteralPath $p -Encoding UTF8 -Force } catch {}
+                    Write-Success "Cached SharePoint URL cleared for tenant '$tenantKey'."
+                } else {
+                    Write-InfoMsg "No cached URL to clear."
+                }
+            }
+            $suggestions = @(Get-SPOAdminUrlSuggestions)
+        }
     }
 
     Write-InfoMsg "Connecting to SharePoint Online ($adminUrl)..."

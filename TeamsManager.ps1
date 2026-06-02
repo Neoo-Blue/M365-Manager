@@ -409,9 +409,9 @@ function Start-TeamsMenu {
             "Bulk Teams membership from CSV..."
         ) -BackLabel "Back"
         switch ($sel) {
-            0 { $u = Read-UserInput "User UPN"; if ($u) { Get-UserTeams -UPN $u | Format-Table -AutoSize; Pause-ForUser } }
+            0 { $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if ($u) { Get-UserTeams -UPN $u | Format-Table -AutoSize; Pause-ForUser } }
             1 {
-                $u = Read-UserInput "User UPN"; if (-not $u) { continue }
+                $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if (-not $u) { continue }
                 $t = Read-UserInput "Team id or name"; if (-not $t) { continue }
                 $tid = Resolve-TeamIdentifier -IdOrName $t; if (-not $tid) { Pause-ForUser; continue }
                 $asOwner = (Show-Menu -Title "Role" -Options @("Member","Owner") -BackLabel "Cancel") -eq 1
@@ -419,14 +419,14 @@ function Start-TeamsMenu {
                 Pause-ForUser
             }
             2 {
-                $u = Read-UserInput "User UPN"; if (-not $u) { continue }
+                $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if (-not $u) { continue }
                 $t = Read-UserInput "Team id or name"; if (-not $t) { continue }
                 $tid = Resolve-TeamIdentifier -IdOrName $t; if (-not $tid) { Pause-ForUser; continue }
                 Remove-UserFromTeam -UPN $u -TeamId $tid | Out-Null
                 Pause-ForUser
             }
             3 {
-                $u = Read-UserInput "User UPN"; if (-not $u) { continue }
+                $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if (-not $u) { continue }
                 $t = Read-UserInput "Team id or name"; if (-not $t) { continue }
                 $tid = Resolve-TeamIdentifier -IdOrName $t; if (-not $tid) { Pause-ForUser; continue }
                 $dirSel = Show-Menu -Title "Direction" -Options @("Promote to owner","Demote from owner") -BackLabel "Cancel"

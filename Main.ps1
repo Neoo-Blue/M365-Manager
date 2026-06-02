@@ -221,11 +221,13 @@ function Start-M365Admin {
             "MFA & Authentication...",
             "Teams Management...",
             "SharePoint...",
+            "OneDrive Access...",
             "Guest Users...",
             "License & Cost...",
             "Scheduled Health Checks...",
             "Tenants...",
-            "Incident Response..."
+            "Incident Response...",
+            "AI Assistant (Mark)..."
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
 
         switch ($sel) {
@@ -247,11 +249,25 @@ function Start-M365Admin {
             15 { Start-MFAMenu }
             16 { Start-TeamsMenu }
             17 { Start-SharePointMenu }
-            18 { Start-GuestUsersMenu }
-            19 { Start-LicenseOptimizerMenu }
-            20 { Start-SchedulerMenu }
+            18 {
+                if (Get-Command Start-OneDriveManagerMenu -ErrorAction SilentlyContinue) {
+                    Start-OneDriveManagerMenu
+                } else {
+                    Write-Warn "OneDrive manager not loaded."
+                }
+            }
+            19 { Start-GuestUsersMenu }
+            20 { Start-LicenseOptimizerMenu }
+            21 { Start-SchedulerMenu }
+            24 {
+                if (Get-Command Start-AIAssistant -ErrorAction SilentlyContinue) {
+                    Start-AIAssistant
+                } else {
+                    Write-Warn "AI Assistant module not loaded (AIAssistant.ps1 missing)."
+                }
+            }
             99 { Start-AIAssistant }
-            21 {
+            22 {
                 # Phase 6: Tenants submenu drives switch / register / edit /
                 # remove / dashboard. Legacy "Switch Tenant" path falls back
                 # to Select-TenantMode when the registry is empty.
@@ -269,7 +285,7 @@ function Start-M365Admin {
                     }
                 }
             }
-            22 {
+            23 {
                 if (Get-Command Start-IncidentResponseMenu -ErrorAction SilentlyContinue) {
                     Start-IncidentResponseMenu
                 } else {

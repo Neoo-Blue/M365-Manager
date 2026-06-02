@@ -391,9 +391,9 @@ function Start-MFAMenu {
         ) -BackLabel "Back"
 
         switch ($sel) {
-            0 { $u = Read-UserInput "User UPN"; if ($u) { Show-UserAuthMethods -User $u; Pause-ForUser } }
+            0 { $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if ($u) { Show-UserAuthMethods -User $u; Pause-ForUser } }
             1 {
-                $u = Read-UserInput "User UPN"; if (-not $u) { continue }
+                $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if (-not $u) { continue }
                 $methods = Show-UserAuthMethods -User $u
                 if ($methods.Count -eq 0) { Pause-ForUser; continue }
                 $idxText = Read-UserInput "Row to revoke (1-$($methods.Count))"
@@ -406,14 +406,14 @@ function Start-MFAMenu {
                 Pause-ForUser
             }
             2 {
-                $u = Read-UserInput "User UPN"; if (-not $u) { continue }
+                $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if (-not $u) { continue }
                 Write-Warn "Revoking ALL methods will lock the user out until re-registration."
                 if (Confirm-Action "Proceed?") { $n = Remove-AllAuthMethods -User $u; Write-Success "Revoked $n method(s)." }
                 Pause-ForUser
             }
-            3 { $u = Read-UserInput "User UPN"; if ($u) { Reset-UserMFA -User $u | Out-Null }; Pause-ForUser }
+            3 { $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if ($u) { Reset-UserMFA -User $u | Out-Null }; Pause-ForUser }
             4 {
-                $u = Read-UserInput "User UPN"; if (-not $u) { continue }
+                $u = $(if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }); if (-not $u) { continue }
                 $lifeSel = Show-Menu -Title "Lifetime" -Options @("1 hour","8 hours","24 hours") -BackLabel "Cancel"
                 if ($lifeSel -eq -1) { continue }
                 $life = @(60, 480, 1440)[$lifeSel]

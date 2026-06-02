@@ -427,7 +427,8 @@ function Start-GuestUsersMenu {
             }
             5 { Show-PendingRecerts; Pause-ForUser }
             6 {
-                $upn = Read-UserInput "Guest UPN"; if (-not $upn) { continue }
+                $upn = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Guest UPN or name" } else { Read-UserInput "Guest UPN" }
+                if (-not $upn) { continue }
                 $reason = Read-UserInput "Reason"
                 if (-not $reason) { Write-Warn "Reason is required for audit."; continue }
                 if (Confirm-Action "DELETE guest $upn ($reason)?") { Remove-Guest -UPN $upn -Reason $reason }

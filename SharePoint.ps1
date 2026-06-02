@@ -378,7 +378,8 @@ function Start-SharePointMenu {
             0 { $u = Read-UserInput "Site URL"; if ($u) { Get-SiteOwners -SiteUrl $u | Format-Table -AutoSize; Pause-ForUser } }
             1 {
                 $u = Read-UserInput "Site URL"; if (-not $u) { continue }
-                $upn = Read-UserInput "User UPN"; if (-not $upn) { continue }
+                $upn = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }
+                if (-not $upn) { continue }
                 $dirSel = Show-Menu -Title "Direction" -Options @("Add","Remove") -BackLabel "Cancel"
                 if ($dirSel -eq -1) { continue }
                 Set-SiteOwner -SiteUrl $u -UPN $upn -Direction $(if ($dirSel -eq 0) {'Add'} else {'Remove'}) | Out-Null
@@ -399,7 +400,8 @@ function Start-SharePointMenu {
                 Pause-ForUser
             }
             6 {
-                $upn = Read-UserInput "User UPN"; if (-not $upn) { continue }
+                $upn = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }
+                if (-not $upn) { continue }
                 $dt  = Read-UserInput "Lookback days (default 365)"; $d = 365; [int]::TryParse($dt, [ref]$d) | Out-Null
                 Get-UserOutboundShares -UPN $upn -Days $d | Format-Table -AutoSize
                 Pause-ForUser
@@ -411,7 +413,8 @@ function Start-SharePointMenu {
             }
             8 {
                 $name = Read-UserInput "Site display name"; if (-not $name) { continue }
-                $own = Read-UserInput "Owner UPN"; if (-not $own) { continue }
+                $own = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Owner UPN or name" } else { Read-UserInput "Owner UPN" }
+                if (-not $own) { continue }
                 $opts = @('project','team')
                 $sel = Show-Menu -Title "Template" -Options $opts -BackLabel "Cancel"
                 if ($sel -eq -1) { continue }

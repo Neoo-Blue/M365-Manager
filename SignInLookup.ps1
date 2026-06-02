@@ -255,7 +255,7 @@ function Read-SignInFilterFromOperator {
 function Show-UserRecentActivity {
     Write-SectionHeader "Recent Sign-In Activity"
     if (-not (Connect-ForTask 'Report')) { return }  # Report task connects Graph
-    $upn = Read-UserInput "User UPN"
+    $upn = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }
     if ([string]::IsNullOrWhiteSpace($upn)) { return }
     Write-InfoMsg "Querying last 30 days of sign-ins for $upn..."
     $records = Search-SignIns -UPN $upn.Trim() -From ((Get-Date).AddDays(-30)) -To (Get-Date) -MaxResults 1000

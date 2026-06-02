@@ -361,6 +361,72 @@ function Pause-ForUser {
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 }
 
+function Resolve-UPN {
+    <#
+    .SYNOPSIS
+        Prompt for a user UPN OR a display-name search. Returns the UPN
+        string, or $null if the operator cancelled / nothing matched.
+    .DESCRIPTION
+        Accepts either an email (contains '@') or a partial display name.
+        With a name, runs Get-MgUser -Search and picks the single match
+        or shows a chooser menu. Falls back to the raw entry when Graph
+        isn't connected so legacy callers still work.
+    #>
+    param(
+        [string]$Prompt = "User UPN or name",
+        [switch]$AllowEmpty
+    )
+    $raw = Read-UserInput $Prompt
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        if ($AllowEmpty) { return '' }
+        return $null
+    }
+    $raw = $raw.Trim()
+
+    # Already a UPN / email — return as-is.
+    if ($raw -match '@') { return $raw }
+
+    # Need Graph for name search.
+    if (-not (Get-Command Get-MgUser -ErrorAction SilentlyContinue)) {
+        Write-Warn "Graph not loaded — using raw input '$raw' as UPN."
+        return $raw
+    }
+
+    Write-InfoMsg "Searching for users matching '$raw'..."
+    $users = @()
+    try {
+        $users = @(Get-MgUser -Search "displayName:$raw" -ConsistencyLevel eventual `
+                  -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" `
+                  -Top 25 -ErrorAction Stop)
+        if ($users.Count -eq 0) {
+            $users = @(Get-MgUser -Filter "startsWith(displayName,'$raw')" `
+                      -Property "Id,DisplayName,UserPrincipalName,JobTitle,Department" `
+                      -Top 25 -ErrorAction Stop)
+        }
+    } catch {
+        Write-Warn "Search failed: $($_.Exception.Message). Using raw input."
+        return $raw
+    }
+
+    if ($users.Count -eq 0) {
+        Write-ErrorMsg "No users found matching '$raw'."
+        return $null
+    }
+    if ($users.Count -eq 1) {
+        $u = $users[0]
+        Write-Success ("Matched {0} <{1}>" -f $u.DisplayName, $u.UserPrincipalName)
+        return [string]$u.UserPrincipalName
+    }
+
+    $labels = $users | ForEach-Object {
+        $title = if ($_.JobTitle) { " — $($_.JobTitle)" } else { "" }
+        "{0} <{1}>{2}" -f $_.DisplayName, $_.UserPrincipalName, $title
+    }
+    $sel = Show-Menu -Title "Select user ($($users.Count) matches)" -Options $labels -BackLabel "Cancel"
+    if ($sel -eq -1) { return $null }
+    return [string]$users[$sel].UserPrincipalName
+}
+
 # ---- License SKU friendly name mapping ----
 $script:SkuFriendlyNames = @{
     "SPE_E3"                    = "Microsoft 365 E3"

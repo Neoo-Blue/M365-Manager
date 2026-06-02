@@ -287,18 +287,20 @@ function Start-BreakGlassMenu {
         switch ($sel) {
             0 { Get-BreakGlassAccounts | Format-Table -AutoSize; Pause-ForUser }
             1 {
-                $u = Read-UserInput "UPN"; if (-not $u) { continue }
+                $u = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Break-glass UPN or name" } else { Read-UserInput "UPN" }
+                if (-not $u) { continue }
                 $a = Read-UserInput "Attestation email"
                 if ($u) { Register-BreakGlassAccount -UPN $u.Trim() -AttestationEmail $a.Trim() }
                 Pause-ForUser
             }
             2 {
-                $u = Read-UserInput "UPN to remove"
+                $u = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "UPN or name to remove" } else { Read-UserInput "UPN to remove" }
                 if ($u -and (Confirm-Action "Unregister '$u'?")) { Unregister-BreakGlassAccount -UPN $u.Trim() }
                 Pause-ForUser
             }
             3 {
-                $u = Read-UserInput "UPN"; if (-not $u) { continue }
+                $u = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "UPN or name" } else { Read-UserInput "UPN" }
+                if (-not $u) { continue }
                 if (-not (Connect-ForTask 'Report')) { Pause-ForUser; continue }
                 $w = Test-BreakGlassPosture -UPN $u.Trim()
                 if ($w.Count -eq 0) { Write-Success "No posture warnings." }
