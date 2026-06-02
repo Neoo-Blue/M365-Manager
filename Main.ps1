@@ -81,7 +81,7 @@ $loadErrors = @()
 $modules = @(
     "UI.ps1","Auth.ps1","Audit.ps1","Preview.ps1","Templates.ps1",
     "Notifications.ps1","TenantRegistry.ps1","TenantSwitch.ps1","TenantOverrides.ps1",
-    "Onboard.ps1","BulkOnboard.ps1","Offboard.ps1","BulkOffboard.ps1",
+    "Onboard.ps1","BulkOnboard.ps1","TemplateGenerator.ps1","Offboard.ps1","BulkOffboard.ps1",
     "License.ps1","Archive.ps1","SecurityGroup.ps1","DistributionList.ps1",
     "SharedMailbox.ps1","CalendarAccess.ps1","UserProfile.ps1",
     "Reports.ps1","eDiscovery.ps1","GroupManager.ps1",
@@ -137,6 +137,7 @@ $criticalFunctions = @(
     @{ Name='Assert-ModulesInstalled'; From='Auth.ps1' },
     @{ Name='Connect-Graph';           From='Auth.ps1' },
     @{ Name='Get-OnboardTemplates';    From='Templates.ps1' },
+    @{ Name='Start-TemplateGeneratorMenu'; From='TemplateGenerator.ps1' },
     @{ Name='Invoke-Action';           From='Audit.ps1' },
     @{ Name='Get-PreviewMode';         From='Preview.ps1' }
 )
@@ -294,6 +295,7 @@ function Start-M365Admin {
             "Reporting",
             "eDiscovery",
             "Bulk Onboard from CSV...",
+            "Generate Onboarding Templates from Tenant...",
             "Bulk Offboard from CSV...",
             "Audit & Reporting...",
             "MFA & Authentication...",
@@ -322,22 +324,29 @@ function Start-M365Admin {
             10 { Start-ReportingMenu }
             11 { Start-eDiscoveryMenu }
             12 { Start-BulkOnboard }
-            13 { Start-BulkOffboard }
-            14 { Start-AuditReportingMenu }
-            15 { Start-MFAMenu }
-            16 { Start-TeamsMenu }
-            17 { Start-SharePointMenu }
-            18 {
+            13 {
+                if (Get-Command Start-TemplateGeneratorMenu -ErrorAction SilentlyContinue) {
+                    Start-TemplateGeneratorMenu
+                } else {
+                    Write-Warn "Template Generator module not loaded."
+                }
+            }
+            14 { Start-BulkOffboard }
+            15 { Start-AuditReportingMenu }
+            16 { Start-MFAMenu }
+            17 { Start-TeamsMenu }
+            18 { Start-SharePointMenu }
+            19 {
                 if (Get-Command Start-OneDriveManagerMenu -ErrorAction SilentlyContinue) {
                     Start-OneDriveManagerMenu
                 } else {
                     Write-Warn "OneDrive manager not loaded."
                 }
             }
-            19 { Start-GuestUsersMenu }
-            20 { Start-LicenseOptimizerMenu }
-            21 { Start-SchedulerMenu }
-            24 {
+            20 { Start-GuestUsersMenu }
+            21 { Start-LicenseOptimizerMenu }
+            22 { Start-SchedulerMenu }
+            25 {
                 if (Get-Command Start-AIAssistant -ErrorAction SilentlyContinue) {
                     Start-AIAssistant
                 } else {
@@ -345,7 +354,7 @@ function Start-M365Admin {
                 }
             }
             99 { Start-AIAssistant }
-            22 {
+            23 {
                 # Phase 6: Tenants submenu drives switch / register / edit /
                 # remove / dashboard. Legacy "Switch Tenant" path falls back
                 # to Select-TenantMode when the registry is empty.
@@ -363,7 +372,7 @@ function Start-M365Admin {
                     }
                 }
             }
-            23 {
+            24 {
                 if (Get-Command Start-IncidentResponseMenu -ErrorAction SilentlyContinue) {
                     Start-IncidentResponseMenu
                 } else {
