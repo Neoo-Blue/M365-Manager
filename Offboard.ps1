@@ -119,7 +119,7 @@ function Start-Offboard {
     # it to a UPN now that Graph is connected. Find-UPNByName returns the
     # input unchanged when it already looks like an email.
     if (Get-Command Find-UPNByName -ErrorAction SilentlyContinue) {
-        $resolved = Find-UPNByName -Input $upn
+        $resolved = Find-UPNByName -SearchTerm $upn
         if (-not $resolved) { Write-ErrorMsg "Could not resolve '$upn' to a user."; Pause-ForUser; return }
         $upn = $resolved
         $userData["UserPrincipalName"] = $upn
@@ -365,7 +365,7 @@ function Start-Offboard {
         $sendTo = Read-UserInput ("Send offboard summary to (UPN or name; Enter for '{0}', blank to skip)" -f $managerEmail)
         if (-not $sendTo) { $sendTo = $managerEmail }
         if ($sendTo -and ($sendTo -notmatch '@') -and (Get-Command Find-UPNByName -ErrorAction SilentlyContinue)) {
-            $resolved = Find-UPNByName -Input $sendTo
+            $resolved = Find-UPNByName -SearchTerm $sendTo
             if ($resolved) { $sendTo = $resolved }
         }
         if ($sendTo -and (Confirm-Action "Send summary email to $sendTo ?")) {
