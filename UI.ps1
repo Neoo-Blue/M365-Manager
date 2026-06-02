@@ -373,6 +373,43 @@ function Pause-ForUser {
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 }
 
+function Resolve-GraphError {
+    <#
+        The Microsoft.Graph SDK wraps real HTTP failures in a
+        System.AggregateException whose Message is the unhelpful
+        "One or more errors occurred." This helper drills down to the
+        deepest InnerException and returns a one-line summary that
+        actually tells you what went wrong (401, 403, scope name,
+        tenant id, etc).
+    #>
+    param([Parameter(Mandatory)]$ErrorRecord)
+    $ex = $ErrorRecord.Exception
+    $depth = 0
+    while ($ex.InnerException -and $depth -lt 5) { $ex = $ex.InnerException; $depth++ }
+    $msg = $ex.Message
+    # Tack on the HTTP status when the SDK exposes it on a ServiceException.
+    foreach ($prop in 'StatusCode','ResponseStatusCode','ErrorCode') {
+        try {
+            $v = $ex.PSObject.Properties[$prop]
+            if ($v -and $v.Value) { $msg = "[$($v.Value)] $msg"; break }
+        } catch {}
+    }
+    return $msg
+}
+
+function Test-GraphConnected {
+    <#
+        Returns $true when Get-MgContext yields a session with an
+        Account claim. Catches the "MissingRequired" exception that
+        Get-MgContext raises when no Connect-MgGraph has run.
+    #>
+    if (-not (Get-Command Get-MgContext -ErrorAction SilentlyContinue)) { return $false }
+    try {
+        $c = Get-MgContext -ErrorAction Stop
+        return [bool]($c -and $c.Account)
+    } catch { return $false }
+}
+
 function Find-UPNByName {
     <#
     .SYNOPSIS
@@ -411,6 +448,12 @@ function Find-UPNByName {
         return $raw
     }
 
+    if (-not (Test-GraphConnected)) {
+        Write-Warn "Microsoft Graph is not authenticated, using raw input '$raw' as UPN."
+        Write-InfoMsg "Run Connect-MgGraph (or pick a tenant from the menu) and try again."
+        return $raw
+    }
+
     Write-InfoMsg "Searching for users matching '$raw'..."
     $props = "Id,DisplayName,UserPrincipalName,JobTitle,Department,GivenName,Surname,Mail"
     $users = @()
@@ -426,7 +469,15 @@ function Find-UPNByName {
                       -Property $props -Top 25 -ErrorAction Stop)
         }
     } catch {
-        Write-Warn "Search failed: $($_.Exception.Message). Using raw input."
+        $msg = Resolve-GraphError -ErrorRecord $_
+        Write-Warn "Search failed: $msg"
+        if ($msg -match '401|Unauthorized|expired|InvalidAuthenticationToken') {
+            Write-InfoMsg "Your Graph token may have expired. Reconnect via the Tenants menu and retry."
+        }
+        elseif ($msg -match '403|Forbidden|Authorization_RequestDenied|Insufficient privileges') {
+            Write-InfoMsg "Required scopes were not granted. An admin must grant consent for User.Read.All."
+        }
+        Write-InfoMsg "Falling back to raw input '$raw' as UPN."
         return $raw
     }
 
