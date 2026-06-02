@@ -308,7 +308,7 @@ function Start-M365Admin {
             "Tenants...",
             "Incident Response...",
             "AI Assistant (Mark)..."
-        ) -BackLabel "Quit and Disconnect" -HiddenOptions @(99)
+        ) -BackLabel "Quit and Disconnect" -HiddenOptions @(98, 99)
 
         switch ($sel) {
             0  { Start-Onboard }
@@ -351,6 +351,13 @@ function Start-M365Admin {
                     Start-AIAssistant
                 } else {
                     Write-Warn "AI Assistant module not loaded (AIAssistant.ps1 missing)."
+                }
+            }
+            98 {
+                if (Get-Command Invoke-MgGraphFullRepair -ErrorAction SilentlyContinue) {
+                    Invoke-MgGraphFullRepair
+                } else {
+                    Write-Warn "Repair helper not loaded."
                 }
             }
             99 { Start-AIAssistant }
