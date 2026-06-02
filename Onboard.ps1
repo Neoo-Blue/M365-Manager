@@ -48,7 +48,7 @@ function Start-Onboard {
         $userData["DisplayName"]       = if ([string]::IsNullOrWhiteSpace($valDN)) { $defDisp } else { $valDN }
         $userData["UserPrincipalName"] = Read-UserInput "User principal name (email)"
         $userData["JobTitle"]          = Read-UserInput "Job title (optional)"
-        $userData["Manager"]           = Read-UserInput "Manager UPN (optional)"
+        $userData["Manager"]           = Read-UserInput "Manager UPN or display name (optional)"
 
         $userData = Resolve-OnboardTemplate -Template $template -UserData $userData
 
@@ -278,6 +278,12 @@ function Start-Onboard {
     # ---- Manager ----
     if ($userData["Manager"]) {
         Write-SectionHeader "Step 4 - Set Manager"
+        # Resolve name -> UPN if the operator typed a display name. No-op
+        # for inputs that already look like an email.
+        if ((Get-Command Find-UPNByName -ErrorAction SilentlyContinue) -and ($userData["Manager"] -notmatch '@')) {
+            $resolvedMgr = Find-UPNByName -Input $userData["Manager"]
+            if ($resolvedMgr) { $userData["Manager"] = $resolvedMgr }
+        }
         try {
             $mgr = if (Get-PreviewMode) { [PSCustomObject]@{ Id = "preview-mgr"; DisplayName = $userData["Manager"]; UserPrincipalName = $userData["Manager"] } } else { Get-MgUser -UserId $userData["Manager"] -ErrorAction Stop }
             if (Confirm-Action "Set manager to $($mgr.DisplayName)?") {
