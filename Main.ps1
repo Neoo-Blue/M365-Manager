@@ -272,6 +272,22 @@ function Start-M365Admin {
         if ($remaining -gt 0) { Write-Host (" " * $remaining) -NoNewline }
         Write-Host ($b.V) -ForegroundColor $Global:M365Colors.Accent
 
+        # Show the actual Graph identity so wrong-tenant mistakes
+        # are obvious before the operator launches a flow.
+        if ($script:SessionState.MgGraph -and (Get-Command Get-MgContext -ErrorAction SilentlyContinue)) {
+            try {
+                $gctx = Get-MgContext
+                if ($gctx -and $gctx.Account) {
+                    $line = "  Signed in: $($gctx.Account)"
+                    if ($line.Length -gt 57) { $line = $line.Substring(0, 57) }
+                    Write-Host ("  " + $b.V + $line) -ForegroundColor $Global:M365Colors.Accent -NoNewline
+                    $cp = $Host.UI.RawUI.CursorPosition.X; $rem = 62 - $cp
+                    if ($rem -gt 0) { Write-Host (" " * $rem) -NoNewline }
+                    Write-Host ($b.V) -ForegroundColor $Global:M365Colors.Accent
+                }
+            } catch {}
+        }
+
         Write-Host ("  " + $b.BL + [string]::new($b.H, 58) + $b.BR) -ForegroundColor $Global:M365Colors.Accent
 
         # ---- Mode banner (Preview / Live) ----
