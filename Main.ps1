@@ -96,10 +96,21 @@ $modules = @(
 foreach ($mod in $modules) {
     $modPath = Join-Path $ScriptRoot $mod
     if (Test-Path $modPath) {
+        # Use $Error capture in addition to try/catch: some dot-source
+        # failures on PS 5.1 are non-terminating and bypass catch.
+        $errBefore = $Error.Count
         try {
             . "$modPath"
         } catch {
             $loadErrors += "  $mod : $_"
+        }
+        $errAfter = $Error.Count
+        if ($errAfter -gt $errBefore) {
+            # Capture the new errors that appeared during the dot-source.
+            $new = @($Error[0..($errAfter - $errBefore - 1)])
+            foreach ($e in $new) {
+                $loadErrors += "  $mod : $($e.Exception.Message)"
+            }
         }
     }
     # AIAssistant.ps1 is optional, others are not
@@ -113,6 +124,37 @@ if ($loadErrors.Count -gt 0) {
     Write-Host "  WARNING: Some modules failed to load:" -ForegroundColor Yellow
     foreach ($e in $loadErrors) { Write-Host $e -ForegroundColor Red }
     Write-Host "" -ForegroundColor Gray
+}
+
+# ---- Verify the critical functions every flow expects are present.
+# If a module dot-sourced silently (non-terminating error), the user
+# would otherwise see "term X not recognized" deep inside a flow
+# (e.g. Get-OnboardTemplates from Onboard.ps1). Print a single clear
+# diagnostic upfront and continue with what we have.
+$criticalFunctions = @(
+    @{ Name='Initialize-UI';           From='UI.ps1' },
+    @{ Name='Show-Menu';               From='UI.ps1' },
+    @{ Name='Assert-ModulesInstalled'; From='Auth.ps1' },
+    @{ Name='Connect-Graph';           From='Auth.ps1' },
+    @{ Name='Get-OnboardTemplates';    From='Templates.ps1' },
+    @{ Name='Invoke-Action';           From='Audit.ps1' },
+    @{ Name='Get-PreviewMode';         From='Preview.ps1' }
+)
+$missingCritical = @()
+foreach ($c in $criticalFunctions) {
+    if (-not (Get-Command $c.Name -ErrorAction SilentlyContinue)) {
+        $missingCritical += "    [x] $($c.Name)  (expected from $($c.From))"
+    }
+}
+if ($missingCritical.Count -gt 0) {
+    Write-Host ""
+    Write-Host "  WARNING: Critical helper functions are missing after load:" -ForegroundColor Yellow
+    foreach ($m in $missingCritical) { Write-Host $m -ForegroundColor Red }
+    Write-Host ""
+    Write-Host "  This usually means one or more .ps1 files failed to dot-source." -ForegroundColor Yellow
+    Write-Host "  Try the Mark-of-the-Web fix below (run from this folder):" -ForegroundColor Yellow
+    Write-Host "    Get-ChildItem -Recurse | Unblock-File" -ForegroundColor Cyan
+    Write-Host ""
 }
 
 # ---- Hard-stop if the UI module didn't load. Everything below depends
