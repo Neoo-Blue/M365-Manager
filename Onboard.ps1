@@ -281,7 +281,7 @@ function Start-Onboard {
         # Resolve name -> UPN if the operator typed a display name. No-op
         # for inputs that already look like an email.
         if ((Get-Command Find-UPNByName -ErrorAction SilentlyContinue) -and ($userData["Manager"] -notmatch '@')) {
-            $resolvedMgr = Find-UPNByName -Input $userData["Manager"]
+            $resolvedMgr = Find-UPNByName -SearchTerm $userData["Manager"]
             if ($resolvedMgr) { $userData["Manager"] = $resolvedMgr }
         }
         try {

@@ -392,10 +392,16 @@ function Find-UPNByName {
         - >1 matches          : shows a chooser menu; returns selected
                                 UPN or $null if the operator cancels.
     #>
+    # NOTE: parameter must NOT be named $Input. $Input is a reserved
+    # automatic variable (the pipeline enumerator); inside the function
+    # body it shadows any param of the same name, so $Input.Trim()
+    # operates on an empty enumerator and silently returns no value.
+    # This used to cause "Could not resolve 'foo@bar' to a user" even
+    # for inputs that should have been returned as-is.
     param(
-        [Parameter(Mandatory)][string]$Input
+        [Parameter(Mandatory)][string]$SearchTerm
     )
-    $raw = $Input.Trim()
+    $raw = $SearchTerm.Trim()
     if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
 
     if ($raw -match '@') { return $raw }
@@ -458,7 +464,7 @@ function Resolve-UPN {
         if ($AllowEmpty) { return '' }
         return $null
     }
-    return (Find-UPNByName -Input $raw)
+    return (Find-UPNByName -SearchTerm $raw)
 }
 
 # ---- License SKU friendly name mapping ----
