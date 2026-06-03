@@ -361,23 +361,40 @@ function Write-MgGraphAssemblyMismatchHelp {
 function Invoke-MgGraphFullRepair {
     <#
         Operator-triggered full repair. Spawns an elevated PowerShell
-        that uninstalls every Microsoft.Graph.* module on disk and
-        reinstalls a coherent set, then waits for the operator to
-        close that window and exits the current session (because
-        we can't safely unload the already-loaded assemblies).
+        window that uninstalls every Microsoft.Graph.* module on
+        disk and reinstalls a coherent set.
+
+        CRITICAL: the elevated window MUST run with this M365 Manager
+        process already exited. Windows holds file locks on every
+        Microsoft.Graph.*.dll that the parent process imported, so
+        even an elevated child can't delete them while we're alive:
+        "WARNING: The version 'X' of module '...' is currently in use."
+
+        So this function:
+          1. Spawns the elevated child WITHOUT -Wait.
+          2. Exits the M365 Manager process immediately, releasing the
+             DLL locks so the child's uninstall can succeed.
+          3. The child window remains open until the operator presses
+             Enter, then prompts them to re-launch Launch.bat.
     #>
     Write-SectionHeader "Repair Microsoft.Graph modules"
     Write-Host "  This will:" -ForegroundColor $script:Colors.Info
-    Write-Host "    1. Uninstall ALL Microsoft.Graph.* modules from disk." -ForegroundColor White
-    Write-Host "    2. Reinstall a coherent set (Authentication, Users, Users.Actions," -ForegroundColor White
-    Write-Host "       Groups, Identity.DirectoryManagement) at the same version." -ForegroundColor White
-    Write-Host "    3. Require you to close and re-launch this tool." -ForegroundColor White
+    Write-Host "    1. Launch an elevated PowerShell window with the repair script." -ForegroundColor White
+    Write-Host "    2. Immediately CLOSE this M365 Manager session (mandatory: the" -ForegroundColor White
+    Write-Host "       Microsoft.Graph DLLs we have loaded would block the uninstall)." -ForegroundColor White
+    Write-Host "    3. The elevated window uninstalls ALL Microsoft.Graph.* modules" -ForegroundColor White
+    Write-Host "       and reinstalls Authentication, Users, Users.Actions, Groups," -ForegroundColor White
+    Write-Host "       and Identity.DirectoryManagement at one version." -ForegroundColor White
+    Write-Host "    4. When the elevated window says Done, double-click Launch.bat" -ForegroundColor White
+    Write-Host "       to restart this tool." -ForegroundColor White
     Write-Host ""
-    if (-not (Confirm-Action "Proceed with elevated repair?")) { return }
+    if (-not (Confirm-Action "Proceed (this M365 Manager session will close)?")) { return }
 
     $cmds = @(
         "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
         "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force",
+        "Write-Host 'Waiting 3s for parent M365 Manager to release DLL locks...' -ForegroundColor Yellow",
+        "Start-Sleep -Seconds 3",
         "if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -Force -ForceBootstrap | Out-Null }",
         "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue",
         "Write-Host 'Uninstalling existing Microsoft.Graph.* modules...' -ForegroundColor Yellow",
@@ -388,21 +405,38 @@ function Invoke-MgGraphFullRepair {
         "Install-Module Microsoft.Graph.Users.Actions               -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
         "Install-Module Microsoft.Graph.Groups                      -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
         "Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
-        "Write-Host ''; Write-Host 'Done. Close this window and re-launch M365 Manager.' -ForegroundColor Green",
-        "Read-Host 'Press Enter to close'"
+        "Write-Host ''; Write-Host 'Done. Double-click Launch.bat (or run it from the M365-Manager folder) to restart.' -ForegroundColor Green",
+        "Read-Host 'Press Enter to close this window'"
     ) -join '; '
 
     $psExe = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
     try {
-        Start-Process -FilePath $psExe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-Command', $cmds) -Verb RunAs -ErrorAction Stop -Wait
-        Write-Host ""
-        Write-Success "Repair completed in the elevated window."
-        Write-Warn "You MUST close this M365 Manager session and re-launch it before retrying."
-        Write-Host ""
+        # Detach (no -Wait) so this M365 Manager session can exit
+        # immediately and free the DLL locks before the elevated
+        # child reaches the Uninstall-Module step (it sleeps 3s).
+        Start-Process -FilePath $psExe `
+                      -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-Command', $cmds) `
+                      -Verb RunAs -ErrorAction Stop
     } catch {
         Write-ErrorMsg "Could not start elevated PowerShell: $_"
+        Pause-ForUser
+        return
     }
-    Pause-ForUser
+
+    Write-Host ""
+    Write-Success "Elevated repair window launched."
+    Write-Warn "Closing this M365 Manager session NOW so the DLL locks release."
+    Write-Host "  Watch the elevated window. When it says 'Done', re-launch Launch.bat." -ForegroundColor Yellow
+    Write-Host ""
+    Start-Sleep -Seconds 2
+
+    # Best-effort: drop the in-process Microsoft.Graph.* modules so
+    # any future Connect-* attempts here don't reuse the now-stale
+    # binary. Then exit the process so file handles release.
+    try {
+        Get-Module Microsoft.Graph.* | Remove-Module -Force -ErrorAction SilentlyContinue
+    } catch {}
+    [Environment]::Exit(0)
 }
 
 function Assert-ModulesInstalled {
