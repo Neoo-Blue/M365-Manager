@@ -372,8 +372,8 @@ function Invoke-BulkOffboard {
 
 function Start-BulkOffboard {
     Write-SectionHeader "Bulk Offboard from CSV"
-    $path = Read-UserInput "Path to CSV file (sample: templates/bulk-offboard-sample.csv)"
-    if ([string]::IsNullOrWhiteSpace($path)) { return }
+    $path = Read-UserInputOrCancel "Path to CSV file (sample: samples/bulk-offboard-sample.csv)"
+    if (-not $path) { Write-InfoMsg "Cancelled."; return }
     $path = $path.Trim('"').Trim("'")
 
     $dryRun = Confirm-Action "Run as DRY-RUN first (validate + preview, no tenant changes)?"

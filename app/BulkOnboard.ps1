@@ -339,8 +339,8 @@ function Invoke-BulkOnboard {
 
 function Start-BulkOnboard {
     Write-SectionHeader "Bulk Onboard from CSV"
-    $path = Read-UserInput "Path to CSV file (sample: templates/bulk-onboard-sample.csv)"
-    if ([string]::IsNullOrWhiteSpace($path)) { return }
+    $path = Read-UserInputOrCancel "Path to CSV file (sample: samples/bulk-onboard-sample.csv)"
+    if (-not $path) { Write-InfoMsg "Cancelled."; return }
     $path = $path.Trim('"').Trim("'")
 
     $templates = @(Get-OnboardTemplates)

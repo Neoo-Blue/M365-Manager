@@ -127,6 +127,37 @@ function Read-UserInput {
     return (Get-OperatorInput -Prompt $Prompt)
 }
 
+function Read-UserInputOrCancel {
+    <#
+    .SYNOPSIS
+        Prompt the operator and return the trimmed input, or $null
+        when the operator wants to back out.
+    .DESCRIPTION
+        Recognizes 'back', 'cancel', 'q', 'quit', 'exit', '/back',
+        '/cancel' (case-insensitive) as cancel sentinels. By default
+        a blank Enter also cancels; pass -AllowBlank to keep blank
+        as a meaningful empty string instead.
+        Always appends a "(type 'back' to cancel)" hint to the
+        prompt so the operator knows the escape hatch exists.
+    .PARAMETER Prompt
+        Prompt text shown to the operator.
+    .PARAMETER AllowBlank
+        Treat blank Enter as a real empty string rather than cancel.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [switch]$AllowBlank
+    )
+    if ($script:NonInteractive) { return $null }
+    Write-Host ""
+    $raw = Get-OperatorInput -Prompt ("{0} (type 'back' to cancel)" -f $Prompt)
+    if ($null -eq $raw) { return $null }
+    $t = $raw.Trim()
+    if ($t -match '^(back|cancel|q|quit|exit|/back|/cancel)$') { return $null }
+    if ([string]::IsNullOrEmpty($t) -and -not $AllowBlank) { return $null }
+    return $t
+}
+
 function Confirm-Action {
     param([string]$Message, [string]$Details = "")
     $b = $script:Box

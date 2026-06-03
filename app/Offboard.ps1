@@ -240,7 +240,8 @@ function Start-Offboard {
 
     $userData = @{}
     if ($choice -eq 0) {
-        $filePath = Read-UserInput "Enter full path to the text file"
+        $filePath = Read-UserInputOrCancel "Enter full path to the text file"
+        if (-not $filePath) { Write-InfoMsg "Cancelled."; return }
         if (-not (Test-Path $filePath)) { Write-ErrorMsg "File not found."; Pause-ForUser; return }
         foreach ($line in (Get-Content $filePath)) {
             if ($line -match '^\s*([^:=]+)\s*[:=]\s*(.+)$') {
@@ -255,7 +256,8 @@ function Start-Offboard {
         foreach ($f in $fields) { if (-not $userData.ContainsKey($f)) { $userData[$f] = "" } }
         $userData = Edit-UserDataTable -Data $userData -FieldOrder $fields
     } else {
-        $userData["UserPrincipalName"] = Read-UserInput "Enter User Principal Name OR display name"
+        $userData["UserPrincipalName"] = Read-UserInputOrCancel "Enter User Principal Name OR display name"
+        if (-not $userData["UserPrincipalName"]) { Write-InfoMsg "Cancelled."; return }
         $userData["ForwardingEmail"] = ""; $userData["OOOMessage"] = ""
     }
 
