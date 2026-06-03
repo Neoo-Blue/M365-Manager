@@ -172,13 +172,21 @@ function Test-MgGraphVersionCoherence {
         foreach ($t in $tops) { $msgs += "    $($t.Name) v$($t.Version)" }
     }
 
-    # (b) Multiple installed versions of the same sibling.
-    $multi = @($all | Group-Object Name | Where-Object { $_.Count -gt 1 })
+    # (b) Multiple installed VERSIONS of the same sibling. Two copies
+    # of the same version (e.g. v2.30.0 in both CurrentUser AND AllUsers
+    # paths) are harmless -- the DLLs are identical, PowerShell just
+    # picks one. We only flag DISTINCT versions.
+    $multi = @()
+    foreach ($g in @($all | Group-Object Name)) {
+        $distinctVersions = @($g.Group | ForEach-Object { [string]$_.Version } | Sort-Object -Unique)
+        if ($distinctVersions.Count -gt 1) {
+            $multi += [PSCustomObject]@{ Name = $g.Name; Versions = $distinctVersions }
+        }
+    }
     if ($multi.Count -gt 0) {
         $msgs += "Multiple installed versions of the same Microsoft.Graph.* module(s):"
         foreach ($g in $multi) {
-            $vers = ($g.Group | ForEach-Object { [string]$_.Version } | Sort-Object -Unique) -join ', '
-            $msgs += "    $($g.Name) -> $vers"
+            $msgs += "    $($g.Name) -> $($g.Versions -join ', ')"
         }
         $msgs += "    (PowerShell may load an old copy first. Run option 98 to clean up.)"
     }
