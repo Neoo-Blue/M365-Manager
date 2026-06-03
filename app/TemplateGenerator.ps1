@@ -117,6 +117,10 @@ function Get-CommonAssignments {
     )
     $userCount = $Cluster.Users.Count
     $n = [Math]::Min($MaxSamples, $userCount)
+    # Defensive: Get-Random -Count throws on <1, and a buggy caller
+    # could pass MaxSamples=0 via a [int]::TryParse default-clobber.
+    if ($n -lt 1) { $n = [Math]::Min(5, $userCount) }
+    if ($n -lt 1) { Write-Warn ("  Cluster '{0}' has no users to sample." -f $Cluster.Key); return [PSCustomObject]@{ SampleCount=0; LicenseSKUs=@(); SecurityGroups=@(); DistributionLists=@() } }
     $samples = @($Cluster.Users | Get-Random -Count $n)
     Write-InfoMsg ("  Sampling {0} of {1} users in cluster '{2}'..." -f $n, $userCount, $Cluster.Key)
 
@@ -289,7 +293,7 @@ function Start-TemplateGeneratorMenu {
 
     # ---- Scan + cluster ----
     $cap = Read-UserInput "Cap on users to enumerate (default 5000)"
-    $limit = 5000; [int]::TryParse($cap, [ref]$limit) | Out-Null
+    $limit = Get-IntOrDefault $cap 5000
     $users = Get-TenantUserProfile -Limit $limit
     if ($users.Count -eq 0) { Pause-ForUser; return }
 
@@ -301,7 +305,7 @@ function Start-TemplateGeneratorMenu {
 
     # ---- Show top clusters ----
     $minSize = Read-UserInput "Skip clusters smaller than N users (default 2)"
-    $mn = 2; [int]::TryParse($minSize, [ref]$mn) | Out-Null
+    $mn = Get-IntOrDefault $minSize 2
     $eligible = @($clusters | Where-Object { $_.Users.Count -ge $mn })
     if ($eligible.Count -eq 0) {
         Write-Warn "No clusters meet the minimum size of $mn. Lower the threshold or onboard more representative users."
@@ -318,9 +322,10 @@ function Start-TemplateGeneratorMenu {
     if (-not $idx -or $idx.Count -eq 0) { Pause-ForUser; return }
 
     $sCap = Read-UserInput "Max users to sample per cluster (default 5)"
-    $sN = 5; [int]::TryParse($sCap, [ref]$sN) | Out-Null
+    $sN = Get-IntOrDefault $sCap 5
+    if ($sN -lt 1) { $sN = 5 }
     $thrIn = Read-UserInput "Common-assignment threshold percent (default 50)"
-    $thrPct = 50; [int]::TryParse($thrIn, [ref]$thrPct) | Out-Null
+    $thrPct = Get-IntOrDefault $thrIn 50
     if ($thrPct -lt 1 -or $thrPct -gt 100) { $thrPct = 50 }
     $threshold = $thrPct / 100.0
 

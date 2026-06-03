@@ -472,7 +472,7 @@ function Start-OneDriveManagerMenu {
                 if (-not $leaver) { continue }
                 $succ   = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "Successor UPN or name" } else { Read-UserInput "Successor UPN" }
                 if (-not $succ) { continue }
-                $dt     = Read-UserInput "Retention days (default 60)"; $d = 60; [int]::TryParse($dt, [ref]$d) | Out-Null
+                $dt     = Read-UserInput "Retention days (default 60)"; $d = Get-IntOrDefault $dt 60
                 $notify = (Read-UserInput "Notify manager via email? (y/n)") -match '^[Yy]'
                 $manager = $null
                 if ($notify) {

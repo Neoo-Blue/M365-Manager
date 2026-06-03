@@ -414,7 +414,7 @@ function Start-GuestUsersMenu {
         switch ($sel) {
             0 { Get-Guests | Format-Table -AutoSize; Pause-ForUser }
             1 {
-                $dt = Read-UserInput "Days threshold (default 90)"; $d = 90; [int]::TryParse($dt,[ref]$d) | Out-Null
+                $dt = Read-UserInput "Days threshold (default 90)"; $d = Get-IntOrDefault $dt 90
                 Get-StaleGuests -DaysSinceSignIn $d | Format-Table -AutoSize
                 Pause-ForUser
             }

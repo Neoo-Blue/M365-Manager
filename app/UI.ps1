@@ -127,6 +127,28 @@ function Read-UserInput {
     return (Get-OperatorInput -Prompt $Prompt)
 }
 
+function Get-IntOrDefault {
+    <#
+    .SYNOPSIS
+        Parse $Text as an int; return $Default when it can't be parsed
+        (including the very common empty-string case).
+    .DESCRIPTION
+        The widespread pattern
+            $x = 5; [int]::TryParse($t, [ref]$x) | Out-Null
+        is a TRAP: when $t is "", TryParse returns $false AND overwrites
+        $x with 0. Operators who accept a default by pressing Enter end
+        up with 0 instead of the documented default. Use this helper:
+            $x = Get-IntOrDefault $t 5
+    #>
+    param(
+        [string]$Text,
+        [Parameter(Mandatory)][int]$Default
+    )
+    $n = 0
+    if ([int]::TryParse([string]$Text, [ref]$n)) { return $n }
+    return $Default
+}
+
 function Read-UserInputOrCancel {
     <#
     .SYNOPSIS

@@ -465,7 +465,7 @@ function Start-LicenseOptimizerMenu {
         ) -BackLabel "Back"
         switch ($sel) {
             0 { $r = Get-LicenseUtilizationReport -DaysInactive 60; if ($r) { Write-StatusLine "Inactive"   "$($r.Inactive.Count)" 'White'; Write-StatusLine "Hoarders" "$($r.Hoarders.Count)" 'White'; Write-StatusLine "Free seats" "$(($r.Unassigned | Measure-Object Free -Sum).Sum)" 'White'; Write-StatusLine "Downgrade" "$($r.Downgrade.Count)" 'White' }; Pause-ForUser }
-            1 { $dt = Read-UserInput "Days threshold (default 60)"; $d = 60; [int]::TryParse($dt,[ref]$d) | Out-Null; Get-InactiveLicensedUsers -DaysInactive $d | Format-Table -AutoSize; Pause-ForUser }
+            1 { $dt = Read-UserInput "Days threshold (default 60)"; $d = Get-IntOrDefault $dt 60; Get-InactiveLicensedUsers -DaysInactive $d | Format-Table -AutoSize; Pause-ForUser }
             2 { Get-LicenseHoarders         | Format-Table -AutoSize; Pause-ForUser }
             3 { Get-PaidUnassignedLicenses  | Format-Table -AutoSize; Pause-ForUser }
             4 { Get-DowngradeCandidates     | Format-Table -AutoSize; Pause-ForUser }

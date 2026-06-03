@@ -434,7 +434,7 @@ function Start-MFAMenu {
             }
             5 {
                 $maxT = Read-UserInput "Scan first N users (default 200)"
-                $max = 200; [int]::TryParse($maxT,[ref]$max) | Out-Null
+                $max = Get-IntOrDefault $maxT 200
                 $rows = Get-UsersWithOnlyPhoneMfa -Max $max
                 Write-InfoMsg "Found $($rows.Count) user(s) with ONLY phone-based MFA."
                 $rows | Format-Table -AutoSize
@@ -443,7 +443,7 @@ function Start-MFAMenu {
             }
             6 {
                 $maxT = Read-UserInput "Scan first N users (default 200)"
-                $max = 200; [int]::TryParse($maxT,[ref]$max) | Out-Null
+                $max = Get-IntOrDefault $maxT 200
                 $rows = Get-UsersWithNoMfa -Max $max
                 Write-InfoMsg "Found $($rows.Count) user(s) with NO MFA registered."
                 $rows | Format-Table -AutoSize
@@ -452,7 +452,7 @@ function Start-MFAMenu {
             }
             7 {
                 $maxT = Read-UserInput "Scan first N users (default 200)"
-                $max = 200; [int]::TryParse($maxT,[ref]$max) | Out-Null
+                $max = Get-IntOrDefault $maxT 200
                 $rows = Get-UsersWithActiveTap -Max $max
                 Write-InfoMsg "Found $($rows.Count) user(s) with an active TAP."
                 $rows | Format-Table -AutoSize
@@ -461,7 +461,7 @@ function Start-MFAMenu {
             }
             8 {
                 $maxT = Read-UserInput "Scan first N users (default 200)"
-                $max = 200; [int]::TryParse($maxT,[ref]$max) | Out-Null
+                $max = Get-IntOrDefault $maxT 200
                 $rows = Get-UsersWithFido2Keys -Max $max
                 Write-InfoMsg "Found $($rows.Count) user(s) with FIDO2 keys."
                 $rows | Format-Table -AutoSize
