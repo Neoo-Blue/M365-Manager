@@ -20,6 +20,59 @@
 #  BulkOffboard.ps1 mirrors this flow with column-level toggles.
 # ============================================================
 
+function Get-MailboxSizeGB {
+    <#
+        Return the mailbox total item size in GB (rounded). Returns
+        -1 when the cmdlet isn't available or the lookup fails so
+        callers can fall back to default behavior.
+    #>
+    param([Parameter(Mandatory)][string]$Identity)
+    if (-not (Get-Command Get-EXOMailboxStatistics -ErrorAction SilentlyContinue)) {
+        return -1
+    }
+    try {
+        $stats = Get-EXOMailboxStatistics -Identity $Identity -ErrorAction Stop
+        $sizeStr = "$($stats.TotalItemSize)"
+        if ($sizeStr -match '\(([\d,]+) bytes\)') {
+            $bytes = [int64](($Matches[1] -replace ',', ''))
+            return [math]::Round($bytes / 1GB, 2)
+        }
+    } catch {
+        Write-Warn "Could not read mailbox size for $Identity : $($_.Exception.Message)"
+    }
+    return -1
+}
+
+function Get-AvailableExchangeP2 {
+    <#
+        Look up Exchange Online Plan 2 (EXCHANGEENTERPRISE) in the
+        connected tenant. Returns a PSCustomObject describing the
+        first SKU with at least one free seat, or $null when none
+        are available.
+
+        EXCHANGEENTERPRISE bumps the shared-mailbox cap from 50 GB
+        to 100 GB. (M365 E3/E5 also include Exchange P2, but we
+        avoid suggesting those as a "just assign it" option here
+        because they're full-fat licenses, not the cheap shared-
+        mailbox extension Microsoft wants you to use.)
+    #>
+    if (-not (Get-Command Get-MgSubscribedSku -ErrorAction SilentlyContinue)) { return $null }
+    try {
+        $skus = @(Get-MgSubscribedSku -ErrorAction Stop | Where-Object { $_.SkuPartNumber -eq 'EXCHANGEENTERPRISE' })
+        foreach ($s in $skus) {
+            $avail = [int]$s.PrepaidUnits.Enabled - [int]$s.ConsumedUnits
+            if ($avail -gt 0) {
+                return [PSCustomObject]@{
+                    SkuId        = [string]$s.SkuId
+                    SkuPartNumber = [string]$s.SkuPartNumber
+                    Available    = $avail
+                }
+            }
+        }
+    } catch {}
+    return $null
+}
+
 function Test-GroupIsUnmanageable {
     <#
         Returns a non-empty reason string when the group can't be
@@ -334,61 +387,140 @@ function Start-Offboard {
         if ($r.Skipped -gt 0) { $summary['DLs skipped (on-prem/dynamic)'] = $r.Skipped }
     }
 
+    # ---- Step 4.5: Mailbox-size pre-check (gates Step 5 + Step 6) ----
+    # Shared mailbox cap is 50 GB without a license; Exchange Online
+    # Plan 2 extends to 100 GB. If the leaver's mailbox is above 50,
+    # ask the operator how to handle license-removal + conversion
+    # together (they're coupled: convert-to-shared is the reason you
+    # remove the license, and oversized shared mailboxes will reject
+    # incoming mail).
+    $strategy = 'Default'
+    $p2Sku    = $null
+    $sizeGB   = -1
+    try {
+        $sizeGB = Get-MailboxSizeGB -Identity $upn
+        if ($sizeGB -gt 50) {
+            Write-Host ""
+            Write-Warn ("Mailbox is {0} GB. Shared mailbox cap is 50 GB without a license." -f $sizeGB)
+            Write-Host "  Exchange Online Plan 2 extends shared mailboxes to 100 GB." -ForegroundColor Yellow
+            $p2Sku = Get-AvailableExchangeP2
+            $opts = @()
+            if ($p2Sku) {
+                $opts += "Assign Exchange Online Plan 2 ($($p2Sku.Available) seat(s) free), remove other licenses, then convert"
+            } else {
+                $opts += "[NO SEATS] Assign Exchange Online Plan 2 -- not available, skip"
+            }
+            $opts += "Keep current license + USER mailbox (skip Step 5 + Step 6)"
+            $opts += "Convert to shared anyway (mailbox stays >50 GB; new mail may bounce)"
+            $opts += "Proceed normally (remove licenses, convert; accept the risk)"
+
+            $choice = Show-Menu -Title ("Strategy for {0} GB mailbox" -f $sizeGB) -Options $opts -BackLabel "Skip both Step 5 and Step 6"
+            switch ($choice) {
+                -1 { $strategy = 'SkipBoth' }
+                0  { if ($p2Sku) { $strategy = 'AssignP2' } else { Write-Warn "No P2 seats available; skipping both steps."; $strategy = 'SkipBoth' } }
+                1  { $strategy = 'KeepLicensed' }
+                2  { $strategy = 'ConvertAnyway' }
+                3  { $strategy = 'Default' }
+            }
+            $summary['Mailbox size (GB)']   = $sizeGB
+            $summary['Mailbox strategy']    = $strategy
+        }
+    } catch { Write-Warn "Mailbox size pre-check failed: $($_.Exception.Message)" }
+
     # ---- Step 5: Remove direct license assignments ----
     Write-SectionHeader "Step 5 - Remove Licenses"
-    try {
-        $lics = @(Get-MgUserLicenseDetail -UserId $user.Id -ErrorAction Stop)
-        if ($lics.Count -eq 0) { Write-InfoMsg "No licenses." }
-        else {
-            $fullUser = $null
-            try { $fullUser = Get-MgUser -UserId $user.Id -Property "LicenseAssignmentStates" -ErrorAction Stop } catch {}
-            $assignInfo = @{}
-            if ($fullUser -and $fullUser.LicenseAssignmentStates) {
-                foreach ($s in $fullUser.LicenseAssignmentStates) {
-                    $sid = "$($s.SkuId)"; $ai = @{ Direct = $false; Groups = @() }
-                    if ($assignInfo.ContainsKey($sid)) { $ai = $assignInfo[$sid] }
-                    if ($null -eq $s.AssignedByGroup -or $s.AssignedByGroup -eq "") { $ai.Direct = $true } else { $ai.Groups += $s.AssignedByGroup }
-                    $assignInfo[$sid] = $ai
+    if ($strategy -eq 'KeepLicensed' -or $strategy -eq 'SkipBoth') {
+        Write-InfoMsg ("Skipped: chosen strategy is '{0}' (mailbox is {1} GB)." -f $strategy, $sizeGB)
+    } else {
+        try {
+            $lics = @(Get-MgUserLicenseDetail -UserId $user.Id -ErrorAction Stop)
+            if ($lics.Count -eq 0) { Write-InfoMsg "No licenses." }
+            else {
+                $fullUser = $null
+                try { $fullUser = Get-MgUser -UserId $user.Id -Property "LicenseAssignmentStates" -ErrorAction Stop } catch {}
+                $assignInfo = @{}
+                if ($fullUser -and $fullUser.LicenseAssignmentStates) {
+                    foreach ($s in $fullUser.LicenseAssignmentStates) {
+                        $sid = "$($s.SkuId)"; $ai = @{ Direct = $false; Groups = @() }
+                        if ($assignInfo.ContainsKey($sid)) { $ai = $assignInfo[$sid] }
+                        if ($null -eq $s.AssignedByGroup -or $s.AssignedByGroup -eq "") { $ai.Direct = $true } else { $ai.Groups += $s.AssignedByGroup }
+                        $assignInfo[$sid] = $ai
+                    }
                 }
-            }
-            Write-InfoMsg "Current licenses:"
-            foreach ($lic in $lics) {
-                $sid = "$($lic.SkuId)"
-                $tag = if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) { " [GROUP]" } else { "" }
-                Write-Host "    - $(Format-LicenseLabel $lic.SkuPartNumber)$tag" -ForegroundColor White
-            }
-            if (Confirm-Action "Remove all directly-assigned licenses?") {
-                $removed = 0
+                Write-InfoMsg "Current licenses:"
                 foreach ($lic in $lics) {
                     $sid = "$($lic.SkuId)"
-                    $friendly = Get-SkuFriendlyName $lic.SkuPartNumber
-                    if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) {
-                        Write-Warn "$friendly is group-assigned. Remove user from the licensing group instead."
-                        continue
-                    }
-                    $ok = Invoke-Action `
-                        -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $upn) `
-                        -ActionType 'RemoveLicense' `
-                        -Target @{ userId = [string]$user.Id; userUpn = $upn; skuId = [string]$lic.SkuId; skuPart = [string]$lic.SkuPartNumber } `
-                        -ReverseType 'AssignLicense' `
-                        -ReverseDescription ("Re-assign license '{0}' to {1}" -f $lic.SkuPartNumber, $upn) `
-                        -Action { Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true }
-                    if ($ok) { $removed++; if (-not (Get-PreviewMode)) { Write-Success "Removed: $friendly" } }
+                    $tag = if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) { " [GROUP]" } else { "" }
+                    Write-Host "    - $(Format-LicenseLabel $lic.SkuPartNumber)$tag" -ForegroundColor White
                 }
-                $summary['Licenses removed'] = $removed
+
+                # AssignP2: assign Exchange Online P2 FIRST so a sliver of
+                # licensing survives when we remove the heavy SKUs below.
+                if ($strategy -eq 'AssignP2' -and $p2Sku) {
+                    if (Confirm-Action ("Assign Exchange Online Plan 2 ({0}) to keep shared mailbox at 100 GB?" -f $p2Sku.SkuPartNumber)) {
+                        $okAssign = Invoke-Action `
+                            -Description ("Assign Exchange Online Plan 2 ({0}) to {1}" -f $p2Sku.SkuPartNumber, $upn) `
+                            -ActionType 'AssignLicense' `
+                            -Target @{ userId = [string]$user.Id; userUpn = $upn; skuId = [string]$p2Sku.SkuId; skuPart = [string]$p2Sku.SkuPartNumber } `
+                            -ReverseType 'RemoveLicense' `
+                            -ReverseDescription ("Remove Exchange Online Plan 2 ({0}) from {1}" -f $p2Sku.SkuPartNumber, $upn) `
+                            -Action { Set-MgUserLicense -UserId $user.Id -AddLicenses @(@{ SkuId = $p2Sku.SkuId }) -RemoveLicenses @() -ErrorAction Stop; $true }
+                        if ($okAssign -and -not (Get-PreviewMode)) {
+                            Write-Success ("Assigned: Exchange Online Plan 2 ({0})" -f $p2Sku.SkuPartNumber)
+                            $summary['Exchange P2 assigned'] = $p2Sku.SkuPartNumber
+                        }
+                    }
+                }
+
+                if (Confirm-Action "Remove all directly-assigned licenses?") {
+                    $removed = 0
+                    foreach ($lic in $lics) {
+                        $sid = "$($lic.SkuId)"
+                        $friendly = Get-SkuFriendlyName $lic.SkuPartNumber
+                        # When we just added P2, don't immediately strip it.
+                        if ($strategy -eq 'AssignP2' -and $p2Sku -and $lic.SkuPartNumber -eq $p2Sku.SkuPartNumber) {
+                            Write-InfoMsg "Keeping $friendly (assigned this run to preserve >50 GB shared mailbox)."
+                            continue
+                        }
+                        if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) {
+                            Write-Warn "$friendly is group-assigned. Remove user from the licensing group instead."
+                            continue
+                        }
+                        $ok = Invoke-Action `
+                            -Description ("Remove license '{0}' from {1}" -f $lic.SkuPartNumber, $upn) `
+                            -ActionType 'RemoveLicense' `
+                            -Target @{ userId = [string]$user.Id; userUpn = $upn; skuId = [string]$lic.SkuId; skuPart = [string]$lic.SkuPartNumber } `
+                            -ReverseType 'AssignLicense' `
+                            -ReverseDescription ("Re-assign license '{0}' to {1}" -f $lic.SkuPartNumber, $upn) `
+                            -Action { Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true }
+                        if ($ok) { $removed++; if (-not (Get-PreviewMode)) { Write-Success "Removed: $friendly" } }
+                    }
+                    $summary['Licenses removed'] = $removed
+                }
             }
-        }
-    } catch { Write-ErrorMsg "License error: $_" }
+        } catch { Write-ErrorMsg "License error: $_" }
+    }
 
     # ---- Step 6: Convert mailbox to shared (conditional) ----
     Write-SectionHeader "Step 6 - Convert to Shared Mailbox"
-    if (Confirm-Action "Convert $upn to Shared Mailbox?") {
-        $ok = Invoke-Action `
-            -Description ("Convert {0} to Shared Mailbox" -f $upn) `
-            -ActionType 'ConvertToShared' -Target @{ identity = $upn } `
-            -NoUndoReason 'Reverting Shared back to UserMailbox requires re-licensing.' `
-            -Action { Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; $true }
-        if ($ok -and -not (Get-PreviewMode)) { Write-Success "Converted."; $summary['Converted to shared'] = 'yes' }
+    if ($strategy -eq 'KeepLicensed' -or $strategy -eq 'SkipBoth') {
+        Write-InfoMsg ("Skipped: chosen strategy is '{0}'." -f $strategy)
+    } else {
+        $proceed = $true
+        if ($strategy -eq 'ConvertAnyway') {
+            Write-Warn ("Mailbox is {0} GB; converting to shared without an Exchange P2 leaves a 50 GB cap." -f $sizeGB)
+            $proceed = Confirm-Action ("Convert {0} to shared anyway?" -f $upn)
+        } else {
+            $proceed = Confirm-Action ("Convert {0} to Shared Mailbox?" -f $upn)
+        }
+        if ($proceed) {
+            $ok = Invoke-Action `
+                -Description ("Convert {0} to Shared Mailbox" -f $upn) `
+                -ActionType 'ConvertToShared' -Target @{ identity = $upn } `
+                -NoUndoReason 'Reverting Shared back to UserMailbox requires re-licensing.' `
+                -Action { Set-Mailbox -Identity $upn -Type Shared -ErrorAction Stop; $true }
+            if ($ok -and -not (Get-PreviewMode)) { Write-Success "Converted."; $summary['Converted to shared'] = 'yes' }
+        }
     }
 
     # ---- Step 6b: Grant mailbox access (delegates) ----
