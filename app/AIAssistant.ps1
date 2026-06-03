@@ -961,16 +961,16 @@ function Invoke-MarkCommands {
 
         # Display command box
         Write-Host ""
-        $b = $script:Box
-        Write-Host ("  " + $b.TL + [string]::new($b.H, 56) + $b.TR) -ForegroundColor $script:Colors.Warning
-        Write-Host ("  " + $b.V + " Mark wants to run:") -ForegroundColor $script:Colors.Warning
+        $b = $Global:M365Box
+        Write-Host ("  " + $b.TL + [string]::new($b.H, 56) + $b.TR) -ForegroundColor $Global:M365Colors.Warning
+        Write-Host ("  " + $b.V + " Mark wants to run:") -ForegroundColor $Global:M365Colors.Warning
         $dc = $command; $lw = 52
         while ($dc.Length -gt 0) {
             $ch = if($dc.Length -gt $lw){$dc.Substring(0,$lw)}else{$dc}
             Write-Host ("  " + $b.V + "   " + $ch) -ForegroundColor "Cyan"
             $dc = if($dc.Length -gt $lw){$dc.Substring($lw)}else{""}
         }
-        Write-Host ("  " + $b.BL + [string]::new($b.H, 56) + $b.BR) -ForegroundColor $script:Colors.Warning
+        Write-Host ("  " + $b.BL + [string]::new($b.H, 56) + $b.BR) -ForegroundColor $Global:M365Colors.Warning
 
         if ($command -match '^\s*(Set-|Remove-|Add-|New-|Update-|Revoke-|Enable-|Disable-|Start-)') { Write-Warn "This will MAKE CHANGES." }
 
@@ -978,7 +978,7 @@ function Invoke-MarkCommands {
         if (-not $runAll) {
             $confirmed = $false
             while (-not $confirmed) {
-                Write-Host "  [Y]es  [N]o  [A]ll  [E]xplain" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                Write-Host "  [Y]es  [N]o  [A]ll  [E]xplain" -ForegroundColor $Global:M365Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
                 $ans = Read-Host
                 if ($ans -match '^[Aa]') { $runAll = $true; $confirmed = $true }
                 elseif ($ans -match '^[Yy]') { $confirmed = $true }
@@ -997,14 +997,14 @@ function Invoke-MarkCommands {
         }
 
         # ---- Execute via parsed ScriptBlock (no Invoke-Expression) ----
-        Write-Host "  Executing..." -ForegroundColor $script:Colors.Info
+        Write-Host "  Executing..." -ForegroundColor $Global:M365Colors.Info
         Write-AIAuditEntry -EventType "RUN" -Detail $redacted
         try {
             $sb = [scriptblock]::Create($command)
             $output = & $sb 2>&1
             $outputStr = ($output | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($outputStr)) { $outputStr = "(completed, no output)" }
-            Write-Host "  Result:" -ForegroundColor $script:Colors.Success
+            Write-Host "  Result:" -ForegroundColor $Global:M365Colors.Success
             $lines = $outputStr -split "`n"; $show = [math]::Min($lines.Count, 25)
             for ($i = 0; $i -lt $show; $i++) { Write-Host "    $($lines[$i])" -ForegroundColor White }
             if ($lines.Count -gt 25) { Write-Warn "($($lines.Count) lines, showing 25)" }
@@ -1026,12 +1026,12 @@ function Invoke-MarkCommands {
 # ============================================================
 
 function Start-AIAssistant {
-    $b = $script:Box
+    $b = $Global:M365Box
     $config = Get-AIConfig
     if ($null -eq $config) {
-        Write-Host ""; Write-Host ("  " + $b.DTL + [string]::new($b.DH,56) + $b.DTR) -ForegroundColor $script:Colors.Title
-        Write-Host ("  " + $b.DV + "   Mark - AI Assistant (First Time Setup)              " + $b.DV) -ForegroundColor $script:Colors.Title
-        Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor $script:Colors.Title
+        Write-Host ""; Write-Host ("  " + $b.DTL + [string]::new($b.DH,56) + $b.DTR) -ForegroundColor $Global:M365Colors.Title
+        Write-Host ("  " + $b.DV + "   Mark - AI Assistant (First Time Setup)              " + $b.DV) -ForegroundColor $Global:M365Colors.Title
+        Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor $Global:M365Colors.Title
         Write-Host ""; $config = Setup-AIProvider; if ($null -eq $config) { Write-ErrorMsg "Cancelled."; Pause-ForUser; return }
     }
     if ($config -is [PSCustomObject]) { $ht=@{}; $config.PSObject.Properties|ForEach-Object{$ht[$_.Name]=$_.Value}; $config=$ht }
@@ -1067,7 +1067,7 @@ function Start-AIAssistant {
 
     $chatting = $true
     while ($chatting) {
-        Write-Host "  You" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+        Write-Host "  You" -ForegroundColor $Global:M365Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
         $userMsg = Read-Host
         if ([string]::IsNullOrWhiteSpace($userMsg)) { continue }
 
@@ -1255,7 +1255,7 @@ function Start-AIAssistant {
                         $chatHistory = @($chatHistory | Select-Object -SkipLast 1)
                         break
                     }
-                    Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": [!] $($turn.Error)" -ForegroundColor $script:Colors.Error
+                    Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": [!] $($turn.Error)" -ForegroundColor $Global:M365Colors.Error
                     break
                 }
                 # ---- Cost tracking for this hop ----
@@ -1319,7 +1319,7 @@ function Start-AIAssistant {
                         $q = [string]$tu.input.question
                         Write-Host ""
                         Write-Host "  Mark asks: $q" -ForegroundColor Cyan
-                        Write-Host "  You" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                        Write-Host "  You" -ForegroundColor $Global:M365Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
                         $ansText = Read-Host
                         $payload = (@{ ok = $true; answer = $ansText } | ConvertTo-Json -Compress)
                         [void]$results.Add(@{ id = $tu.id; content = $payload; isError = $false })
@@ -1346,7 +1346,7 @@ function Start-AIAssistant {
                     $effectiveRunAll = $runAll -and -not $requiresExplicit
                     $ans = if ($effectiveRunAll) { 'y' } else {
                         $opts = if ($requiresExplicit) { "[Y]es  [N]o  [Q]uit" } else { "[Y]es  [N]o  [A]ll  [Q]uit" }
-                        Write-Host "  $opts" -ForegroundColor $script:Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
+                        Write-Host "  $opts" -ForegroundColor $Global:M365Colors.Highlight -NoNewline; Write-Host ": " -NoNewline
                         Read-Host
                     }
                     if ($ans -match '^[Aa]' -and -not $requiresExplicit) { $runAll = $true; $ans = 'y' }
@@ -1397,7 +1397,7 @@ function Start-AIAssistant {
         $response = Invoke-AIChat -Config $config -Messages $chatHistory
         try{$t=$Host.UI.RawUI.CursorPosition.Y-1;$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t;Write-Host(" "*80);$Host.UI.RawUI.CursorPosition=New-Object System.Management.Automation.Host.Coordinates 0,$t}catch{}
 
-        if ($response -match "^\[!\]") { Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": $response" -ForegroundColor $script:Colors.Error; Write-Host ""; continue }
+        if ($response -match "^\[!\]") { Write-Host "  Mark" -ForegroundColor "Cyan" -NoNewline; Write-Host ": $response" -ForegroundColor $Global:M365Colors.Error; Write-Host ""; continue }
 
         # ---- Cost footer (regex path) ----
         if ($script:LastAICostResult -and (Get-Command Show-AICostFooter -ErrorAction SilentlyContinue)) {
