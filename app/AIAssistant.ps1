@@ -1026,13 +1026,52 @@ function Invoke-MarkCommands {
 # ============================================================
 
 function Start-AIAssistant {
+    # Defensive guards so a missing global (Windows PS 5.1 scope
+    # quirk) or a missed Initialize-UI doesn't silently abort the
+    # function -- the operator was reporting that option 28 "did
+    # nothing and went back to the main menu" because $b.DTL was
+    # throwing on $b=$null.
+    Write-Host ""
+    Write-Host "  [i] Starting AI Assistant (Mark)..." -ForegroundColor Cyan
+
     $b = $Global:M365Box
-    $config = Get-AIConfig
+    if (-not $b -or -not $b.DTL) {
+        Write-Host "  [!] TUI globals were not initialised. Rebuilding inline." -ForegroundColor Yellow
+        $b = @{
+            TL=[char]0x250C; TR=[char]0x2510; BL=[char]0x2514; BR=[char]0x2518
+            H=[char]0x2500; V=[char]0x2502
+            DTL=[char]0x2554; DTR=[char]0x2557; DBL=[char]0x255A; DBR=[char]0x255D
+            DH=[char]0x2550; DV=[char]0x2551
+        }
+        $Global:M365Box = $b
+    }
+    if (-not $Global:M365Colors) {
+        $Global:M365Colors = @{ Title='Cyan'; Info='Gray'; Success='Green'; Error='Red'; Warning='DarkYellow'; Highlight='Yellow'; Accent='DarkCyan'; Menu='White'; Prompt='Magenta'; BG='DarkBlue' }
+    }
+
+    try {
+        $config = Get-AIConfig
+    } catch {
+        Write-Host ("  [x] AI config read failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
+        Write-Host ("  Config path tried: {0}" -f $script:AIConfigPath) -ForegroundColor Gray
+        Pause-ForUser
+        return
+    }
+
     if ($null -eq $config) {
         Write-Host ""; Write-Host ("  " + $b.DTL + [string]::new($b.DH,56) + $b.DTR) -ForegroundColor $Global:M365Colors.Title
         Write-Host ("  " + $b.DV + "   Mark - AI Assistant (First Time Setup)              " + $b.DV) -ForegroundColor $Global:M365Colors.Title
         Write-Host ("  " + $b.DBL + [string]::new($b.DH,56) + $b.DBR) -ForegroundColor $Global:M365Colors.Title
-        Write-Host ""; $config = Setup-AIProvider; if ($null -eq $config) { Write-ErrorMsg "Cancelled."; Pause-ForUser; return }
+        Write-Host ""
+        Write-Host ("  No AI config found at {0}." -f $script:AIConfigPath) -ForegroundColor Yellow
+        Write-Host  "  Pick a provider below to create one (or 0 to cancel)." -ForegroundColor Yellow
+        Write-Host ""
+        $config = Setup-AIProvider
+        if ($null -eq $config) {
+            Write-ErrorMsg "Setup cancelled. AI Assistant exits."
+            Pause-ForUser
+            return
+        }
     }
     if ($config -is [PSCustomObject]) { $ht=@{}; $config.PSObject.Properties|ForEach-Object{$ht[$_.Name]=$_.Value}; $config=$ht }
 

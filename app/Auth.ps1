@@ -141,21 +141,34 @@ function Initialize-PSGalleryBootstrap {
     } catch {}
 }
 
+# ---- Microsoft.Graph version policy ---------------------------------
+# Baseline: the version we treat as "good" and aim to install.
+# Known-bad: versions we explicitly refuse to accept even when nothing
+# else looks wrong (e.g. v2.37.0 ships a broken Authentication.Core.dll
+# with no GetTokenAsync impl, which makes every import fail).
+$script:MgGraphBaselineVersion = '2.25.0'
+$script:MgGraphKnownBadVersions = @('2.37.0')
+
 function Test-MgGraphVersionCoherence {
     <#
-        Each Microsoft.Graph.* submodule has its own version. Returns
-        @() when everything is coherent, otherwise an array of human-
-        readable lines describing the problem(s).
+        Returns @() when the on-disk state is acceptable, otherwise an
+        array of human-readable problem lines. "Acceptable" means
+        every sibling resolves to the same NON-broken version. That
+        version doesn't have to be the baseline -- if the operator
+        deliberately pinned to 2.30.0 and everything matches, we stay
+        quiet.
 
-        Checks two failure modes:
-          (a) Different highest-version per sibling (sibling drift).
-              E.g. Users v2.30 but Authentication v2.20 on disk.
-          (b) Multiple versions of the same sibling on disk. Even when
-              the highest version matches across siblings, an older
-              copy lurking in another module path can load first and
-              trigger "Could not load file or assembly ... Version=X"
-              for the matching .Core DLL. This is the case the
-              previous version of the check missed.
+        We do flag:
+          (a) Sibling drift -- different siblings have different
+              top-installed versions.
+          (b) Any sibling whose top-installed version appears in
+              $MgGraphKnownBadVersions.
+          (c) Multiple DISTINCT versions of the same sibling on disk
+              (an old copy lurking can load first and trigger
+              "Could not load file or assembly").
+
+        Same version installed in TWO scopes (CurrentUser + AllUsers
+        at v2.25.0) is NOT flagged -- it's harmless.
     #>
     $all = @(Get-Module -ListAvailable -Name 'Microsoft.Graph.*' |
              Where-Object { $_.Name -ne 'Microsoft.Graph' })
@@ -172,10 +185,17 @@ function Test-MgGraphVersionCoherence {
         foreach ($t in $tops) { $msgs += "    $($t.Name) v$($t.Version)" }
     }
 
-    # (b) Multiple installed VERSIONS of the same sibling. Two copies
-    # of the same version (e.g. v2.30.0 in both CurrentUser AND AllUsers
-    # paths) are harmless -- the DLLs are identical, PowerShell just
-    # picks one. We only flag DISTINCT versions.
+    # (b) Known-bad version detected on a top-installed sibling.
+    $badHits = @($tops | Where-Object { $script:MgGraphKnownBadVersions -contains [string]$_.Version })
+    if ($badHits.Count -gt 0) {
+        $msgs += "Known-broken Microsoft.Graph version on disk:"
+        foreach ($b in $badHits) {
+            $msgs += "    $($b.Name) v$($b.Version)  <-- known-broken release"
+        }
+        $msgs += "    (Pin to v$($script:MgGraphBaselineVersion) via option 98.)"
+    }
+
+    # (c) Multiple installed VERSIONS of the same sibling.
     $multi = @()
     foreach ($g in @($all | Group-Object Name)) {
         $distinctVersions = @($g.Group | ForEach-Object { [string]$_.Version } | Sort-Object -Unique)
@@ -233,8 +253,13 @@ function Repair-MgGraphSiblings {
         Write-Warn "Microsoft.Graph.Authentication isn't installed yet; nothing to align to."
         return
     }
-    $target = $authMod.Version
-    Write-InfoMsg "Aligning Microsoft.Graph.* siblings to v$target..."
+    # Aim at the BASELINE version, not the highest installed. The
+    # highest is often the broken v2.37.0; defaulting to the baseline
+    # makes a "press Y at the prompt" do the right thing without
+    # asking the operator to type a version. If $authMod itself is
+    # already at the baseline, this is a no-op.
+    $target = [System.Version]$script:MgGraphBaselineVersion
+    Write-InfoMsg "Aligning Microsoft.Graph.* siblings to baseline v$target..."
 
     # ---- Pass 1: uninstall every non-target version on disk ----
     $needElevation = $false
@@ -393,7 +418,7 @@ function Invoke-MgGraphFullRepair {
     Write-Host "  the last widely-deployed stable build for Windows PowerShell 5.1." -ForegroundColor Yellow
     Write-Host ""
 
-    $defaultPin = '2.25.0'
+    $defaultPin = $script:MgGraphBaselineVersion
     $verIn = Read-UserInput ("Pin to Microsoft.Graph version (Enter for {0})" -f $defaultPin)
     $pinVersion = if ([string]::IsNullOrWhiteSpace($verIn)) { $defaultPin } else { $verIn.Trim() }
 
