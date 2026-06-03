@@ -151,7 +151,8 @@ function Send-Email {
         "https://graph.microsoft.com/v1.0/me/sendMail"
     }
 
-    return Invoke-Action `
+    $errBefore = $Error.Count
+    $result = Invoke-Action `
         -Description ("Send email to {0} -- {1}" -f ($To -join ','), $Subject) `
         -ActionType 'NotifyEmail' `
         -Target @{ to = $To; from = $From; subject = $Subject; importance = $Importance } `
@@ -160,6 +161,16 @@ function Send-Email {
             Invoke-MgGraphRequest -Method POST -Uri $uri -Body $payload -ContentType 'application/json' -ErrorAction Stop | Out-Null
             $true
         }
+    if (-not $result -and $Error.Count -gt $errBefore) {
+        $emsg = "$($Error[0].Exception.Message)"
+        if ($emsg -match 'Forbidden|403|ErrorAccessDenied') {
+            Write-Warn "Mail.Send / Mail.Send.Shared scope missing. An admin must grant consent for Microsoft Graph PowerShell."
+        }
+        elseif ($emsg -match 'MailboxNotEnabledForRESTAPI') {
+            Write-Warn "The signed-in account has no mailbox in this tenant; pass -From with a licensed sender."
+        }
+    }
+    return $result
 }
 
 function Send-TeamsWebhook {

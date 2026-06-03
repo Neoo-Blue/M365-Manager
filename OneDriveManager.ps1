@@ -86,7 +86,11 @@ function Get-OneDriveRecentFiles {
         }
         return @($files | Sort-Object LastModifiedUtc -Descending | Select-Object -First $Top)
     } catch {
-        Write-Warn "Could not enumerate recent files: $($_.Exception.Message)"
+        $emsg = $_.Exception.Message
+        Write-Warn "Could not enumerate recent files: $emsg"
+        if ($emsg -match 'Forbidden|403') {
+            Write-InfoMsg "    Missing Graph scope. Need Files.Read.All or Sites.Read.All consented for this tenant."
+        }
         return @()
     }
 }

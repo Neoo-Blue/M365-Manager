@@ -20,20 +20,62 @@
 #  BulkOffboard.ps1 mirrors this flow with column-level toggles.
 # ============================================================
 
+function Test-GroupIsUnmanageable {
+    <#
+        Returns a non-empty reason string when the group can't be
+        edited via Graph (Westpak example: BadRequest on every group
+        synced from on-prem AD). Pre-checking these saves a flood of
+        red "BadRequest" errors and lets us tell the operator exactly
+        what to do.
+    #>
+    param($Group)
+    if ($Group.onPremisesSyncEnabled) { return 'synced from on-prem AD (manage in AD/AD Connect)' }
+    if ($Group.membershipRule -or ($Group.groupTypes -and ($Group.groupTypes -contains 'DynamicMembership'))) {
+        return 'dynamic membership (edit the rule, not individual members)'
+    }
+    return ''
+}
+
+function Remove-DLMemberViaEXO {
+    <#
+        Fall back to Exchange Online's Remove-DistributionGroupMember
+        for mail-enabled groups that Graph rejects with BadRequest.
+        Exchange-managed DLs (the common case in hybrid tenants like
+        Westpak's) must be edited through EXO, not Graph.
+        Returns $true on success.
+    #>
+    param([string]$GroupId, [string]$GroupName, [string]$UPN)
+    if (-not (Get-Command Remove-DistributionGroupMember -ErrorAction SilentlyContinue)) { return $false }
+    $identity = if ($GroupName) { $GroupName } else { $GroupId }
+    try {
+        Remove-DistributionGroupMember -Identity $identity -Member $UPN -BypassSecurityGroupManagerCheck -Confirm:$false -ErrorAction Stop
+        return $true
+    } catch { return $false }
+}
+
 function Invoke-OffboardRemoveSecurityGroups {
     <#
         Remove the leaver from every pure security group (security-
         enabled, not mail-enabled, not Unified). Audited per group.
+        Pre-skips groups that Graph can't edit (on-prem-synced,
+        dynamic-membership) with a clear reason so the operator
+        doesn't see BadRequest noise.
     #>
     param([Parameter(Mandatory)][string]$UPN, [Parameter(Mandatory)][string]$UserId)
-    $count = 0; $failed = 0
+    $count = 0; $failed = 0; $skipped = 0
     try {
-        $members = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UserId/memberOf?`$select=id,displayName,securityEnabled,mailEnabled,groupTypes" -ErrorAction Stop).value)
-    } catch { Write-ErrorMsg "memberOf enumeration failed: $($_.Exception.Message)"; return @{ Removed=0; Failed=0 } }
+        $members = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UserId/memberOf?`$select=id,displayName,securityEnabled,mailEnabled,groupTypes,membershipRule,onPremisesSyncEnabled" -ErrorAction Stop).value)
+    } catch { Write-ErrorMsg "memberOf enumeration failed: $($_.Exception.Message)"; return @{ Removed=0; Failed=0; Skipped=0 } }
     foreach ($m in $members) {
         if ([string]$m.'@odata.type' -ne '#microsoft.graph.group') { continue }
         $isUnified = ($m.groupTypes -and ($m.groupTypes -contains 'Unified'))
         if (-not $m.securityEnabled -or $m.mailEnabled -or $isUnified) { continue }
+        $why = Test-GroupIsUnmanageable -Group $m
+        if ($why) {
+            Write-Warn ("Skipping '{0}' ({1})." -f $m.displayName, $why)
+            $skipped++
+            continue
+        }
         $ok = Invoke-Action `
             -Description ("Remove {0} from security group '{1}'" -f $UPN, $m.displayName) `
             -ActionType 'RemoveFromGroup' `
@@ -42,30 +84,47 @@ function Invoke-OffboardRemoveSecurityGroups {
             -ReverseDescription ("Re-add {0} to security group '{1}'" -f $UPN, $m.displayName) `
             -Action {
                 try { Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$($m.id)/members/$UserId/`$ref" -ErrorAction Stop | Out-Null; $true }
-                catch { if ($_.Exception.Message -match 'does not exist|not found') { 'missing' } else { throw } }
+                catch {
+                    $em = $_.Exception.Message
+                    if ($em -match 'does not exist|not found') { 'missing' }
+                    elseif ($em -match 'BadRequest|400') {
+                        Write-InfoMsg ("    Hint: '{0}' may be synced from on-prem AD or dynamic. Try managing it in AD." -f $m.displayName)
+                        throw
+                    }
+                    else { throw }
+                }
             }
         if ($ok) { $count++ } else { $failed++ }
     }
-    return @{ Removed = $count; Failed = $failed }
+    return @{ Removed = $count; Failed = $failed; Skipped = $skipped }
 }
 
 function Invoke-OffboardRemoveDistributionLists {
     <#
         Remove from mail-enabled groups that are NOT pure security
         (so DLs + M365 groups that are NOT team-backed; team-backed
-        ones are handled by Step 7). Audited per group.
+        ones are handled by Step 7). Pre-skips on-prem-synced /
+        dynamic groups, and on Graph BadRequest falls back to EXO's
+        Remove-DistributionGroupMember (the right cmdlet for
+        Exchange-managed DLs in hybrid tenants).
     #>
     param([Parameter(Mandatory)][string]$UPN, [Parameter(Mandatory)][string]$UserId)
-    $count = 0; $failed = 0
+    $count = 0; $failed = 0; $skipped = 0
     try {
-        $members = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UserId/memberOf?`$select=id,displayName,securityEnabled,mailEnabled,groupTypes,resourceProvisioningOptions" -ErrorAction Stop).value)
-    } catch { Write-ErrorMsg "memberOf enumeration failed: $($_.Exception.Message)"; return @{ Removed=0; Failed=0 } }
+        $members = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UserId/memberOf?`$select=id,displayName,securityEnabled,mailEnabled,groupTypes,resourceProvisioningOptions,membershipRule,onPremisesSyncEnabled" -ErrorAction Stop).value)
+    } catch { Write-ErrorMsg "memberOf enumeration failed: $($_.Exception.Message)"; return @{ Removed=0; Failed=0; Skipped=0 } }
     foreach ($m in $members) {
         if ([string]$m.'@odata.type' -ne '#microsoft.graph.group') { continue }
         if (-not $m.mailEnabled) { continue }
         $isTeam = $false
         if ($m.resourceProvisioningOptions -and ($m.resourceProvisioningOptions -contains 'Team')) { $isTeam = $true }
         if ($isTeam) { continue }   # Step 7 handles teams
+        $why = Test-GroupIsUnmanageable -Group $m
+        if ($why) {
+            Write-Warn ("Skipping '{0}' ({1})." -f $m.displayName, $why)
+            $skipped++
+            continue
+        }
         $ok = Invoke-Action `
             -Description ("Remove {0} from distribution list / M365 group '{1}'" -f $UPN, $m.displayName) `
             -ActionType 'RemoveFromGroup' `
@@ -74,11 +133,23 @@ function Invoke-OffboardRemoveDistributionLists {
             -ReverseDescription ("Re-add {0} to '{1}'" -f $UPN, $m.displayName) `
             -Action {
                 try { Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$($m.id)/members/$UserId/`$ref" -ErrorAction Stop | Out-Null; $true }
-                catch { if ($_.Exception.Message -match 'does not exist|not found') { 'missing' } else { throw } }
+                catch {
+                    $em = $_.Exception.Message
+                    if ($em -match 'does not exist|not found') { 'missing' }
+                    elseif ($em -match 'BadRequest|400') {
+                        # Most common cause on hybrid tenants: this is an
+                        # Exchange-managed DL, not a cloud-native group.
+                        # Try the EXO cmdlet as a fallback.
+                        Write-InfoMsg ("    Graph rejected '{0}'. Falling back to EXO Remove-DistributionGroupMember..." -f $m.displayName)
+                        if (Remove-DLMemberViaEXO -GroupId $m.id -GroupName $m.displayName -UPN $UPN) { $true }
+                        else { throw }
+                    }
+                    else { throw }
+                }
             }
         if ($ok) { $count++ } else { $failed++ }
     }
-    return @{ Removed = $count; Failed = $failed }
+    return @{ Removed = $count; Failed = $failed; Skipped = $skipped }
 }
 
 function Start-Offboard {
@@ -247,16 +318,20 @@ function Start-Offboard {
     Write-SectionHeader "Step 3 - Remove from Security Groups"
     if (Confirm-Action "Remove $upn from all pure security groups?") {
         $r = Invoke-OffboardRemoveSecurityGroups -UPN $upn -UserId $user.Id
-        Write-Success ("Security groups removed: {0} (failed: {1})" -f $r.Removed, $r.Failed)
+        $sk = if ($r.Skipped) { ", skipped: $($r.Skipped)" } else { '' }
+        Write-Success ("Security groups removed: {0} (failed: {1}{2})" -f $r.Removed, $r.Failed, $sk)
         $summary['Security groups removed'] = $r.Removed
+        if ($r.Skipped -gt 0) { $summary['Security groups skipped (on-prem/dynamic)'] = $r.Skipped }
     }
 
     # ---- Step 4: Remove from distribution lists ----
     Write-SectionHeader "Step 4 - Remove from Distribution Lists"
     if (Confirm-Action "Remove $upn from all DLs / non-team M365 groups?") {
         $r = Invoke-OffboardRemoveDistributionLists -UPN $upn -UserId $user.Id
-        Write-Success ("DL / group memberships removed: {0} (failed: {1})" -f $r.Removed, $r.Failed)
+        $sk = if ($r.Skipped) { ", skipped: $($r.Skipped)" } else { '' }
+        Write-Success ("DL / group memberships removed: {0} (failed: {1}{2})" -f $r.Removed, $r.Failed, $sk)
         $summary['DLs / groups removed'] = $r.Removed
+        if ($r.Skipped -gt 0) { $summary['DLs skipped (on-prem/dynamic)'] = $r.Skipped }
     }
 
     # ---- Step 5: Remove direct license assignments ----
