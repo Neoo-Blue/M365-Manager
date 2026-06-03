@@ -66,6 +66,12 @@ if (-not $ScriptRoot) {
     exit 1
 }
 
+# ---- Repo root is the parent of $ScriptRoot now that .ps1 modules
+# live in app/. Published as a Global so any module can find shared
+# resources (templates/, ai-tools/, samples/, health-checks/).
+$Global:M365RepoRoot = Split-Path -Parent $ScriptRoot
+if (-not (Test-Path $Global:M365RepoRoot)) { $Global:M365RepoRoot = $ScriptRoot }
+
 # ---- Strip Mark-of-the-Web on all .ps1 files in the folder.
 # Files extracted from a downloaded ZIP get a Zone.Identifier NTFS
 # stream that makes PowerShell refuse to dot-source them, even with

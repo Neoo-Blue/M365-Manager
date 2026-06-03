@@ -237,7 +237,9 @@ function Save-GeneratedTemplate {
         }
     }
     if (-not $dir) {
-        $here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        $here = if ($Global:M365RepoRoot) { $Global:M365RepoRoot } `
+                elseif ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } `
+                else { (Get-Location).Path }
         $dir = Join-Path $here 'templates'
     }
     if (-not (Test-Path -LiteralPath $dir)) {

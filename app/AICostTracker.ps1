@@ -44,7 +44,10 @@ function Get-AIPriceTable {
     [CmdletBinding()]
     param([switch]$Reload)
     if ($script:AIPriceTable -and -not $Reload) { return $script:AIPriceTable }
-    $root = if ($PSScriptRoot) { $PSScriptRoot } elseif ($script:ScriptRoot) { $script:ScriptRoot } else { (Get-Location).Path }
+    $root = if ($Global:M365RepoRoot) { $Global:M365RepoRoot } `
+            elseif ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } `
+            elseif ($script:ScriptRoot) { Split-Path -Parent $script:ScriptRoot } `
+            else { (Get-Location).Path }
     $p = Join-Path $root 'templates/ai-prices.json'
     if (-not (Test-Path $p)) {
         Write-Warn "ai-prices.json not found at $p -- cost tracking will record \$0 for every call."

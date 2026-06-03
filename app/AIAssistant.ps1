@@ -4,10 +4,27 @@
 # ============================================================
 
 $script:AIConfigPath = $null
-if ($PSScriptRoot) { $script:AIConfigPath = Join-Path $PSScriptRoot "ai_config.json" }
-elseif ($env:M365ADMIN_ROOT) { $script:AIConfigPath = Join-Path $env:M365ADMIN_ROOT "ai_config.json" }
-elseif ($MyInvocation.MyCommand.Path) { $script:AIConfigPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "ai_config.json" }
-else { $script:AIConfigPath = Join-Path (Get-Location).Path "ai_config.json" }
+# Live config can live at the repo root (next to Launch.bat) OR in
+# app/. Repo root is checked first since it's the natural place for
+# operator-curated config; falls back to app/ for backward
+# compatibility.
+$cfgLocations = @()
+if ($Global:M365RepoRoot) { $cfgLocations += (Join-Path $Global:M365RepoRoot "ai_config.json") }
+if ($PSScriptRoot) {
+    $parent = Split-Path -Parent $PSScriptRoot
+    if ($parent) { $cfgLocations += (Join-Path $parent "ai_config.json") }
+    $cfgLocations += (Join-Path $PSScriptRoot "ai_config.json")
+}
+if ($env:M365ADMIN_ROOT) { $cfgLocations += (Join-Path $env:M365ADMIN_ROOT "ai_config.json") }
+foreach ($p in $cfgLocations) {
+    if (Test-Path -LiteralPath $p) { $script:AIConfigPath = $p; break }
+}
+if (-not $script:AIConfigPath -and $cfgLocations.Count -gt 0) {
+    $script:AIConfigPath = $cfgLocations[0]
+}
+if (-not $script:AIConfigPath) {
+    $script:AIConfigPath = Join-Path (Get-Location).Path "ai_config.json"
+}
 
 # Keep the system prompt SHORT - small models lose track with long prompts
 $script:AISystemPrompt = @"
