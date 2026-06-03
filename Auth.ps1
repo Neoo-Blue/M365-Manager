@@ -542,14 +542,48 @@ function Select-TenantMode {
     # prior tenant's session log.
     if (Get-Command Reset-AuditLogPath -ErrorAction SilentlyContinue) { Reset-AuditLogPath }
 
-    $mode = Show-Menu -Title "Which tenant are you managing?" -Options @(
-        "My own organization (direct admin)",
-        "A customer tenant (GDAP partner access)"
-    ) -BackLabel "Quit"
+    # When the operator has registered tenants (Direct OR Partner),
+    # offer them at the top of the picker. Each profile carries its
+    # own TenantId / primary domain so an MSP can flip between
+    # several "Direct" orgs without manually re-typing tenant IDs.
+    $tenants = @()
+    if (Get-Command Get-Tenants -ErrorAction SilentlyContinue) {
+        try { $tenants = @(Get-Tenants) } catch {}
+    }
+
+    $opts = @()
+    foreach ($t in $tenants) {
+        $kind = if ($t.credentialRef) { 'profile' } else { 'direct' }
+        $hint = if ($t.primaryDomain) { $t.primaryDomain } else { $t.tenantId }
+        $opts += ("{0}  [{1}]  {2}" -f $t.name, $kind, $hint)
+    }
+    $opts += "My own organization (direct admin, no profile)"
+    $opts += "A customer tenant (GDAP partner access)"
+
+    $mode = Show-Menu -Title "Which tenant are you managing?" -Options $opts -BackLabel "Quit"
 
     if ($mode -eq -1) { return $false }
 
-    if ($mode -eq 0) {
+    # Picked one of the registered tenants from the top of the menu.
+    if ($mode -lt $tenants.Count) {
+        $target = $tenants[$mode]
+        if (Get-Command Switch-Tenant -ErrorAction SilentlyContinue) {
+            Switch-Tenant -Name $target.name | Out-Null
+            return $true
+        }
+        # No Switch-Tenant helper loaded: do the minimum so connections target the right place.
+        $script:SessionState.TenantMode   = if ($target.credentialRef) { 'Profile' } else { 'Direct' }
+        $script:SessionState.TenantId     = $target.tenantId
+        $script:SessionState.TenantName   = $target.name
+        $script:SessionState.TenantDomain = $target.primaryDomain
+        Write-Success ("Tenant: {0}" -f $target.name)
+        return $true
+    }
+
+    # Index past the registered tenants -> the two synthetic options.
+    $synthetic = $mode - $tenants.Count
+
+    if ($synthetic -eq 0) {
         $script:SessionState.TenantMode = "Direct"
         $script:SessionState.TenantId   = $null
         $script:SessionState.TenantName = "Own Tenant"
