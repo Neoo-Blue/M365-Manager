@@ -323,6 +323,8 @@ function Start-M365Admin {
             "Tenants...",
             "Incident Response...",
             "Generate Onboarding Templates from Tenant...",
+            "Switch Tenant",
+            "Disconnect All Sessions (Clean)",
             "AI Assistant (Mark)..."
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(98, 99)
 
@@ -363,6 +365,45 @@ function Start-M365Admin {
                 }
             }
             25 {
+                # Quick Switch Tenant: if registered tenants exist, show a
+                # one-step picker; otherwise fall back to the full
+                # Select-TenantMode flow (Reset + Direct/GDAP picker).
+                Write-Host ""
+                $tenants = @()
+                if (Get-Command Get-Tenants -ErrorAction SilentlyContinue) {
+                    try { $tenants = @(Get-Tenants) } catch {}
+                }
+                if ($tenants.Count -gt 0 -and (Get-Command Switch-Tenant -ErrorAction SilentlyContinue)) {
+                    $labels = $tenants | ForEach-Object {
+                        $kind = if ($_.credentialRef) { 'profile' } else { 'direct' }
+                        $dom  = if ($_.primaryDomain) { $_.primaryDomain } else { $_.tenantId }
+                        "{0}  [{1}]  {2}" -f $_.name, $kind, $dom
+                    }
+                    $pick = Show-Menu -Title "Switch Tenant" -Options $labels -BackLabel "Cancel"
+                    if ($pick -ne -1) {
+                        Switch-Tenant -Name $tenants[$pick].name | Out-Null
+                    }
+                } else {
+                    if (Confirm-Action "Disconnect ALL sessions and pick a tenant?") {
+                        Reset-AllSessions
+                        if (-not (Select-TenantMode)) {
+                            Write-Warn "No tenant selected. Defaulting to direct mode."
+                            $script:SessionState.TenantMode = "Direct"
+                            $script:SessionState.TenantName = "Own Tenant"
+                        }
+                    }
+                }
+            }
+            26 {
+                # Disconnect All Sessions (clean state without quitting).
+                Write-Host ""
+                if (Confirm-Action "Disconnect Graph, Exchange Online, SharePoint, and Compliance Center?") {
+                    Reset-AllSessions
+                    Write-Success "Session cleared. Pick Switch Tenant or any flow to reconnect."
+                    Pause-ForUser
+                }
+            }
+            27 {
                 if (Get-Command Start-AIAssistant -ErrorAction SilentlyContinue) {
                     Start-AIAssistant
                 } else {
