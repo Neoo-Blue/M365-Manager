@@ -384,11 +384,20 @@ function Invoke-MgGraphFullRepair {
     Write-Host "       Microsoft.Graph DLLs we have loaded would block the uninstall)." -ForegroundColor White
     Write-Host "    3. The elevated window uninstalls ALL Microsoft.Graph.* modules" -ForegroundColor White
     Write-Host "       and reinstalls Authentication, Users, Users.Actions, Groups," -ForegroundColor White
-    Write-Host "       and Identity.DirectoryManagement at one version." -ForegroundColor White
+    Write-Host "       and Identity.DirectoryManagement PINNED TO ONE KNOWN-GOOD VERSION." -ForegroundColor White
     Write-Host "    4. When the elevated window says Done, double-click Launch.bat" -ForegroundColor White
     Write-Host "       to restart this tool." -ForegroundColor White
     Write-Host ""
-    if (-not (Confirm-Action "Proceed (this M365 Manager session will close)?")) { return }
+    Write-Host "  Why a specific version? Microsoft.Graph 2.37.0 ships a broken" -ForegroundColor Yellow
+    Write-Host "  Authentication.Core.dll (missing GetTokenAsync impl). 2.25.0 is" -ForegroundColor Yellow
+    Write-Host "  the last widely-deployed stable build for Windows PowerShell 5.1." -ForegroundColor Yellow
+    Write-Host ""
+
+    $defaultPin = '2.25.0'
+    $verIn = Read-UserInput ("Pin to Microsoft.Graph version (Enter for {0})" -f $defaultPin)
+    $pinVersion = if ([string]::IsNullOrWhiteSpace($verIn)) { $defaultPin } else { $verIn.Trim() }
+
+    if (-not (Confirm-Action ("Proceed (will install v{0} as AllUsers and CLOSE this session)?" -f $pinVersion))) { return }
 
     $cmds = @(
         "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
@@ -397,15 +406,15 @@ function Invoke-MgGraphFullRepair {
         "Start-Sleep -Seconds 3",
         "if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -Force -ForceBootstrap | Out-Null }",
         "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue",
-        "Write-Host 'Uninstalling existing Microsoft.Graph.* modules...' -ForegroundColor Yellow",
+        "Write-Host 'Uninstalling EVERY installed version of Microsoft.Graph.* ...' -ForegroundColor Yellow",
         "Get-Module Microsoft.Graph.* -ListAvailable | Uninstall-Module -AllVersions -Force -ErrorAction SilentlyContinue",
-        "Write-Host 'Installing coherent set...' -ForegroundColor Yellow",
-        "Install-Module Microsoft.Graph.Authentication              -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
-        "Install-Module Microsoft.Graph.Users                       -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
-        "Install-Module Microsoft.Graph.Users.Actions               -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
-        "Install-Module Microsoft.Graph.Groups                      -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
-        "Install-Module Microsoft.Graph.Identity.DirectoryManagement -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
-        "Write-Host ''; Write-Host 'Done. Double-click Launch.bat (or run it from the M365-Manager folder) to restart.' -ForegroundColor Green",
+        "Write-Host ('Installing Microsoft.Graph.* v' + '$pinVersion' + ' AllUsers...') -ForegroundColor Yellow",
+        "Install-Module Microsoft.Graph.Authentication              -RequiredVersion $pinVersion -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Users                       -RequiredVersion $pinVersion -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Users.Actions               -RequiredVersion $pinVersion -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Groups                      -RequiredVersion $pinVersion -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Install-Module Microsoft.Graph.Identity.DirectoryManagement -RequiredVersion $pinVersion -Scope AllUsers -Force -AllowClobber -SkipPublisherCheck -ErrorAction Continue",
+        "Write-Host ''; Write-Host ('Done. All Microsoft.Graph.* pinned to v' + '$pinVersion' + '. Double-click Launch.bat to restart.') -ForegroundColor Green",
         "Read-Host 'Press Enter to close this window'"
     ) -join '; '
 
@@ -580,7 +589,17 @@ function Assert-ModulesInstalled {
                     Import-Module $modName -ErrorAction Stop -Force
                     Write-Success "$modName v$($installed.Version) loaded (retry)."
                 } catch {
-                    Write-ErrorMsg "Failed to import $modName : $_"
+                    $emsg = "$_"
+                    Write-ErrorMsg "Failed to import $modName : $emsg"
+                    if ($emsg -match "GetTokenAsync.*does not have an implementation") {
+                        Write-Warn "  This is the known Microsoft.Graph 2.37.0 'GetTokenAsync' bug."
+                        Write-Host "  Run option 98 from the main menu and accept the default pin (2.25.0)" -ForegroundColor Yellow
+                        Write-Host "  to wipe every Microsoft.Graph.* and install a working version." -ForegroundColor Yellow
+                    }
+                    elseif ($emsg -match 'Could not load file or assembly.*Microsoft\.Graph') {
+                        Write-Warn "  Mixed Microsoft.Graph versions on disk -- the new sibling is looking for"
+                        Write-Host "  an old .Core that's not installed. Option 98 will reset to one version." -ForegroundColor Yellow
+                    }
                     $allGood = $false
                     [void]$smokeResults.Add([PSCustomObject]@{ Module = $modName; Ok = $false; Reason = "import failed" })
                     continue
