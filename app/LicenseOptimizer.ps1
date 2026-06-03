@@ -26,8 +26,9 @@ $script:LicenseFamilies = @{
 
 function Get-LicensePrices {
     $base = $null
-    if ($PSScriptRoot) { $base = $PSScriptRoot }
-    elseif ($env:M365ADMIN_ROOT) { $base = $env:M365ADMIN_ROOT }
+    if ($Global:M365RepoRoot) { $base = $Global:M365RepoRoot }
+    elseif ($PSScriptRoot) { $base = Split-Path -Parent $PSScriptRoot }
+    elseif ($env:M365ADMIN_ROOT) { $base = Split-Path -Parent $env:M365ADMIN_ROOT }
     else { $base = (Get-Location).Path }
     $path = Join-Path $base 'templates/license-prices.json'
     if (-not (Test-Path -LiteralPath $path)) { return @{} }

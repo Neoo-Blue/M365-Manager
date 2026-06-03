@@ -21,8 +21,22 @@ $script:AIToolingDeprecationWarned = $false
 # ============================================================
 
 function Get-AIToolsDirectory {
-    if ($PSScriptRoot) { return Join-Path $PSScriptRoot 'ai-tools' }
-    if ($env:M365ADMIN_ROOT) { return Join-Path $env:M365ADMIN_ROOT 'ai-tools' }
+    if ($Global:M365RepoRoot) { return Join-Path $Global:M365RepoRoot 'ai-tools' }
+    if ($PSScriptRoot) {
+        # app/.. = repo root when ai-tools sits at the root.
+        $parent = Split-Path -Parent $PSScriptRoot
+        if ($parent -and (Test-Path -LiteralPath (Join-Path $parent 'ai-tools'))) {
+            return (Join-Path $parent 'ai-tools')
+        }
+        return (Join-Path $PSScriptRoot 'ai-tools')
+    }
+    if ($env:M365ADMIN_ROOT) {
+        $parent = Split-Path -Parent $env:M365ADMIN_ROOT
+        if ($parent -and (Test-Path -LiteralPath (Join-Path $parent 'ai-tools'))) {
+            return (Join-Path $parent 'ai-tools')
+        }
+        return (Join-Path $env:M365ADMIN_ROOT 'ai-tools')
+    }
     return Join-Path (Get-Location).Path 'ai-tools'
 }
 

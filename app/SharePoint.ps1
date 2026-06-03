@@ -272,8 +272,11 @@ function Get-SiteTemplate {
     $tplDir = $null
     if (Get-Variable -Name TemplatesRoot -Scope Script -ErrorAction SilentlyContinue) { $tplDir = $script:TemplatesRoot }
     if (-not $tplDir) {
-        # Best-guess fallback to <module root>/templates
-        $here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        # Best-guess fallback to <repo root>/templates (one level up
+        # from app/, where the .ps1 modules live).
+        $here = if ($Global:M365RepoRoot) { $Global:M365RepoRoot } `
+                elseif ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } `
+                else { (Get-Location).Path }
         $tplDir = Join-Path $here 'templates'
     }
     $path = Join-Path $tplDir ("site-{0}.json" -f $key)

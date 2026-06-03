@@ -210,7 +210,9 @@ function New-ScheduledHealthCheck {
     $spec = ConvertTo-ScheduleSpec -Schedule $Schedule
     if (-not $spec) { Write-ErrorMsg "Unrecognized schedule '$Schedule'. Try: 'Daily 09:00', 'Weekly Mon 09:00', 'Monthly 1 09:00', 'Hourly', or 'cron <expr>'."; return $false }
 
-    $repoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $repoRoot = if ($Global:M365RepoRoot) { $Global:M365RepoRoot } `
+                elseif ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } `
+                else { (Get-Location).Path }
     $scriptAbs = Join-Path $repoRoot $Script
     if (-not (Test-Path -LiteralPath $scriptAbs)) { Write-ErrorMsg "Script not found: $scriptAbs"; return $false }
 
@@ -290,7 +292,9 @@ function Test-ScheduledHealthCheck {
     $state = Read-SchedulerState
     $rec = $state | Where-Object { $_.name -eq $Name } | Select-Object -First 1
     if (-not $rec) { Write-ErrorMsg "No scheduled check named '$Name'."; return $null }
-    $repoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $repoRoot = if ($Global:M365RepoRoot) { $Global:M365RepoRoot } `
+                elseif ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } `
+                else { (Get-Location).Path }
     $scriptAbs = Join-Path $repoRoot $rec.script
     if (-not (Test-Path -LiteralPath $scriptAbs)) { Write-ErrorMsg "Script missing: $scriptAbs"; return $null }
     Write-InfoMsg "Running '$Name' in-process (non-interactive)..."

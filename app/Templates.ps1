@@ -8,16 +8,36 @@
 #  available.
 # ============================================================
 
-$script:TemplatesRoot = $null
-if ($PSScriptRoot) {
-    $script:TemplatesRoot = Join-Path $PSScriptRoot 'templates'
-} elseif ($env:M365ADMIN_ROOT) {
-    $script:TemplatesRoot = Join-Path $env:M365ADMIN_ROOT 'templates'
-} elseif ($MyInvocation.MyCommand.Path) {
-    $script:TemplatesRoot = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'templates'
-} else {
-    $script:TemplatesRoot = Join-Path (Get-Location).Path 'templates'
+# templates/ now lives one level up from app/ (where the .ps1 files
+# are). Prefer $Global:M365RepoRoot when Main.ps1 has set it;
+# otherwise walk one level up from $PSScriptRoot and prefer that
+# location when it contains a templates/ folder. Falls back to the
+# legacy in-folder lookup so dot-sourcing this in isolation (tests)
+# still resolves.
+function Get-DefaultTemplatesRoot {
+    if ($Global:M365RepoRoot) {
+        $cand = Join-Path $Global:M365RepoRoot 'templates'
+        if (Test-Path -LiteralPath $cand) { return $cand }
+    }
+    if ($PSScriptRoot) {
+        $parent = Split-Path -Parent $PSScriptRoot
+        if ($parent) {
+            $cand = Join-Path $parent 'templates'
+            if (Test-Path -LiteralPath $cand) { return $cand }
+        }
+        return (Join-Path $PSScriptRoot 'templates')
+    }
+    if ($env:M365ADMIN_ROOT) {
+        $parent = Split-Path -Parent $env:M365ADMIN_ROOT
+        if ($parent) {
+            $cand = Join-Path $parent 'templates'
+            if (Test-Path -LiteralPath $cand) { return $cand }
+        }
+        return (Join-Path $env:M365ADMIN_ROOT 'templates')
+    }
+    return (Join-Path (Get-Location).Path 'templates')
 }
+$script:TemplatesRoot = Get-DefaultTemplatesRoot
 
 $script:TemplateRequiredFields = @('name', 'description', 'usageLocation')
 $script:TemplateValidAccess    = @('Full', 'SendAs', 'FullSendAs')

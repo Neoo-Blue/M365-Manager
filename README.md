@@ -27,6 +27,21 @@ A modular PowerShell TUI for Microsoft 365 administration. Blue background, mult
 git clone https://github.com/Neoo-Blue/M365-Manager.git ; cd M365-Manager ; .\Launch.bat
 ```
 
+## Repo layout
+
+```
+M365-Manager/
+├── Launch.bat         ← double-click here
+├── Build.bat          ← optional: compile to EXE
+├── README.md
+├── app/               ← every .ps1 module + tests live here
+├── templates/         ← role-*.json + site-*.json + price data
+├── samples/           ← example CSVs, .txt prompts, config examples
+├── docs/              ← guides, reference, playbooks
+├── ai-tools/          ← AI tool catalog
+└── health-checks/     ← scheduled-task scripts
+```
+
 Full prerequisites, module install, and first-run walkthrough: **[`docs/getting-started/installation.md`](docs/getting-started/installation.md)**
 
 ## Take a 10-minute tour
@@ -73,7 +88,7 @@ The master TOC lives at **[`docs/README.md`](docs/README.md)**.
 ## Tests
 
 ```powershell
-Invoke-Pester ./tests/
+Invoke-Pester ./app/tests/
 ```
 
 224 tests across 22 suites. No live Graph / EXO / SPO calls — every assertion uses canned data or mocked SDK calls. See [`docs/developer/testing.md`](docs/developer/testing.md).

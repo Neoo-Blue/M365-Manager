@@ -208,7 +208,9 @@ $rowsHtml
 # ============================================================
 
 function Get-TabletopScenariosDir {
-    $root = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $root = if ($Global:M365RepoRoot) { $Global:M365RepoRoot } `
+            elseif ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } `
+            else { (Get-Location).Path }
     return Join-Path $root 'templates/tabletop-scenarios'
 }
 
