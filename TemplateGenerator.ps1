@@ -212,9 +212,14 @@ function New-TemplateFromCluster {
 
 function Save-GeneratedTemplate {
     <#
-        Write a template object to templates/role-<slug>.json. If the
-        file exists, append "-N" until we find a free name (we never
-        silently overwrite operator-curated templates).
+        Write a template object to templates/[<tenant-slug>/]role-<slug>.json.
+        When a tenant context is active (Get-TenantTemplatesRoot returns
+        non-null) the file goes into that per-tenant folder so MSPs
+        running multiple Direct tenants don't pollute each other's
+        templates. Falls back to the global templates/ root otherwise.
+
+        If the file exists, append "-N" until we find a free name
+        (we never silently overwrite operator-curated templates).
         Returns the path written, or $null on failure.
     #>
     param(
@@ -223,8 +228,13 @@ function Save-GeneratedTemplate {
         [switch]$Overwrite
     )
     $dir = $null
-    if (Get-Variable -Name TemplatesRoot -Scope Script -ErrorAction SilentlyContinue) {
-        $dir = $script:TemplatesRoot
+    if (Get-Command Get-TenantTemplatesRoot -ErrorAction SilentlyContinue) {
+        $dir = Get-TenantTemplatesRoot
+    }
+    if (-not $dir) {
+        if (Get-Variable -Name TemplatesRoot -Scope Script -ErrorAction SilentlyContinue) {
+            $dir = $script:TemplatesRoot
+        }
     }
     if (-not $dir) {
         $here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }

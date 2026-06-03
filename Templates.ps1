@@ -47,15 +47,66 @@ function ConvertTo-TemplateHashtable {
     return $Object
 }
 
+function ConvertTo-TenantFolderSlug {
+    <#
+        Filesystem-safe slug for a tenant key. Used to build the
+        per-tenant template folder name. Idempotent.
+    #>
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
+    $s = $Text.ToLowerInvariant()
+    $s = $s -replace '[^a-z0-9]+', '-'
+    return $s.Trim('-')
+}
+
+function Get-TenantTemplatesRoot {
+    <#
+        Returns the per-tenant template folder path for the active
+        SessionState, or $null when there's no tenant context (e.g.
+        a fresh Direct session that never picked a registered
+        profile). Folder is templates/<tenant-slug>/.
+        Tenant key preference: TenantDomain -> TenantName -> TenantId.
+    #>
+    if (-not (Get-Variable -Name SessionState -Scope Script -ErrorAction SilentlyContinue)) { return $null }
+    $key = $null
+    if ($script:SessionState.TenantDomain) { $key = $script:SessionState.TenantDomain }
+    elseif ($script:SessionState.TenantName -and $script:SessionState.TenantName -ne 'Own Tenant') { $key = $script:SessionState.TenantName }
+    elseif ($script:SessionState.TenantId) { $key = $script:SessionState.TenantId }
+    if (-not $key) { return $null }
+    $slug = ConvertTo-TenantFolderSlug -Text $key
+    if (-not $slug) { return $null }
+    return Join-Path $script:TemplatesRoot $slug
+}
+
+function Get-TemplateSearchRoots {
+    <#
+        Ordered list of directories to look at for role-*.json. The
+        per-tenant folder wins on name collisions (looked at first),
+        and templates/ acts as the shared fallback.
+    #>
+    $roots = @()
+    $tenantDir = Get-TenantTemplatesRoot
+    if ($tenantDir -and (Test-Path -LiteralPath $tenantDir)) { $roots += $tenantDir }
+    if ($script:TemplatesRoot -and (Test-Path -LiteralPath $script:TemplatesRoot)) { $roots += $script:TemplatesRoot }
+    return ,$roots
+}
+
 function Get-OnboardTemplates {
     <#
         Returns an array of PSCustomObjects describing every valid
-        role-*.json template found under templates/. Malformed files
+        role-*.json template found under tenant-scoped + global
+        roots. Templates in the tenant-scoped folder override
+        same-name templates in the global folder. Malformed files
         are warned about and skipped, not throw.
     #>
-    if (-not (Test-Path -LiteralPath $script:TemplatesRoot)) { return @() }
-    $files = @(Get-ChildItem -LiteralPath $script:TemplatesRoot -Filter 'role-*.json' -File -ErrorAction SilentlyContinue)
+    $roots = @(Get-TemplateSearchRoots)
+    if ($roots.Count -eq 0) { return @() }
+    $seen = @{}    # key -> $true so first-seen wins (tenant root is first)
     $list = @()
+    $files = @()
+    foreach ($r in $roots) {
+        $files += @(Get-ChildItem -LiteralPath $r -Filter 'role-*.json' -File -ErrorAction SilentlyContinue)
+    }
     foreach ($f in ($files | Sort-Object Name)) {
         try {
             $raw = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -68,6 +119,12 @@ function Get-OnboardTemplates {
                 continue
             }
             $key = [System.IO.Path]::GetFileNameWithoutExtension($f.Name).Substring(5)  # strip "role-"
+            # Tenant-scoped templates appear first in $files; honor the
+            # first-seen-wins rule so a per-tenant role-engineer.json
+            # overrides the global one without showing both.
+            $dedupKey = $key.ToLowerInvariant()
+            if ($seen.ContainsKey($dedupKey)) { continue }
+            $seen[$dedupKey] = $true
             $list += [PSCustomObject]@{
                 Key         = $key
                 Name        = $raw.name
@@ -84,15 +141,21 @@ function Get-OnboardTemplates {
 function Get-OnboardTemplate {
     <#
         Load and schema-validate a single template by key (file basename
-        without the "role-" prefix and ".json" extension). Returns a
-        hashtable with all template fields populated to safe defaults.
+        without the "role-" prefix and ".json" extension). Looks in the
+        tenant-scoped folder first, then the global one.
+        Returns a hashtable with all template fields populated to
+        safe defaults.
     #>
     param([Parameter(Mandatory)][string]$Key)
 
     $k = ($Key -replace '\.json$', '').ToLowerInvariant() -replace '^role-', ''
-    $path = Join-Path $script:TemplatesRoot ("role-{0}.json" -f $k)
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "Template 'role-$k' not found at $path"
+    $path = $null
+    foreach ($r in @(Get-TemplateSearchRoots)) {
+        $candidate = Join-Path $r ("role-{0}.json" -f $k)
+        if (Test-Path -LiteralPath $candidate) { $path = $candidate; break }
+    }
+    if (-not $path) {
+        throw "Template 'role-$k' not found in tenant or global templates folder."
     }
     $raw = $null
     try { $raw = Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
