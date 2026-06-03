@@ -66,7 +66,8 @@ function Start-Onboard {
     }
 
     if ($choice -eq 0) {
-        $filePath = Read-UserInput "Enter full path to the text file"
+        $filePath = Read-UserInputOrCancel "Enter full path to the text file"
+        if (-not $filePath) { Write-InfoMsg "Cancelled."; return }
         if (-not (Test-Path $filePath)) { Write-ErrorMsg "File not found: $filePath"; Pause-ForUser; return }
         Write-InfoMsg "Parsing file..."
         $lines = Get-Content $filePath
