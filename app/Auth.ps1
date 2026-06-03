@@ -500,12 +500,58 @@ function Assert-ModulesInstalled {
     if ($coherence.Count -gt 0) {
         Write-Warn "Microsoft.Graph submodule version mismatch detected:"
         foreach ($l in $coherence) { Write-Host "    $l" -ForegroundColor Yellow }
-        $ans = Read-UserInput "Reinstall all Microsoft.Graph.* siblings to a single version now? (Y/n)"
-        if ($ans -notmatch '^[Nn]') {
-            $graphNames = @($requiredModules | Where-Object { $_.Name -like 'Microsoft.Graph.*' } | ForEach-Object { $_.Name })
-            Repair-MgGraphSiblings -Names $graphNames
+
+        # Decide whether the inline (CurrentUser-scope) repair has any
+        # chance of succeeding. It DOES NOT when:
+        #   - A known-bad release is in play (v2.37.0 etc.) -- the only
+        #     cure is uninstalling EVERY copy across all scopes and
+        #     reinstalling the baseline, which needs admin.
+        #   - Any non-target version is installed AllUsers-scope --
+        #     Uninstall-Module requires admin to touch those.
+        # In either case, run option 98 (Invoke-MgGraphFullRepair) right
+        # here instead of attempting an inline repair that will spit out
+        # "Cannot uninstall ... without elevation" for every entry.
+        $hasKnownBad   = $false
+        $needsAllUsers = $false
+        foreach ($l in $coherence) { if ($l -match 'known-broken') { $hasKnownBad = $true } }
+        $graphMods = @(Get-Module -ListAvailable -Name 'Microsoft.Graph.*' |
+                       Where-Object { $_.Name -ne 'Microsoft.Graph' -and [string]$_.Version -ne $script:MgGraphBaselineVersion })
+        foreach ($m in $graphMods) {
+            $path = [string]$m.ModuleBase
+            if ($path -match '\\Program Files\\' -or $path -match '/usr/' -or $path -match '\\WindowsPowerShell\\Modules\\') {
+                $needsAllUsers = $true; break
+            }
+        }
+
+        if ($hasKnownBad -or $needsAllUsers) {
+            Write-Host ""
+            Write-Warn "Inline repair cannot fix this state (broken release on disk and/or AllUsers-scope copies)."
+            Write-Host "  This needs the elevated repair (option 98) which:" -ForegroundColor Yellow
+            Write-Host "    1. Spawns an admin PowerShell window." -ForegroundColor White
+            Write-Host "    2. Closes this M365 Manager session (DLL locks must release)." -ForegroundColor White
+            Write-Host "    3. Wipes every Microsoft.Graph.* version and installs v$($script:MgGraphBaselineVersion)." -ForegroundColor White
+            Write-Host "    4. You re-launch via Launch.bat afterwards." -ForegroundColor White
+            Write-Host ""
+            $ans = Read-UserInput "Run the elevated repair now? (Y/n)"
+            if ($ans -notmatch '^[Nn]') {
+                if (Get-Command Invoke-MgGraphFullRepair -ErrorAction SilentlyContinue) {
+                    Invoke-MgGraphFullRepair
+                    # Invoke-MgGraphFullRepair calls [Environment]::Exit, so we
+                    # never reach this line. Defensive return just in case.
+                    return $false
+                }
+                Write-Warn "Repair helper not loaded; type 98 at the main menu after this session."
+            } else {
+                Write-Warn "Skipping elevated repair. Imports below will fail; recover by typing 98 at the main menu."
+            }
         } else {
-            Write-Warn "Continuing with mismatched versions; import may fail."
+            $ans = Read-UserInput "Reinstall all Microsoft.Graph.* siblings to a single version now? (Y/n)"
+            if ($ans -notmatch '^[Nn]') {
+                $graphNames = @($requiredModules | Where-Object { $_.Name -like 'Microsoft.Graph.*' } | ForEach-Object { $_.Name })
+                Repair-MgGraphSiblings -Names $graphNames
+            } else {
+                Write-Warn "Continuing with mismatched versions; import may fail."
+            }
         }
     }
 
@@ -554,6 +600,10 @@ function Assert-ModulesInstalled {
 
     $allGood = $true
     $smokeResults = New-Object System.Collections.ArrayList
+    # Per-call latch so the GetTokenAsync / assembly-load remediation
+    # text only prints ONCE instead of repeating for every Microsoft.Graph
+    # sibling import failure.
+    $importHintShown = $false
 
     foreach ($mod in $requiredModules) {
         $modName  = $mod.Name
@@ -615,15 +665,21 @@ function Assert-ModulesInstalled {
                     Write-Success "$modName v$($installed.Version) loaded (retry)."
                 } catch {
                     $emsg = "$_"
-                    Write-ErrorMsg "Failed to import $modName : $emsg"
-                    if ($emsg -match "GetTokenAsync.*does not have an implementation") {
-                        Write-Warn "  This is the known Microsoft.Graph 2.37.0 'GetTokenAsync' bug."
-                        Write-Host "  Run option 98 from the main menu and accept the default pin (2.25.0)" -ForegroundColor Yellow
-                        Write-Host "  to wipe every Microsoft.Graph.* and install a working version." -ForegroundColor Yellow
-                    }
-                    elseif ($emsg -match 'Could not load file or assembly.*Microsoft\.Graph') {
-                        Write-Warn "  Mixed Microsoft.Graph versions on disk -- the new sibling is looking for"
-                        Write-Host "  an old .Core that's not installed. Option 98 will reset to one version." -ForegroundColor Yellow
+                    if ($importHintShown) {
+                        Write-ErrorMsg "Failed to import $modName (same root cause as above)."
+                    } else {
+                        Write-ErrorMsg "Failed to import $modName : $emsg"
+                        if ($emsg -match "GetTokenAsync.*does not have an implementation") {
+                            Write-Warn "  This is the known Microsoft.Graph 2.37.0 'GetTokenAsync' bug."
+                            Write-Host "  Run option 98 from the main menu and accept the default pin (v$($script:MgGraphBaselineVersion))" -ForegroundColor Yellow
+                            Write-Host "  to wipe every Microsoft.Graph.* and install a working version." -ForegroundColor Yellow
+                            $importHintShown = $true
+                        }
+                        elseif ($emsg -match 'Could not load file or assembly.*Microsoft\.Graph') {
+                            Write-Warn "  Mixed Microsoft.Graph versions on disk -- the new sibling is looking for"
+                            Write-Host "  an old .Core that's not installed. Option 98 will reset to one version." -ForegroundColor Yellow
+                            $importHintShown = $true
+                        }
                     }
                     $allGood = $false
                     [void]$smokeResults.Add([PSCustomObject]@{ Module = $modName; Ok = $false; Reason = "import failed" })
@@ -656,6 +712,20 @@ function Assert-ModulesInstalled {
 
     if (-not $allGood) {
         Write-ErrorMsg "Some required modules have issues. The tool may not work correctly."
+        # If Microsoft.Graph imports failed, offer the elevated repair
+        # right here rather than making the operator navigate to the
+        # main menu and type 98.
+        $graphFailed = @($smokeResults | Where-Object { -not $_.Ok -and $_.Module -like 'Microsoft.Graph.*' })
+        if ($graphFailed.Count -gt 0 -and (Get-Command Invoke-MgGraphFullRepair -ErrorAction SilentlyContinue)) {
+            Write-Host ""
+            $ans = Read-UserInput "Run the elevated Microsoft.Graph repair NOW? (Y/n)"
+            if ($ans -notmatch '^[Nn]') {
+                Invoke-MgGraphFullRepair
+                # Should not return; Invoke-MgGraphFullRepair exits the
+                # process. Defensive false-return in case it didn't.
+                return $false
+            }
+        }
         Write-InfoMsg "Try closing PowerShell, reopening, and running again."
         Write-Host ""
         $cont = Read-UserInput "Continue anyway? (y/n)"
