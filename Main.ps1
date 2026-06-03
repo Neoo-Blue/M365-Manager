@@ -311,7 +311,6 @@ function Start-M365Admin {
             "Reporting",
             "eDiscovery",
             "Bulk Onboard from CSV...",
-            "Generate Onboarding Templates from Tenant...",
             "Bulk Offboard from CSV...",
             "Audit & Reporting...",
             "MFA & Authentication...",
@@ -323,6 +322,7 @@ function Start-M365Admin {
             "Scheduled Health Checks...",
             "Tenants...",
             "Incident Response...",
+            "Generate Onboarding Templates from Tenant...",
             "AI Assistant (Mark)..."
         ) -BackLabel "Quit and Disconnect" -HiddenOptions @(98, 99)
 
@@ -340,28 +340,28 @@ function Start-M365Admin {
             10 { Start-ReportingMenu }
             11 { Start-eDiscoveryMenu }
             12 { Start-BulkOnboard }
-            13 {
-                if (Get-Command Start-TemplateGeneratorMenu -ErrorAction SilentlyContinue) {
-                    Start-TemplateGeneratorMenu
-                } else {
-                    Write-Warn "Template Generator module not loaded."
-                }
-            }
-            14 { Start-BulkOffboard }
-            15 { Start-AuditReportingMenu }
-            16 { Start-MFAMenu }
-            17 { Start-TeamsMenu }
-            18 { Start-SharePointMenu }
-            19 {
+            13 { Start-BulkOffboard }
+            14 { Start-AuditReportingMenu }
+            15 { Start-MFAMenu }
+            16 { Start-TeamsMenu }
+            17 { Start-SharePointMenu }
+            18 {
                 if (Get-Command Start-OneDriveManagerMenu -ErrorAction SilentlyContinue) {
                     Start-OneDriveManagerMenu
                 } else {
                     Write-Warn "OneDrive manager not loaded."
                 }
             }
-            20 { Start-GuestUsersMenu }
-            21 { Start-LicenseOptimizerMenu }
-            22 { Start-SchedulerMenu }
+            19 { Start-GuestUsersMenu }
+            20 { Start-LicenseOptimizerMenu }
+            21 { Start-SchedulerMenu }
+            24 {
+                if (Get-Command Start-TemplateGeneratorMenu -ErrorAction SilentlyContinue) {
+                    Start-TemplateGeneratorMenu
+                } else {
+                    Write-Warn "Template Generator module not loaded."
+                }
+            }
             25 {
                 if (Get-Command Start-AIAssistant -ErrorAction SilentlyContinue) {
                     Start-AIAssistant
@@ -377,7 +377,7 @@ function Start-M365Admin {
                 }
             }
             99 { Start-AIAssistant }
-            23 {
+            22 {
                 # Phase 6: Tenants submenu drives switch / register / edit /
                 # remove / dashboard. Legacy "Switch Tenant" path falls back
                 # to Select-TenantMode when the registry is empty.
@@ -395,7 +395,7 @@ function Start-M365Admin {
                     }
                 }
             }
-            24 {
+            23 {
                 if (Get-Command Start-IncidentResponseMenu -ErrorAction SilentlyContinue) {
                     Start-IncidentResponseMenu
                 } else {
