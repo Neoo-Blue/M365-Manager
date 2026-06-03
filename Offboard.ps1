@@ -411,8 +411,7 @@ function Start-Offboard {
                 $opts += "[NO SEATS] Assign Exchange Online Plan 2 -- not available, skip"
             }
             $opts += "Keep current license + USER mailbox (skip Step 5 + Step 6)"
-            $opts += "Convert to shared anyway (mailbox stays >50 GB; new mail may bounce)"
-            $opts += "Proceed normally (remove licenses, convert; accept the risk)"
+            $opts += "Convert to shared anyway (50 GB cap; new mail above the cap may bounce)"
 
             $choice = Show-Menu -Title ("Strategy for {0} GB mailbox" -f $sizeGB) -Options $opts -BackLabel "Skip both Step 5 and Step 6"
             switch ($choice) {
@@ -420,7 +419,6 @@ function Start-Offboard {
                 0  { if ($p2Sku) { $strategy = 'AssignP2' } else { Write-Warn "No P2 seats available; skipping both steps."; $strategy = 'SkipBoth' } }
                 1  { $strategy = 'KeepLicensed' }
                 2  { $strategy = 'ConvertAnyway' }
-                3  { $strategy = 'Default' }
             }
             $summary['Mailbox size (GB)']   = $sizeGB
             $summary['Mailbox strategy']    = $strategy
