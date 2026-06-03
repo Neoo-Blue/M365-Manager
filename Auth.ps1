@@ -188,8 +188,12 @@ function Test-MgGraphVersionCoherence {
 
 function Repair-MgGraphSiblings {
     <#
-        Reinstall every Microsoft.Graph.* sibling we use, pinned to the
-        same -RequiredVersion (the newest currently on disk).
+        Bring every Microsoft.Graph.* sibling we use to the same
+        version, AND uninstall the older copies that are still on
+        disk. Without the uninstall step, Install-Module just lays
+        the new version next to the old one, so the next startup
+        coherence check keeps flagging "Multiple installed versions
+        of the same Microsoft.Graph.* module(s)".
 
         IMPORTANT: an in-process Install-Module CANNOT replace a sibling
         whose DLLs are already loaded into this session. If we detect
@@ -197,6 +201,9 @@ function Repair-MgGraphSiblings {
         in-place repair and steer the operator to Invoke-MgGraphFullRepair
         (hidden main-menu option 98) which spawns an elevated, fresh
         PowerShell where nothing is loaded yet.
+
+        Uninstalling AllUsers-scoped modules requires admin. When we
+        hit that, we surface a clear message pointing at option 98.
     #>
     param([string[]]$Names)
     $loaded = @(Get-Module -Name 'Microsoft.Graph.*' | Where-Object { $_.Name -ne 'Microsoft.Graph' })
@@ -220,9 +227,45 @@ function Repair-MgGraphSiblings {
     }
     $target = $authMod.Version
     Write-InfoMsg "Aligning Microsoft.Graph.* siblings to v$target..."
+
+    # ---- Pass 1: uninstall every non-target version on disk ----
+    $needElevation = $false
+    foreach ($n in $Names) {
+        $olds = @(Get-Module -ListAvailable -Name $n | Where-Object { $_.Version -ne $target })
+        foreach ($o in $olds) {
+            try {
+                Uninstall-Module -Name $n -RequiredVersion $o.Version -Force -ErrorAction Stop
+                Write-Success "  Uninstalled $n v$($o.Version)"
+            } catch {
+                $msg = "$_"
+                if ($msg -match 'Administrator|elevation|Access.*denied|Unauthorized') {
+                    Write-Warn "  Cannot uninstall $n v$($o.Version) without elevation (likely AllUsers scope)."
+                    $needElevation = $true
+                } else {
+                    Write-Warn "  Uninstall $n v$($o.Version) failed: $msg"
+                }
+            }
+        }
+    }
+
+    if ($needElevation) {
+        Write-Host ""
+        Write-Warn "Old Microsoft.Graph.* versions are installed AllUsers-scope and need admin to remove."
+        Write-Host "  At the main menu, type " -NoNewline -ForegroundColor Yellow
+        Write-Host "98" -NoNewline -ForegroundColor Cyan
+        Write-Host " to run the elevated uninstall + reinstall." -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
+    # ---- Pass 2: install target version where missing ----
     $inUseCount = 0
     foreach ($n in $Names) {
-        $beforeWarn = $Error.Count
+        $haveTarget = Get-Module -ListAvailable -Name $n | Where-Object { $_.Version -eq $target }
+        if ($haveTarget) {
+            Write-InfoMsg "  $n v$target already installed."
+            continue
+        }
         $warned = $null
         try {
             Install-Module $n -RequiredVersion $target -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -WarningVariable warned -ErrorAction Stop
@@ -234,6 +277,16 @@ function Repair-MgGraphSiblings {
             if ($emsg -match 'in use|currently in use') { $inUseCount++ }
         }
     }
+
+    # ---- Pass 3: re-check coherence and report ----
+    $stillDrifted = Test-MgGraphVersionCoherence
+    if ($stillDrifted.Count -eq 0) {
+        Write-Success "Microsoft.Graph.* siblings are now coherent at v$target."
+    } else {
+        Write-Warn "Coherence check still reports issues:"
+        foreach ($l in $stillDrifted) { Write-Host "    $l" -ForegroundColor Yellow }
+    }
+
     if ($inUseCount -gt 0) {
         Write-Host ""
         Write-Warn ("{0} module(s) reported 'currently in use'. This is NOT a failure --" -f $inUseCount)
