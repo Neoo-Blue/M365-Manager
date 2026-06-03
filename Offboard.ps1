@@ -73,6 +73,31 @@ function Get-AvailableExchangeP2 {
     return $null
 }
 
+function Test-LicenseHasExchange {
+    <#
+        True when an MgUserLicenseDetail entry includes a non-disabled
+        Exchange Online service plan. Lets us tell mailbox-bearing
+        licenses (M365 E3/E5, Business Premium, EXO Plan 1/2, etc)
+        apart from add-ons (Power BI, Visio, Defender, etc) by ACTUAL
+        contents rather than a fragile SKU allowlist.
+
+        Exchange service plan IDs all start with "EXCHANGE_S_" --
+        EXCHANGE_S_STANDARD, EXCHANGE_S_ENTERPRISE, EXCHANGE_S_DESKLESS, etc.
+    #>
+    param([Parameter(Mandatory)]$LicenseDetail)
+    foreach ($sp in @($LicenseDetail.ServicePlans)) {
+        $name = [string]$sp.ServicePlanName
+        if (-not $name) { continue }
+        if ($name -notlike 'EXCHANGE_S_*') { continue }
+        # Skip disabled plans (provisioningStatus = "Disabled" means the
+        # admin turned this service plan off inside the SKU).
+        $status = [string]$sp.ProvisioningStatus
+        if ($status -eq 'Disabled') { continue }
+        return $true
+    }
+    return $false
+}
+
 function Test-GroupIsUnmanageable {
     <#
         Returns a non-empty reason string when the group can't be
@@ -410,7 +435,7 @@ function Start-Offboard {
             } else {
                 $opts += "[NO SEATS] Assign Exchange Online Plan 2 -- not available, skip"
             }
-            $opts += "Keep current license + USER mailbox (skip Step 5 + Step 6)"
+            $opts += "Keep mailbox-bearing license, remove unrelated licenses, KEEP user mailbox (skip Step 6)"
             $opts += "Convert to shared anyway (50 GB cap; new mail above the cap may bounce)"
 
             $choice = Show-Menu -Title ("Strategy for {0} GB mailbox" -f $sizeGB) -Options $opts -BackLabel "Skip both Step 5 and Step 6"
@@ -427,8 +452,8 @@ function Start-Offboard {
 
     # ---- Step 5: Remove direct license assignments ----
     Write-SectionHeader "Step 5 - Remove Licenses"
-    if ($strategy -eq 'KeepLicensed' -or $strategy -eq 'SkipBoth') {
-        Write-InfoMsg ("Skipped: chosen strategy is '{0}' (mailbox is {1} GB)." -f $strategy, $sizeGB)
+    if ($strategy -eq 'SkipBoth') {
+        Write-InfoMsg ("Skipped: chosen strategy is 'SkipBoth' (mailbox is {0} GB)." -f $sizeGB)
     } else {
         try {
             $lics = @(Get-MgUserLicenseDetail -UserId $user.Id -ErrorAction Stop)
@@ -470,7 +495,12 @@ function Start-Offboard {
                     }
                 }
 
-                if (Confirm-Action "Remove all directly-assigned licenses?") {
+                $promptText = if ($strategy -eq 'KeepLicensed') {
+                    "Remove all UNRELATED licenses (keep ones that carry Exchange Online)?"
+                } else {
+                    "Remove all directly-assigned licenses?"
+                }
+                if (Confirm-Action $promptText) {
                     $removed = 0
                     foreach ($lic in $lics) {
                         $sid = "$($lic.SkuId)"
@@ -478,6 +508,12 @@ function Start-Offboard {
                         # When we just added P2, don't immediately strip it.
                         if ($strategy -eq 'AssignP2' -and $p2Sku -and $lic.SkuPartNumber -eq $p2Sku.SkuPartNumber) {
                             Write-InfoMsg "Keeping $friendly (assigned this run to preserve >50 GB shared mailbox)."
+                            continue
+                        }
+                        # KeepLicensed: keep anything that includes EXO
+                        # so the mailbox stays full-size and as type User.
+                        if ($strategy -eq 'KeepLicensed' -and (Test-LicenseHasExchange -LicenseDetail $lic)) {
+                            Write-InfoMsg "Keeping $friendly (carries Exchange Online -- mailbox-bearing)."
                             continue
                         }
                         if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) {
