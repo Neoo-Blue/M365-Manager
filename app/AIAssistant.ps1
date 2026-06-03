@@ -1034,6 +1034,11 @@ function Start-AIAssistant {
     Write-Host ""
     Write-Host "  [i] Starting AI Assistant (Mark)..." -ForegroundColor Cyan
 
+    # Outer try/catch so any silent throw inside this 460-line function
+    # surfaces as a visible error instead of bouncing the operator
+    # straight back to the main menu loop.
+    try {
+
     $b = $Global:M365Box
     if (-not $b -or -not $b.DTL) {
         Write-Host "  [!] TUI globals were not initialised. Rebuilding inline." -ForegroundColor Yellow
@@ -1489,6 +1494,27 @@ function Start-AIAssistant {
         }
         Write-Host ""
         if ($chatHistory.Count -gt 40) { $chatHistory=$chatHistory[-40..-1] }
+    }
+
+    } catch {
+        # Outer-try landing pad: surface the real error so the operator
+        # can act on it (or report it) instead of seeing the function
+        # return silently to the main menu.
+        Write-Host ""
+        Write-Host "  [x] AI Assistant crashed:" -ForegroundColor Red
+        Write-Host ("      {0}" -f $_.Exception.Message) -ForegroundColor Red
+        if ($_.InvocationInfo) {
+            Write-Host ("      at AIAssistant.ps1 line {0}: {1}" -f `
+                $_.InvocationInfo.ScriptLineNumber,
+                ($_.InvocationInfo.Line.Trim())) -ForegroundColor Gray
+        }
+        if ($_.ScriptStackTrace) {
+            Write-Host "  Stack:" -ForegroundColor DarkGray
+            $_.ScriptStackTrace -split "`n" | Select-Object -First 5 | ForEach-Object {
+                Write-Host ("      {0}" -f $_) -ForegroundColor DarkGray
+            }
+        }
+        Pause-ForUser
     }
 }
 
