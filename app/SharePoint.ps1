@@ -392,25 +392,25 @@ function Start-SharePointMenu {
             3 { Get-OrphanedSites | Format-Table -AutoSize; Pause-ForUser }
             4 {
                 $dt = Read-UserInput "Days threshold (default 365)"
-                $d = 365; [int]::TryParse($dt, [ref]$d) | Out-Null
+                $d = Get-IntOrDefault $dt 365
                 Get-StaleSites -DaysSinceModified $d | Format-Table -AutoSize
                 Pause-ForUser
             }
             5 {
-                $nt = Read-UserInput "Top N (default 25)"; $n = 25; [int]::TryParse($nt,[ref]$n) | Out-Null
-                $qt = Read-UserInput "Near-quota %% (0 = ignore, e.g. 80)"; $q = 0; [int]::TryParse($qt,[ref]$q) | Out-Null
+                $nt = Read-UserInput "Top N (default 25)"; $n = Get-IntOrDefault $nt 25
+                $qt = Read-UserInput "Near-quota %% (0 = ignore, e.g. 80)"; $q = Get-IntOrDefault $qt 0
                 Get-SiteStorageReport -Top $n -NearQuotaPercent $q | Format-Table -AutoSize
                 Pause-ForUser
             }
             6 {
                 $upn = if (Get-Command Resolve-UPN -ErrorAction SilentlyContinue) { Resolve-UPN -Prompt "User UPN or name" } else { Read-UserInput "User UPN" }
                 if (-not $upn) { continue }
-                $dt  = Read-UserInput "Lookback days (default 365)"; $d = 365; [int]::TryParse($dt, [ref]$d) | Out-Null
+                $dt  = Read-UserInput "Lookback days (default 365)"; $d = Get-IntOrDefault $dt 365
                 Get-UserOutboundShares -UPN $upn -Days $d | Format-Table -AutoSize
                 Pause-ForUser
             }
             7 {
-                $dt = Read-UserInput "Default expiry days (default 14)"; $d = 14; [int]::TryParse($dt,[ref]$d) | Out-Null
+                $dt = Read-UserInput "Default expiry days (default 14)"; $d = Get-IntOrDefault $dt 14
                 Set-AnonymousLinkExpiry -DefaultDays $d
                 Pause-ForUser
             }
