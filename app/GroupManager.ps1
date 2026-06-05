@@ -217,7 +217,19 @@ function BulkAdd-UserToGroups {
                         if (Confirm-Action "Add to '$($g.DisplayName)'?") {
                             $ok = Invoke-Action -Description ("Add {0} to group '{1}'" -f $user.UserPrincipalName, $g.DisplayName) -Action {
                                 try { New-MgGroupMember -GroupId $g.Id -DirectoryObjectId $user.Id -ErrorAction Stop; $true }
-                                catch { if ($_.Exception.Message -match 'already exist') { 'already' } else { throw } }
+                                catch {
+                                    $em = $_.Exception.Message
+                                    if ($em -match 'already exist|already a member') { 'already' }
+                                    elseif ($em -match 'Cannot Update a mail-enabled|BadRequest.*mail-enabled' -and $g.Mail) {
+                                        try {
+                                            Add-DistributionGroupMember -Identity $g.Mail -Member $user.UserPrincipalName -BypassSecurityGroupManagerCheck -ErrorAction Stop
+                                            $true
+                                        } catch {
+                                            if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+                                        }
+                                    }
+                                    else { throw }
+                                }
                             }
                             if (-not (Get-PreviewMode)) {
                                 if ($ok -eq 'already') { Write-Warn "Already a member." }
@@ -448,7 +460,22 @@ function Add-UserToGroup {
                 Add-DistributionGroupMember -Identity $Group.Email -Member $UserUPN -ErrorAction Stop; $true
             }
         } catch {
-            if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+            $em = $_.Exception.Message
+            if ($em -match 'already exist|already a member') { 'already' }
+            # Graph rejects mail-enabled groups (mail-enabled SGs and
+            # mail-enabled M365 groups) with this exact wording. The
+            # group has to be edited through Exchange Online instead.
+            # Fall back automatically using the group's primary SMTP
+            # (which Get-AllUserMemberships captured in $Group.Email).
+            elseif ($em -match 'Cannot Update a mail-enabled|BadRequest.*mail-enabled' -and $Group.Email) {
+                try {
+                    Add-DistributionGroupMember -Identity $Group.Email -Member $UserUPN -BypassSecurityGroupManagerCheck -ErrorAction Stop
+                    $true
+                } catch {
+                    if ($_.Exception.Message -match 'already exist|already a member') { 'already' } else { throw }
+                }
+            }
+            else { throw }
         }
     }
     if (-not (Get-PreviewMode)) {
