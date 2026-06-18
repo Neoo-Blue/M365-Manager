@@ -112,7 +112,7 @@ function Test-BreakGlassPosture {
 
     $user = $null
     try {
-        $user = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN?`$select=id,userPrincipalName,accountEnabled,lastPasswordChangeDateTime,signInActivity" -ErrorAction Stop
+        $user = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id,userPrincipalName,accountEnabled,lastPasswordChangeDateTime,signInActivity" -ErrorAction Stop
     } catch {
         return @{ lookupFailed = "Could not resolve $UPN -- $($_.Exception.Message)" }
     }

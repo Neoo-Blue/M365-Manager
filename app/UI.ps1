@@ -127,6 +127,25 @@ function Read-UserInput {
     return (Get-OperatorInput -Prompt $Prompt)
 }
 
+function ConvertTo-GraphUserSegment {
+    <#
+    .SYNOPSIS
+        URL-encode a user identifier for safe use as a Microsoft Graph
+        /users/{id} path segment.
+    .DESCRIPTION
+        Guest / external UPNs look like
+            mike.connell_phillipspet.com#EXT#@contoso.onmicrosoft.com
+        The '#' is a URL fragment delimiter: dropped into a Graph path
+        unencoded it truncates the request URI, producing
+        "users/$select=id" style 400 BadRequest errors. EscapeDataString
+        turns '#' into %23, '@' into %40, etc. GUID object ids contain no
+        reserved characters, so they pass through unchanged -- safe to
+        call on either a UPN or an id.
+    #>
+    param([Parameter(Mandatory)][string]$Id)
+    return [uri]::EscapeDataString($Id)
+}
+
 function Get-IntOrDefault {
     <#
     .SYNOPSIS

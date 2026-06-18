@@ -371,7 +371,7 @@ function Detect-SuspiciousInboxRule {
     #>
     param([Parameter(Mandatory)][string]$UPN)
     try {
-        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN/mailFolders/inbox/messageRules" -ErrorAction Stop
+        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/mailFolders/inbox/messageRules" -ErrorAction Stop
     } catch { return $null }
     $userDomain = ($UPN -split '@')[-1].ToLowerInvariant()
     foreach ($r in @($resp.value)) {

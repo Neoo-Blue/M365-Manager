@@ -212,7 +212,7 @@ function Invoke-GuestRecertification {
         # Resolve the guest (id needed for downstream Remove-Guest)
         $guest = $null
         try {
-            $g = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$upn?`$select=id,userPrincipalName,displayName,createdDateTime,accountEnabled,signInActivity" -ErrorAction Stop
+            $g = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $upn)?`$select=id,userPrincipalName,displayName,createdDateTime,accountEnabled,signInActivity" -ErrorAction Stop
             $created = if ($g.createdDateTime) { [DateTime]$g.createdDateTime } else { $null }
             $lastSi  = if ($g.signInActivity.lastSignInDateTime) { [DateTime]$g.signInActivity.lastSignInDateTime } else { $null }
             $guest = [PSCustomObject]@{
@@ -322,7 +322,7 @@ function Remove-Guest {
     }
 
     $userId = $null
-    try { $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN?`$select=id" -ErrorAction Stop).id }
+    try { $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id" -ErrorAction Stop).id }
     catch { Write-ErrorMsg "Could not resolve $UPN -- $_"; return }
 
     # 2. Groups

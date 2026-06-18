@@ -90,7 +90,7 @@ function Get-UserAuthMethods {
     #>
     param([Parameter(Mandatory)][string]$User)
     try {
-        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$User/authentication/methods" -ErrorAction Stop
+        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $User)/authentication/methods" -ErrorAction Stop
     } catch {
         Write-ErrorMsg "Could not enumerate methods for '$User': $($_.Exception.Message)"
         return @()
@@ -139,7 +139,7 @@ function Remove-AuthMethod {
         -Target @{ userUpn = $User; methodType = $MethodInfo.Label; methodId = $MethodInfo.Id } `
         -NoUndoReason 'Auth method revocation cannot be undone via API; the user must re-register the method.' `
         -Action {
-            $uri = "https://graph.microsoft.com/v1.0/users/$User/authentication/$($MethodInfo.UrlSegment)/$($MethodInfo.Id)"
+            $uri = "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $User)/authentication/$($MethodInfo.UrlSegment)/$($MethodInfo.Id)"
             Invoke-MgGraphRequest -Method DELETE -Uri $uri -ErrorAction Stop | Out-Null
             $true
         })
@@ -180,7 +180,7 @@ function New-TemporaryAccessPass {
         -NoUndoReason 'TAP issuance creates a transient credential; revocation is via Remove-AuthMethod on the new method id.' `
         -StubReturn ([PSCustomObject]@{ temporaryAccessPass = '<preview-tap-redacted>' }) `
         -Action {
-            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/users/$User/authentication/temporaryAccessPassMethods" -Body $body -ContentType 'application/json' -ErrorAction Stop
+            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $User)/authentication/temporaryAccessPassMethods" -Body $body -ContentType 'application/json' -ErrorAction Stop
         })
 }
 
