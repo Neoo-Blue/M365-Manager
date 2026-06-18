@@ -35,14 +35,14 @@ function Get-UserTeams {
     #>
     param([Parameter(Mandatory)][string]$UPN)
     try {
-        $teams = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN/joinedTeams" -ErrorAction Stop).value)
+        $teams = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/joinedTeams" -ErrorAction Stop).value)
     } catch {
         Write-ErrorMsg "Could not list teams for $UPN -- $($_.Exception.Message)"
         return @()
     }
     # Resolve user id once
     $userId = $null
-    try { $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN?`$select=id" -ErrorAction Stop).id } catch {}
+    try { $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id" -ErrorAction Stop).id } catch {}
     $out = New-Object System.Collections.ArrayList
     foreach ($t in $teams) {
         $role = 'Member'
@@ -101,7 +101,7 @@ function Add-UserToTeam {
         [Parameter(Mandatory)][string]$TeamId,
         [switch]$AsOwner
     )
-    $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN?`$select=id" -ErrorAction Stop).id
+    $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id" -ErrorAction Stop).id
     $segment = if ($AsOwner) { 'owners' } else { 'members' }
     $body = @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$userId" } | ConvertTo-Json -Compress
 
@@ -127,7 +127,7 @@ function Remove-UserFromTeam {
         [Parameter(Mandatory)][string]$TeamId,
         [switch]$AsOwner
     )
-    $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN?`$select=id" -ErrorAction Stop).id
+    $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id" -ErrorAction Stop).id
     $segment = if ($AsOwner) { 'owners' } else { 'members' }
     return Invoke-Action `
         -Description ("Remove {0} from Team {1} ({2})" -f $UPN, $TeamId, $segment) `
@@ -154,7 +154,7 @@ function Set-TeamOwnership {
         [Parameter(Mandatory)][string]$TeamId,
         [Parameter(Mandatory)][ValidateSet('Promote','Demote')][string]$Direction
     )
-    $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN?`$select=id" -ErrorAction Stop).id
+    $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id" -ErrorAction Stop).id
     if ($Direction -eq 'Promote') {
         $body = @{ '@odata.id' = "https://graph.microsoft.com/v1.0/directoryObjects/$userId" } | ConvertTo-Json -Compress
         return Invoke-Action `

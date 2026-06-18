@@ -146,7 +146,7 @@ function Send-Email {
     } | ConvertTo-Json -Depth 10
 
     $uri = if ($From -and $From -ne (Get-MgContext).Account) {
-        "https://graph.microsoft.com/v1.0/users/$From/sendMail"
+        "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $From)/sendMail"
     } else {
         "https://graph.microsoft.com/v1.0/me/sendMail"
     }

@@ -220,7 +220,7 @@ function Get-IncidentSnapshot {
 
     # User core
     try {
-        $u = Invoke-MgGraphRequest -Method GET -Uri ("https://graph.microsoft.com/v1.0/users/$UPN" + '?$select=id,accountEnabled,signInActivity,displayName,userPrincipalName') -ErrorAction Stop
+        $u = Invoke-MgGraphRequest -Method GET -Uri ("https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)" + '?$select=id,accountEnabled,signInActivity,displayName,userPrincipalName') -ErrorAction Stop
         $snap.userId         = [string]$u.id
         $snap.accountEnabled = [bool]$u.accountEnabled
         $snap.signInActivity = $u.signInActivity
@@ -229,7 +229,7 @@ function Get-IncidentSnapshot {
 
     # Manager
     try {
-        $m = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN/manager?`$select=id,userPrincipalName,displayName" -ErrorAction Stop
+        $m = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/manager?`$select=id,userPrincipalName,displayName" -ErrorAction Stop
         if ($m) { $snap.manager = @{ id = [string]$m.id; upn = [string]$m.userPrincipalName; displayName = [string]$m.displayName } }
     } catch {
         if ($_.Exception.Message -notmatch 'Not Found|404') {
@@ -239,7 +239,7 @@ function Get-IncidentSnapshot {
 
     # Group memberships
     try {
-        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN/memberOf?`$select=id,displayName,@odata.type" -ErrorAction Stop
+        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/memberOf?`$select=id,displayName,@odata.type" -ErrorAction Stop
         foreach ($g in @($resp.value)) {
             $snap.groupMemberships += @{ id = [string]$g.id; displayName = [string]$g.displayName; type = [string]$g.'@odata.type' }
         }
@@ -247,7 +247,7 @@ function Get-IncidentSnapshot {
 
     # Licenses
     try {
-        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN/licenseDetails" -ErrorAction Stop
+        $resp = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/licenseDetails" -ErrorAction Stop
         foreach ($l in @($resp.value)) {
             $snap.licenses += @{ skuId = [string]$l.skuId; skuPartNumber = [string]$l.skuPartNumber }
         }
@@ -272,7 +272,7 @@ function Get-IncidentSnapshot {
 
     # Inbox rules
     try {
-        $rules = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$UPN/mailFolders/inbox/messageRules" -ErrorAction Stop
+        $rules = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/mailFolders/inbox/messageRules" -ErrorAction Stop
         foreach ($r in @($rules.value)) {
             $snap.inboxRules += @{
                 id          = [string]$r.id
@@ -324,7 +324,7 @@ function Invoke-IncidentBlockSignIn {
         -ReverseTarget @{ userUpn = $UPN; userId = [string]$Snapshot.userId } `
         -Action {
             $body = @{ accountEnabled = $false } | ConvertTo-Json
-            Invoke-MgGraphRequest -Method PATCH -Uri "https://graph.microsoft.com/v1.0/users/$UPN" -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+            Invoke-MgGraphRequest -Method PATCH -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)" -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
             $true
         })
 }
@@ -341,7 +341,7 @@ function Invoke-IncidentRevokeSessions {
         -Target @{ incidentId = $IncidentId; userUpn = $UPN; userId = [string]$Snapshot.userId } `
         -NoUndoReason 'Session revocation is irreversible by design -- the user must re-authenticate on next access.' `
         -Action {
-            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/users/$UPN/revokeSignInSessions" -ErrorAction Stop | Out-Null
+            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/revokeSignInSessions" -ErrorAction Stop | Out-Null
             $true
         })
 }
@@ -384,7 +384,7 @@ function Invoke-IncidentForcePasswordChange {
                     password                       = $newPwd
                 }
             } | ConvertTo-Json -Depth 4
-            Invoke-MgGraphRequest -Method PATCH -Uri "https://graph.microsoft.com/v1.0/users/$UPN" -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+            Invoke-MgGraphRequest -Method PATCH -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)" -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
             $true
         }
     if ($ok) {
@@ -527,7 +527,7 @@ function Invoke-IncidentAuditSentMail {
     }
     try {
         $cutoff = (Get-Date).AddDays(-7).ToUniversalTime().ToString('o')
-        $uri = "https://graph.microsoft.com/v1.0/users/$UPN/mailFolders/sentitems/messages?`$top=200&`$select=id,subject,toRecipients,ccRecipients,bccRecipients,sentDateTime&`$filter=sentDateTime ge $cutoff"
+        $uri = "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)/mailFolders/sentitems/messages?`$top=200&`$select=id,subject,toRecipients,ccRecipients,bccRecipients,sentDateTime&`$filter=sentDateTime ge $cutoff"
         $resp = Invoke-MgGraphRequest -Method GET -Uri $uri -ErrorAction Stop
         $userDomain = ($UPN -split '@')[-1].ToLowerInvariant()
         $externalSet = @{}
