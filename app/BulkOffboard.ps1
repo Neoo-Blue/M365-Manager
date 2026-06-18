@@ -178,6 +178,7 @@ function Invoke-BulkOffboard {
             SecurityGroupsRemoved= 0
             DLsRemoved           = 0
             LicensesRemoved      = 0
+            LicensesGroupAssigned= 0
             ConvertedToShared    = $false
             TeamsTransferred     = 0
             SharesRevoked        = 0
@@ -250,10 +251,19 @@ function Invoke-BulkOffboard {
                         $assignInfo[$sid] = $ai
                     }
                 }
+                $groupSkipped = @()
                 foreach ($lic in $lics) {
                     $sid = "$($lic.SkuId)"
-                    if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) { continue }
                     $sku = $lic.SkuPartNumber
+                    # Group-based licensing: the license is granted via a
+                    # group, so it can't be removed directly here -- it's
+                    # reclaimed when the user is removed from the licensing
+                    # group (Step 3/4, RemoveFromAllGroups). Skip + record
+                    # so "Licenses removed: 0" isn't a mystery.
+                    if ($assignInfo.ContainsKey($sid) -and $assignInfo[$sid].Groups.Count -gt 0 -and -not $assignInfo[$sid].Direct) {
+                        $groupSkipped += $sku
+                        continue
+                    }
                     $ok = Invoke-Action `
                         -Description ("Remove license '{0}' from {1}" -f $sku, $upn) `
                         -ActionType 'RemoveLicense' `
@@ -263,6 +273,15 @@ function Invoke-BulkOffboard {
                         -Action { Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($lic.SkuId) -ErrorAction Stop; $true }
                     if ($ok) { $entry.LicensesRemoved++ }
                 }
+                $entry.LicensesGroupAssigned = $groupSkipped.Count
+                if ($groupSkipped.Count -gt 0) {
+                    $note = "group-assigned (reclaimed via group removal): $($groupSkipped -join ', ')"
+                    if (-not $removeGroups) {
+                        $note += " -- set RemoveFromAllGroups=true to reclaim them"
+                    }
+                    $stepErrors += "LicensesGroupAssigned: $note"
+                }
+                if ($lics.Count -eq 0) { $stepErrors += "Licenses: user had no assigned licenses" }
             } catch { $stepErrors += "LicensesEnumerate: $($_.Exception.Message)" }
         } else {
             Invoke-Action -Description ("Remove direct-assigned licenses from {0}" -f $upn) -ActionType 'RemoveLicense' -Target @{ userUpn = $upn } -Action { } | Out-Null
