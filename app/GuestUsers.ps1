@@ -291,6 +291,35 @@ function Show-PendingRecerts {
 #  Removal
 # ============================================================
 
+function Invoke-GuestGraphRequest {
+    <#
+        Thin Invoke-MgGraphRequest wrapper that retries on Graph
+        throttling (HTTP 429 / 503) with exponential backoff. Bulk guest
+        removal fires hundreds of calls in a tight loop, so a single 429
+        must not turn into a spurious "Failed" row -- we wait and retry
+        instead. Non-throttle errors are re-thrown immediately so the
+        caller's own try/catch still sees them.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Method,
+        [Parameter(Mandatory)][string]$Uri,
+        [int]$MaxRetries = 5
+    )
+    $attempt = 0
+    while ($true) {
+        try { return Invoke-MgGraphRequest -Method $Method -Uri $Uri -ErrorAction Stop }
+        catch {
+            $m = "$($_.Exception.Message)"
+            $throttled = $m -match '(429|Too Many Requests|503|Service Unavailable|throttl)'
+            if (-not $throttled -or $attempt -ge $MaxRetries) { throw }
+            $attempt++
+            $wait = [int][Math]::Min(60, [Math]::Pow(2, $attempt))   # 2,4,8,16,32 -> capped 60
+            Write-Warn "Graph throttled (attempt $attempt/$MaxRetries) -- waiting ${wait}s..."
+            Start-Sleep -Seconds $wait
+        }
+    }
+}
+
 function Remove-Guest {
     <#
         Proper teardown:
@@ -311,6 +340,18 @@ function Remove-Guest {
         /directory/deletedItems/{id}/restore -- we surface this in
         the audit entry's noUndoReason.
 
+        -SkipConnect (bulk fast path): the caller has ALREADY established
+        the Graph connection, so DON'T call Connect-ForTask (which would
+        re-prompt an interactive sign-in for every single guest -- the
+        exact footgun that made a 100+ row run un-signable). It also
+        SKIPS the ancillary SharePoint-share cleanup, per-group removal,
+        and Teams ownership transfer -- each of those re-connects other
+        services (SPO/EXO/Teams) and would re-trigger sign-in per row.
+        Deleting the user removes their group/team memberships anyway,
+        and a 30-day restore re-adds them, so the bulk path stays
+        connect-once / delete-many. Use the single-guest path (no
+        -SkipConnect) when you want the full share/Teams handoff.
+
         Returns a status object so callers (Invoke-BulkGuestRemoval) can
         report the TRUE outcome instead of assuming success:
           @{ UPN; Status; Reason; GroupsRemoved }
@@ -320,22 +361,25 @@ function Remove-Guest {
     param(
         [Parameter(Mandatory)][string]$UPN,
         [Parameter(Mandatory)][string]$Reason,
-        [switch]$AllowNonGuest
+        [switch]$AllowNonGuest,
+        [switch]$SkipConnect
     )
     Write-SectionHeader "Remove guest: $UPN"
     Write-Warn "Reason: $Reason"
 
     $result = [PSCustomObject]@{ UPN = $UPN; Status = 'Failed'; Reason = $Reason; GroupsRemoved = 0 }
 
-    if (-not (Connect-ForTask 'GuestUsers')) {
-        $result.Status = 'NotConnected'; $result.Reason = 'Could not connect to Microsoft Graph.'
-        return $result
+    if (-not $SkipConnect) {
+        if (-not (Connect-ForTask 'GuestUsers')) {
+            $result.Status = 'NotConnected'; $result.Reason = 'Could not connect to Microsoft Graph.'
+            return $result
+        }
     }
 
     # 0. Resolve + verify this really is a Guest BEFORE any teardown.
     $user = $null
     try {
-        $user = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id,userType,userPrincipalName" -ErrorAction Stop
+        $user = Invoke-GuestGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id,userType,userPrincipalName"
     } catch {
         Write-ErrorMsg "Could not resolve $UPN -- $($_.Exception.Message)"
         $result.Status = 'NotFound'; $result.Reason = "Not found in tenant: $($_.Exception.Message)"
@@ -362,34 +406,39 @@ function Remove-Guest {
         return $result
     }
 
-    # 1. Outbound shares (only if SharePoint module is loaded + UAL works)
-    if (Get-Command Get-UserOutboundShares -ErrorAction SilentlyContinue) {
-        try { $null = Invoke-SharePointOffboardCleanup -LeaverUPN $UPN -LookbackDays 365 }
-        catch { Write-Warn "Outbound-share cleanup failed: $_" }
-    }
+    # Steps 1-3 (share cleanup / group removal / Teams handoff) each
+    # connect additional services. In the bulk fast path we skip them to
+    # stay connect-once; the DELETE below removes memberships anyway.
+    if (-not $SkipConnect) {
+        # 1. Outbound shares (only if SharePoint module is loaded + UAL works)
+        if (Get-Command Get-UserOutboundShares -ErrorAction SilentlyContinue) {
+            try { $null = Invoke-SharePointOffboardCleanup -LeaverUPN $UPN -LookbackDays 365 }
+            catch { Write-Warn "Outbound-share cleanup failed: $_" }
+        }
 
-    # 2. Groups
-    try {
-        $memberOf = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$userId/memberOf?`$select=id,@odata.type,displayName" -ErrorAction Stop).value)
-    } catch { $memberOf = @() }
-    foreach ($m in $memberOf) {
-        if (-not $m.id) { continue }
-        $groupResult = Invoke-Action `
-            -Description ("Remove guest {0} from group '{1}'" -f $UPN, $m.displayName) `
-            -ActionType 'RemoveFromGroup' `
-            -Target @{ userId = [string]$userId; userUpn = $UPN; groupId = [string]$m.id; groupName = [string]$m.displayName } `
-            -ReverseType 'AddToGroup' `
-            -ReverseDescription ("Re-add guest {0} to group '{1}'" -f $UPN, $m.displayName) `
-            -Action {
-                try { Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$($m.id)/members/$userId/`$ref" -ErrorAction Stop | Out-Null; $true }
-                catch { if ($_.Exception.Message -match 'does not exist|not found') { 'missing' } else { throw } }
-            }
-        if ($groupResult -eq $true) { $result.GroupsRemoved++ }
-    }
+        # 2. Groups
+        try {
+            $memberOf = @((Invoke-GuestGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$userId/memberOf?`$select=id,@odata.type,displayName").value)
+        } catch { $memberOf = @() }
+        foreach ($m in $memberOf) {
+            if (-not $m.id) { continue }
+            $groupResult = Invoke-Action `
+                -Description ("Remove guest {0} from group '{1}'" -f $UPN, $m.displayName) `
+                -ActionType 'RemoveFromGroup' `
+                -Target @{ userId = [string]$userId; userUpn = $UPN; groupId = [string]$m.id; groupName = [string]$m.displayName } `
+                -ReverseType 'AddToGroup' `
+                -ReverseDescription ("Re-add guest {0} to group '{1}'" -f $UPN, $m.displayName) `
+                -Action {
+                    try { Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$($m.id)/members/$userId/`$ref" -ErrorAction Stop | Out-Null; $true }
+                    catch { if ($_.Exception.Message -match 'does not exist|not found') { 'missing' } else { throw } }
+                }
+            if ($groupResult -eq $true) { $result.GroupsRemoved++ }
+        }
 
-    # 3. Teams (covers any team where the guest was an owner)
-    if (Get-Command Invoke-TeamsOffboardTransfer -ErrorAction SilentlyContinue) {
-        try { Invoke-TeamsOffboardTransfer -LeaverUPN $UPN | Out-Null } catch { Write-Warn "Teams cleanup failed: $_" }
+        # 3. Teams (covers any team where the guest was an owner)
+        if (Get-Command Invoke-TeamsOffboardTransfer -ErrorAction SilentlyContinue) {
+            try { Invoke-TeamsOffboardTransfer -LeaverUPN $UPN | Out-Null } catch { Write-Warn "Teams cleanup failed: $_" }
+        }
     }
 
     # 4. Delete the user
@@ -399,7 +448,7 @@ function Remove-Guest {
         -Target @{ userId = [string]$userId; userUpn = $UPN; reason = $Reason } `
         -NoUndoReason 'User deletion goes to /directory/deletedItems for 30 days. To restore: POST /directory/deletedItems/{userId}/restore. After 30 days, permanent.' `
         -Action {
-            Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/users/$userId" -ErrorAction Stop | Out-Null
+            Invoke-GuestGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/users/$userId" | Out-Null
             $true
         }
 
@@ -524,7 +573,14 @@ function Invoke-BulkGuestRemoval {
     $dryRun = Get-PreviewMode
     if ($dryRun) { Write-Warn "PREVIEW mode -- no tenant changes will be made." }
     try {
-        if (-not (Connect-ForTask 'GuestUsers')) { Write-ErrorMsg "Could not connect."; return }
+        # Connect ONCE, Graph only. Bulk deletion needs nothing but Graph,
+        # and the loop below passes -SkipConnect so Remove-Guest never
+        # re-runs Connect-ForTask -- that per-guest reconnect was what
+        # forced an interactive sign-in on every single row (and locked
+        # out the operator on a 100+ row run). One sign-in, delete many.
+        $connected = if (Get-Command Connect-Graph -ErrorAction SilentlyContinue) { Connect-Graph } else { Connect-ForTask 'GuestUsers' }
+        if (-not $connected) { Write-ErrorMsg "Could not connect to Microsoft Graph."; return }
+        Write-InfoMsg "Bulk mode: deletion only. SharePoint-share revocation and Teams ownership handoff are skipped here -- use 'Remove guest (single user)' for the full teardown."
 
         # ---- Pre-flight: classify every identifier BEFORE deleting. ----
         Write-InfoMsg "Verifying each identifier resolves to a Guest user..."
@@ -534,7 +590,7 @@ function Invoke-BulkGuestRemoval {
             $upn = $row.UPN
             $u = $null
             try {
-                $u = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $upn)?`$select=id,userType,userPrincipalName" -ErrorAction Stop
+                $u = Invoke-GuestGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $upn)?`$select=id,userType,userPrincipalName"
             } catch {
                 [void]$results.Add([PSCustomObject]@{ UPN = $upn; Status = 'NotFound'; Reason = 'Not found in tenant' })
                 continue
@@ -572,7 +628,7 @@ function Invoke-BulkGuestRemoval {
                 $g = $toRemove[$i]
                 Write-Progress -Activity "Bulk guest removal" -Status ("{0} ({1} of {2})" -f $g.UPN, ($i + 1), $toRemove.Count) -PercentComplete ([int](($i / $toRemove.Count) * 100))
                 $res = $null
-                try { $res = Remove-Guest -UPN $g.UPN -Reason $g.Reason -AllowNonGuest:$AllowNonGuest }
+                try { $res = Remove-Guest -UPN $g.UPN -Reason $g.Reason -AllowNonGuest:$AllowNonGuest -SkipConnect }
                 catch { $res = $null }
                 $status = if ($res -and $res.Status) { [string]$res.Status } else { 'Failed' }
                 $reason = if ($res -and $res.Reason) { [string]$res.Reason } else { $g.Reason }

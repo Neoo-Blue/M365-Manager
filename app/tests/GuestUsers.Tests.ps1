@@ -148,3 +148,45 @@ Describe "Remove-Guest safety guard" {
         $r.Status | Should -Be 'Removed'
     }
 }
+
+Describe "Remove-Guest bulk fast path" {
+    It "with -SkipConnect it never connects and skips ancillary teardown" {
+        $script:connCalls = 0
+        $script:spoCalls  = 0
+        function Connect-ForTask { param($Task) $script:connCalls++; $true }
+        function Get-UserOutboundShares { @() }
+        function Invoke-SharePointOffboardCleanup { param($LeaverUPN,$LookbackDays) $script:spoCalls++ }
+        function Write-AuditEntry { param($EventType,$Detail,$ActionType,$Target,$Result,$ErrorMessage,$Reverse,$NoUndoReason,$EntryId) 'stub' }
+        function Invoke-MgGraphRequest { param($Method,$Uri,$Headers,$Body,$ContentType,$ErrorAction)
+            if ($Uri -match '/memberOf') { return @{ value = @() } }
+            if ($Method -eq 'DELETE')    { return $null }
+            return @{ id = 'g-1'; userType = 'Guest'; userPrincipalName = 'ext_x#EXT#@contoso.onmicrosoft.com' } }
+        Set-PreviewMode -Enabled $false
+        $r = Remove-Guest -UPN 'ext_x#EXT#@contoso.onmicrosoft.com' -Reason 'bulk' -SkipConnect
+        $r.Status         | Should -Be 'Removed'
+        $script:connCalls | Should -Be 0
+        $script:spoCalls  | Should -Be 0
+    }
+}
+
+Describe "Graph throttling retry" {
+    It "retries after a 429 and then succeeds" {
+        $script:attempts = 0
+        function Start-Sleep { param($Seconds,$Milliseconds) }   # no real waiting in tests
+        function Invoke-MgGraphRequest { param($Method,$Uri,$Headers,$Body,$ContentType,$ErrorAction)
+            $script:attempts++
+            if ($script:attempts -eq 1) { throw 'Response status code does not indicate success: 429 (Too Many Requests).' }
+            return @{ ok = $true } }
+        $out = Invoke-GuestGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/users/x'
+        $script:attempts | Should -Be 2
+        $out.ok          | Should -BeTrue
+    }
+    It "re-throws a non-throttle error without retrying" {
+        $script:attempts2 = 0
+        function Start-Sleep { param($Seconds,$Milliseconds) }
+        function Invoke-MgGraphRequest { param($Method,$Uri,$Headers,$Body,$ContentType,$ErrorAction)
+            $script:attempts2++; throw 'Request_ResourceNotFound: does not exist' }
+        { Invoke-GuestGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/users/x' } | Should -Throw
+        $script:attempts2 | Should -Be 1
+    }
+}
