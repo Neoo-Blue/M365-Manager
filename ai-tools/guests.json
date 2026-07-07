@@ -28,7 +28,7 @@
   },
   {
     "name": "Remove-Guest",
-    "description": "Full guest teardown: revoke shares, remove from groups + teams, then DELETE /users/{id}. 30-day restore window via /directory/deletedItems.",
+    "description": "Full guest teardown: revoke shares, remove from groups + teams, then DELETE /users/{id}. Refuses to delete non-Guest (Member/internal) accounts. 30-day restore window via /directory/deletedItems.",
     "parameters": {
       "type": "object",
       "properties": {

@@ -76,3 +76,75 @@ Describe "Domain pivot logic" {
         $bucket['partner.io']  | Should -Be 1
     }
 }
+
+Describe "Bulk guest removal CSV validation" {
+    It "keeps a valid row and applies the default reason when none is given" {
+        $v = Test-BulkGuestRemovalCsv -Rows @([PSCustomObject]@{ UPN = 'guest_x#EXT#@contoso.onmicrosoft.com' })
+        $v.Rows.Count     | Should -Be 1
+        $v.Errors.Count   | Should -Be 0
+        $v.Rows[0].Reason | Should -Be 'Bulk removal'
+    }
+    It "accepts a UserPrincipalName column as an alias for UPN" {
+        $v = Test-BulkGuestRemovalCsv -Rows @([PSCustomObject]@{ UserPrincipalName = 'a@b.com'; Reason = 'x' })
+        $v.Rows.Count     | Should -Be 1
+        $v.Rows[0].UPN    | Should -Be 'a@b.com'
+        $v.Rows[0].Reason | Should -Be 'x'
+    }
+    It "accepts a bare object GUID as an identifier" {
+        $v = Test-BulkGuestRemovalCsv -Rows @([PSCustomObject]@{ UPN = '11111111-2222-3333-4444-555555555555' })
+        $v.Errors.Count | Should -Be 0
+        $v.Rows.Count   | Should -Be 1
+    }
+    It "flags a missing UPN, non-identifier junk, and a duplicate" {
+        $rows = @(
+            [PSCustomObject]@{ UPN = 'guest_x#EXT#@contoso.onmicrosoft.com'; Reason = 'ok' },
+            [PSCustomObject]@{ UPN = '';          Reason = 'blank' },
+            [PSCustomObject]@{ UPN = 'not-an-id'; Reason = 'junk' },
+            [PSCustomObject]@{ UPN = 'guest_x#EXT#@contoso.onmicrosoft.com'; Reason = 'dup' }
+        )
+        $v = Test-BulkGuestRemovalCsv -Rows $rows
+        $v.Rows.Count   | Should -Be 1
+        $v.Errors.Count | Should -Be 3
+    }
+}
+
+Describe "Remove-Guest safety guard" {
+    It "refuses to delete a Member account (returns NotAGuest)" {
+        function Connect-ForTask { param($Task) $true }
+        function Write-AuditEntry { param($EventType,$Detail,$ActionType,$Target,$Result,$ErrorMessage,$Reverse,$NoUndoReason,$EntryId) 'stub' }
+        function Invoke-MgGraphRequest { param($Method,$Uri,$Headers,$Body,$ContentType,$ErrorAction)
+            @{ id = 'm-1'; userType = 'Member'; userPrincipalName = 'real.employee@contoso.com' } }
+        Set-PreviewMode -Enabled $false
+        $r = Remove-Guest -UPN 'real.employee@contoso.com' -Reason 'fat-fingered CSV'
+        $r.Status | Should -Be 'NotAGuest'
+    }
+    It "reports NotFound when the user does not resolve" {
+        function Connect-ForTask { param($Task) $true }
+        function Invoke-MgGraphRequest { param($Method,$Uri,$Headers,$Body,$ContentType,$ErrorAction) throw 'Request_ResourceNotFound' }
+        Set-PreviewMode -Enabled $false
+        $r = Remove-Guest -UPN 'ghost@contoso.com' -Reason 'x'
+        $r.Status | Should -Be 'NotFound'
+    }
+    It "removes a genuine Guest and reports Removed" {
+        function Connect-ForTask { param($Task) $true }
+        function Write-AuditEntry { param($EventType,$Detail,$ActionType,$Target,$Result,$ErrorMessage,$Reverse,$NoUndoReason,$EntryId) 'stub' }
+        function Invoke-MgGraphRequest { param($Method,$Uri,$Headers,$Body,$ContentType,$ErrorAction)
+            if ($Uri -match '/memberOf') { return @{ value = @() } }
+            if ($Method -eq 'DELETE')    { return $null }
+            return @{ id = 'g-1'; userType = 'Guest'; userPrincipalName = 'ext_x#EXT#@contoso.onmicrosoft.com' } }
+        Set-PreviewMode -Enabled $false
+        $r = Remove-Guest -UPN 'ext_x#EXT#@contoso.onmicrosoft.com' -Reason 'ended'
+        $r.Status | Should -Be 'Removed'
+    }
+    It "honours -AllowNonGuest to delete a non-guest when explicitly forced" {
+        function Connect-ForTask { param($Task) $true }
+        function Write-AuditEntry { param($EventType,$Detail,$ActionType,$Target,$Result,$ErrorMessage,$Reverse,$NoUndoReason,$EntryId) 'stub' }
+        function Invoke-MgGraphRequest { param($Method,$Uri,$Headers,$Body,$ContentType,$ErrorAction)
+            if ($Uri -match '/memberOf') { return @{ value = @() } }
+            if ($Method -eq 'DELETE')    { return $null }
+            return @{ id = 'm-1'; userType = 'Member'; userPrincipalName = 'contractor@contoso.com' } }
+        Set-PreviewMode -Enabled $false
+        $r = Remove-Guest -UPN 'contractor@contoso.com' -Reason 'forced' -AllowNonGuest
+        $r.Status | Should -Be 'Removed'
+    }
+}

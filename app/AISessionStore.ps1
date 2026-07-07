@@ -17,7 +17,7 @@
 #  values) for sharing.
 # ============================================================
 
-if ($null -eq (Get-Variable -Name AISessionCurrent -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name AISessionCurrent -Scope Script -ErrorAction Ignore)) {
     $script:AISessionCurrent = @{
         Id             = $null
         Title          = $null

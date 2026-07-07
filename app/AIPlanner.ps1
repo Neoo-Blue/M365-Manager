@@ -21,10 +21,10 @@
 #  step entries, and a PlanResult summary at the end.
 # ============================================================
 
-if ($null -eq (Get-Variable -Name AIAutoPlanThreshold -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name AIAutoPlanThreshold -Scope Script -ErrorAction Ignore)) {
     $script:AIAutoPlanThreshold = 3
 }
-if ($null -eq (Get-Variable -Name AIPlanModeNext -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name AIPlanModeNext -Scope Script -ErrorAction Ignore)) {
     # 'auto' | 'force' | 'skip'  -- set by /plan / /noplan chat commands
     $script:AIPlanModeNext = 'auto'
 }

@@ -87,7 +87,7 @@ function Get-TenantTemplatesRoot {
         profile). Folder is templates/<tenant-slug>/.
         Tenant key preference: TenantDomain -> TenantName -> TenantId.
     #>
-    if (-not (Get-Variable -Name SessionState -Scope Script -ErrorAction SilentlyContinue)) { return $null }
+    if (-not (Get-Variable -Name SessionState -Scope Script -ErrorAction Ignore)) { return $null }
     $key = $null
     if ($script:SessionState.TenantDomain) { $key = $script:SessionState.TenantDomain }
     elseif ($script:SessionState.TenantName -and $script:SessionState.TenantName -ne 'Own Tenant') { $key = $script:SessionState.TenantName }

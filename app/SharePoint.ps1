@@ -270,7 +270,7 @@ function Get-SiteTemplate {
     $key = ($Name -replace '^site-', '').ToLowerInvariant()
     $base = Get-OnboardTemplates  # reuse Templates.ps1's TemplatesRoot
     $tplDir = $null
-    if (Get-Variable -Name TemplatesRoot -Scope Script -ErrorAction SilentlyContinue) { $tplDir = $script:TemplatesRoot }
+    if (Get-Variable -Name TemplatesRoot -Scope Script -ErrorAction Ignore) { $tplDir = $script:TemplatesRoot }
     if (-not $tplDir) {
         # Best-guess fallback to <repo root>/templates (one level up
         # from app/, where the .ps1 modules live).

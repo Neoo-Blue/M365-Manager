@@ -18,7 +18,7 @@
 #  instead of leaving creds at rest).
 # ============================================================
 
-if ($null -eq (Get-Variable -Name CurrentTenantProfile -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name CurrentTenantProfile -Scope Script -ErrorAction Ignore)) {
     $script:CurrentTenantProfile = $null
 }
 

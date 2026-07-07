@@ -24,7 +24,7 @@
 #  non-reversible in the viewer.
 # ============================================================
 
-if ($null -eq (Get-Variable -Name PreviewMode -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name PreviewMode -Scope Script -ErrorAction Ignore)) {
     $script:PreviewMode = $false
 }
 
