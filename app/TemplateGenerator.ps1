@@ -236,7 +236,7 @@ function Save-GeneratedTemplate {
         $dir = Get-TenantTemplatesRoot
     }
     if (-not $dir) {
-        if (Get-Variable -Name TemplatesRoot -Scope Script -ErrorAction SilentlyContinue) {
+        if (Get-Variable -Name TemplatesRoot -Scope Script -ErrorAction Ignore) {
             $dir = $script:TemplatesRoot
         }
     }

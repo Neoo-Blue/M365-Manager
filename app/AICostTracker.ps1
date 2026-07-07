@@ -10,7 +10,7 @@
 #  Budget alerts fire once per threshold cross per month.
 # ============================================================
 
-if ($null -eq (Get-Variable -Name AICostState -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name AICostState -Scope Script -ErrorAction Ignore)) {
     $script:AICostState = @{
         SessionStartedUtc = (Get-Date).ToUniversalTime().ToString("o")
         SessionUsd        = 0.0
@@ -22,7 +22,7 @@ if ($null -eq (Get-Variable -Name AICostState -Scope Script -ErrorAction Silentl
         AlertedThreshold  = @{}     # month -> set of pct levels already warned
     }
 }
-if ($null -eq (Get-Variable -Name AIPriceTable -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name AIPriceTable -Scope Script -ErrorAction Ignore)) {
     $script:AIPriceTable = $null
 }
 

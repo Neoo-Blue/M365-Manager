@@ -294,6 +294,11 @@ function Show-PendingRecerts {
 function Remove-Guest {
     <#
         Proper teardown:
+          0. Resolve the user and VERIFY it is actually a Guest before
+             touching anything. Refuse Member / internal accounts unless
+             -AllowNonGuest is explicitly passed -- a fat-fingered CSV
+             row must never delete a real employee/admin via the guest
+             path.
           1. Revoke outbound shares the guest CREATED (uses
              SharePoint.ps1's Get-UserOutboundShares + Revoke-Share)
           2. Remove from groups (Get-MgUserMemberOf + DELETE per group)
@@ -305,15 +310,57 @@ function Remove-Guest {
         Graph's delete is reversible within 30 days via
         /directory/deletedItems/{id}/restore -- we surface this in
         the audit entry's noUndoReason.
+
+        Returns a status object so callers (Invoke-BulkGuestRemoval) can
+        report the TRUE outcome instead of assuming success:
+          @{ UPN; Status; Reason; GroupsRemoved }
+        Status is one of: Removed | Preview | NotFound | NotAGuest |
+        NotConnected | Failed.
     #>
     param(
         [Parameter(Mandatory)][string]$UPN,
-        [Parameter(Mandatory)][string]$Reason
+        [Parameter(Mandatory)][string]$Reason,
+        [switch]$AllowNonGuest
     )
     Write-SectionHeader "Remove guest: $UPN"
     Write-Warn "Reason: $Reason"
 
-    if (-not (Connect-ForTask 'GuestUsers')) { return }
+    $result = [PSCustomObject]@{ UPN = $UPN; Status = 'Failed'; Reason = $Reason; GroupsRemoved = 0 }
+
+    if (-not (Connect-ForTask 'GuestUsers')) {
+        $result.Status = 'NotConnected'; $result.Reason = 'Could not connect to Microsoft Graph.'
+        return $result
+    }
+
+    # 0. Resolve + verify this really is a Guest BEFORE any teardown.
+    $user = $null
+    try {
+        $user = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id,userType,userPrincipalName" -ErrorAction Stop
+    } catch {
+        Write-ErrorMsg "Could not resolve $UPN -- $($_.Exception.Message)"
+        $result.Status = 'NotFound'; $result.Reason = "Not found in tenant: $($_.Exception.Message)"
+        return $result
+    }
+    $userId = [string]$user.id
+    if (-not $userId) {
+        Write-ErrorMsg "Resolved $UPN but Graph returned no object id."
+        $result.Status = 'NotFound'; $result.Reason = 'Graph returned no object id.'
+        return $result
+    }
+    $userType = [string]$user.userType
+    if ($userType -ne 'Guest' -and -not $AllowNonGuest) {
+        $shown = if ($userType) { $userType } else { 'unknown' }
+        Write-ErrorMsg ("REFUSED: {0} is userType '{1}', not 'Guest'. This looks like a member/internal account -- not deleting it via the guest-removal path. Use the offboarding flow for members." -f $UPN, $shown)
+        if (Get-Command Write-AuditEntry -ErrorAction SilentlyContinue) {
+            Write-AuditEntry -EventType 'EXEC' `
+                -Detail ("Refused guest removal for {0}: userType='{1}'" -f $UPN, $shown) `
+                -ActionType 'DeleteGuestUserRefused' `
+                -Target @{ userId = $userId; userUpn = $UPN; userType = $shown } `
+                -Result 'failure' | Out-Null
+        }
+        $result.Status = 'NotAGuest'; $result.Reason = "userType is '$shown', not Guest (skipped for safety)."
+        return $result
+    }
 
     # 1. Outbound shares (only if SharePoint module is loaded + UAL works)
     if (Get-Command Get-UserOutboundShares -ErrorAction SilentlyContinue) {
@@ -321,17 +368,13 @@ function Remove-Guest {
         catch { Write-Warn "Outbound-share cleanup failed: $_" }
     }
 
-    $userId = $null
-    try { $userId = (Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $UPN)?`$select=id" -ErrorAction Stop).id }
-    catch { Write-ErrorMsg "Could not resolve $UPN -- $_"; return }
-
     # 2. Groups
     try {
         $memberOf = @((Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$userId/memberOf?`$select=id,@odata.type,displayName" -ErrorAction Stop).value)
     } catch { $memberOf = @() }
     foreach ($m in $memberOf) {
         if (-not $m.id) { continue }
-        Invoke-Action `
+        $groupResult = Invoke-Action `
             -Description ("Remove guest {0} from group '{1}'" -f $UPN, $m.displayName) `
             -ActionType 'RemoveFromGroup' `
             -Target @{ userId = [string]$userId; userUpn = $UPN; groupId = [string]$m.id; groupName = [string]$m.displayName } `
@@ -340,7 +383,8 @@ function Remove-Guest {
             -Action {
                 try { Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/groups/$($m.id)/members/$userId/`$ref" -ErrorAction Stop | Out-Null; $true }
                 catch { if ($_.Exception.Message -match 'does not exist|not found') { 'missing' } else { throw } }
-            } | Out-Null
+            }
+        if ($groupResult -eq $true) { $result.GroupsRemoved++ }
     }
 
     # 3. Teams (covers any team where the guest was an owner)
@@ -349,7 +393,7 @@ function Remove-Guest {
     }
 
     # 4. Delete the user
-    Invoke-Action `
+    $deleted = Invoke-Action `
         -Description ("DELETE guest user {0} ({1})" -f $UPN, $Reason) `
         -ActionType 'DeleteGuestUser' `
         -Target @{ userId = [string]$userId; userUpn = $UPN; reason = $Reason } `
@@ -357,41 +401,209 @@ function Remove-Guest {
         -Action {
             Invoke-MgGraphRequest -Method DELETE -Uri "https://graph.microsoft.com/v1.0/users/$userId" -ErrorAction Stop | Out-Null
             $true
-        } | Out-Null
-    Write-Success "Guest $UPN removed."
+        }
+
+    if (Get-PreviewMode) {
+        $result.Status = 'Preview'; $result.Reason = 'Dry-run -- no tenant delete performed.'
+        Write-InfoMsg "[preview] Would remove guest $UPN."
+    } elseif ($deleted -eq $true) {
+        $result.Status = 'Removed'
+        Write-Success "Guest $UPN removed."
+    } else {
+        $result.Status = 'Failed'; $result.Reason = 'DELETE /users call did not succeed (see audit log).'
+        Write-ErrorMsg "Guest $UPN was NOT deleted -- the delete call failed."
+    }
+    return $result
+}
+
+function Test-BulkGuestRemovalCsv {
+    <#
+        Validate every row without any tenant calls. Catches:
+          - missing UPN (accepts a 'UPN' or 'UserPrincipalName' column)
+          - an identifier that is neither a UPN (contains '@') nor an
+            object GUID -- guest UPNs legitimately contain '#EXT#' and
+            underscores, so we deliberately DON'T apply a strict email
+            regex here (that would reject valid guest UPNs); the
+            authoritative Guest check happens tenant-side in
+            Invoke-BulkGuestRemoval's pre-flight.
+          - duplicate identifier within the CSV.
+        Returns @{ Rows = @([PSCustomObject]@{ UPN; Reason }); Errors = @(@{Row;Field;Message}) }.
+    #>
+    param([array]$Rows)
+
+    $errors = @()
+    $normalized = @()
+    $seen = @{}
+    $guidRegex = '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'
+
+    for ($i = 0; $i -lt $Rows.Count; $i++) {
+        $rowNum = $i + 2   # header is row 1
+        $r = $Rows[$i]
+
+        $upn = ''
+        $reason = ''
+        foreach ($p in $r.PSObject.Properties) {
+            $k = $p.Name.Trim()
+            $v = if ($null -eq $p.Value) { '' } else { ([string]$p.Value).Trim() }
+            if (($k -ieq 'UPN' -or $k -ieq 'UserPrincipalName') -and -not $upn) { $upn = $v }
+            elseif ($k -ieq 'Reason') { $reason = $v }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($upn)) {
+            $errors += @{ Row = $rowNum; Field = 'UPN'; Message = "Missing UPN (need a 'UPN' or 'UserPrincipalName' column)" }
+            continue
+        }
+        if (-not (($upn -match '@') -or ($upn -match $guidRegex))) {
+            $errors += @{ Row = $rowNum; Field = 'UPN'; Message = "Not a UPN or object id: '$upn'" }
+            continue
+        }
+        $key = $upn.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) {
+            $errors += @{ Row = $rowNum; Field = 'UPN'; Message = "Duplicate UPN in CSV (first seen on row $($seen[$key]))" }
+            continue
+        }
+        $seen[$key] = $rowNum
+        $normalized += [PSCustomObject]@{ UPN = $upn; Reason = $(if ($reason) { $reason } else { 'Bulk removal' }) }
+    }
+
+    return @{ Rows = @($normalized); Errors = @($errors) }
 }
 
 function Invoke-BulkGuestRemoval {
     <#
-        CSV: UPN, Reason
-        Standard validate-then-execute. Result CSV written next
-        to input.
+        CSV: UPN[,Reason]  (UserPrincipalName also accepted)
+
+        Bulletproof pipeline:
+          1. Parse + validate the CSV (no tenant calls).
+          2. Connect, then a PRE-FLIGHT pass that resolves every row and
+             classifies it Guest / NotFound / NotGuest -- NOTHING is
+             deleted yet.
+          3. Show the operator exactly how many real guests will be
+             removed (and lists every non-guest / not-found that will be
+             skipped), then require ONE explicit confirmation with the
+             LIVE/PREVIEW mode spelled out.
+          4. Delete only the confirmed guests, recording the TRUE status
+             returned by Remove-Guest.
+          5. Write a result CSV covering every input row + print a summary.
+
+        -WhatIf runs the whole thing in preview mode (no tenant changes).
+        -AllowNonGuest lifts the "guests only" guard (rarely needed;
+         off by default so a bad CSV can't nuke a member account).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path, [switch]$WhatIf)
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [switch]$WhatIf,
+        [switch]$AllowNonGuest
+    )
     if (-not (Test-Path -LiteralPath $Path)) { Write-ErrorMsg "CSV not found: $Path"; return }
-    $rows = @(Import-Csv -LiteralPath $Path)
-    if ($rows.Count -eq 0) { Write-Warn "Empty CSV."; return }
+
+    Write-SectionHeader "Bulk Guest Removal -- $(Split-Path $Path -Leaf)"
+
+    $rows = $null
+    try { $rows = @(Import-Csv -LiteralPath $Path) }
+    catch { Write-ErrorMsg "Could not parse CSV: $_"; return }
+    if ($rows.Count -eq 0) { Write-Warn "CSV has no data rows."; return }
+    Write-InfoMsg "$($rows.Count) row(s) read from $Path"
+
+    $validation = Test-BulkGuestRemovalCsv -Rows $rows
+    if ($validation.Errors.Count -gt 0) {
+        Write-Host ""
+        Write-ErrorMsg "Validation failed -- $($validation.Errors.Count) issue(s):"
+        foreach ($e in $validation.Errors) {
+            Write-Host ("    Row {0,3}  {1,-5}  {2}" -f $e.Row, $e.Field, $e.Message) -ForegroundColor Red
+        }
+        Write-Host ""
+        Write-ErrorMsg "Fix the CSV and re-run."
+        return
+    }
+    Write-Success "Validation passed: $($validation.Rows.Count) row(s) ready."
 
     $previousMode = Get-PreviewMode
     if ($WhatIf.IsPresent -and -not $previousMode) { Set-PreviewMode -Enabled $true }
+    $dryRun = Get-PreviewMode
+    if ($dryRun) { Write-Warn "PREVIEW mode -- no tenant changes will be made." }
     try {
-        $results = New-Object System.Collections.ArrayList
-        for ($i = 0; $i -lt $rows.Count; $i++) {
-            $r = $rows[$i]
-            $upn = [string]$r.UPN
-            $reason = if ($r.Reason) { [string]$r.Reason } else { 'Bulk removal' }
-            Write-Progress -Activity "Bulk guest removal" -Status $upn -PercentComplete (($i / $rows.Count) * 100)
-            $status = 'Pending'
-            try { Remove-Guest -UPN $upn -Reason $reason; $status = if (Get-PreviewMode) { 'Preview' } else { 'Removed' } }
-            catch { $status = "Failed: $($_.Exception.Message)" }
-            [void]$results.Add([PSCustomObject]@{ UPN = $upn; Status = $status; Reason = $reason })
+        if (-not (Connect-ForTask 'GuestUsers')) { Write-ErrorMsg "Could not connect."; return }
+
+        # ---- Pre-flight: classify every identifier BEFORE deleting. ----
+        Write-InfoMsg "Verifying each identifier resolves to a Guest user..."
+        $toRemove = New-Object System.Collections.ArrayList
+        $results  = New-Object System.Collections.ArrayList   # accumulates skipped rows too
+        foreach ($row in $validation.Rows) {
+            $upn = $row.UPN
+            $u = $null
+            try {
+                $u = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/users/$(ConvertTo-GraphUserSegment $upn)?`$select=id,userType,userPrincipalName" -ErrorAction Stop
+            } catch {
+                [void]$results.Add([PSCustomObject]@{ UPN = $upn; Status = 'NotFound'; Reason = 'Not found in tenant' })
+                continue
+            }
+            $utype = [string]$u.userType
+            if ($utype -ne 'Guest' -and -not $AllowNonGuest) {
+                [void]$results.Add([PSCustomObject]@{ UPN = $upn; Status = 'SkippedNotGuest'; Reason = "userType='$utype' (not Guest)" })
+                continue
+            }
+            [void]$toRemove.Add([PSCustomObject]@{ UPN = $upn; Reason = $row.Reason })
         }
-        Write-Progress -Activity "Bulk guest removal" -Completed
+
+        $notFound = @($results | Where-Object { $_.Status -eq 'NotFound' })
+        $notGuest = @($results | Where-Object { $_.Status -eq 'SkippedNotGuest' })
+        Write-Host ""
+        Write-InfoMsg ("Resolved: {0} guest(s) to remove, {1} not found, {2} non-guest." -f $toRemove.Count, $notFound.Count, $notGuest.Count)
+        if ($notGuest.Count -gt 0) {
+            Write-Warn "NOT guests -- these will be SKIPPED (use the offboard flow for members):"
+            foreach ($x in $notGuest) { Write-Host ("    - {0}  [{1}]" -f $x.UPN, $x.Reason) -ForegroundColor Yellow }
+        }
+        if ($notFound.Count -gt 0) {
+            Write-Warn "Not found in tenant -- skipped:"
+            foreach ($x in $notFound) { Write-Host ("    - {0}" -f $x.UPN) -ForegroundColor Yellow }
+        }
+
+        if ($toRemove.Count -eq 0) {
+            Write-Warn "No guest users to remove after pre-flight."
+        } else {
+            $modeLabel = if ($dryRun) { "PREVIEW (no changes)" } else { "LIVE -- guests WILL be deleted" }
+            if (-not (Confirm-Action ("About to remove {0} guest user(s) in {1}. Proceed?" -f $toRemove.Count, $modeLabel))) {
+                Write-InfoMsg "Cancelled."
+                return
+            }
+            for ($i = 0; $i -lt $toRemove.Count; $i++) {
+                $g = $toRemove[$i]
+                Write-Progress -Activity "Bulk guest removal" -Status ("{0} ({1} of {2})" -f $g.UPN, ($i + 1), $toRemove.Count) -PercentComplete ([int](($i / $toRemove.Count) * 100))
+                $res = $null
+                try { $res = Remove-Guest -UPN $g.UPN -Reason $g.Reason -AllowNonGuest:$AllowNonGuest }
+                catch { $res = $null }
+                $status = if ($res -and $res.Status) { [string]$res.Status } else { 'Failed' }
+                $reason = if ($res -and $res.Reason) { [string]$res.Reason } else { $g.Reason }
+                [void]$results.Add([PSCustomObject]@{ UPN = $g.UPN; Status = $status; Reason = $reason })
+            }
+            Write-Progress -Activity "Bulk guest removal" -Completed
+        }
+
+        # ---- Result CSV ----
         $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
         $out = Join-Path (Split-Path -Parent (Resolve-Path $Path)) ("bulk-guest-removal-$stamp.csv")
-        $results | Export-Csv -LiteralPath $out -NoTypeInformation -Force
-        Write-Success "Result CSV: $out"
+        try {
+            $results | Export-Csv -LiteralPath $out -NoTypeInformation -Force
+            Write-Host ""
+            Write-Success "Result CSV: $out"
+        } catch { Write-ErrorMsg "Could not write result CSV: $_" }
+
+        # ---- Summary ----
+        $removed = @($results | Where-Object { $_.Status -eq 'Removed' }).Count
+        $preview = @($results | Where-Object { $_.Status -eq 'Preview' }).Count
+        $failed  = @($results | Where-Object { $_.Status -eq 'Failed' -or $_.Status -eq 'NotConnected' }).Count
+        $nf      = @($results | Where-Object { $_.Status -eq 'NotFound' }).Count
+        $ng      = @($results | Where-Object { $_.Status -eq 'SkippedNotGuest' -or $_.Status -eq 'NotAGuest' }).Count
+        Write-Host ""
+        Write-Host "  Bulk guest removal summary:" -ForegroundColor White
+        Write-StatusLine "Removed"              $removed  "Green"
+        if ($preview -gt 0) { Write-StatusLine "Preview" $preview "Yellow" }
+        Write-StatusLine "Failed"               $failed   $(if ($failed -gt 0) { 'Red' } else { 'Gray' })
+        Write-StatusLine "Not found"            $nf       $(if ($nf -gt 0) { 'Yellow' } else { 'Gray' })
+        Write-StatusLine "Skipped (non-guest)"  $ng       $(if ($ng -gt 0) { 'Yellow' } else { 'Gray' })
+        Write-Host ""
     } finally { Set-PreviewMode -Enabled $previousMode }
 }
 
@@ -431,13 +643,13 @@ function Start-GuestUsersMenu {
                 if (-not $upn) { continue }
                 $reason = Read-UserInput "Reason"
                 if (-not $reason) { Write-Warn "Reason is required for audit."; continue }
-                if (Confirm-Action "DELETE guest $upn ($reason)?") { Remove-Guest -UPN $upn -Reason $reason }
+                if (Confirm-Action "DELETE guest $upn ($reason)?") { Remove-Guest -UPN $upn -Reason $reason | Out-Null }
                 Pause-ForUser
             }
             7 {
-                $p = Read-UserInput "Path to CSV (UPN, Reason)"
+                $p = Read-UserInput "Path to CSV (UPN[,Reason]; sample: samples/bulk-guest-removal-sample.csv)"
                 if (-not $p) { continue }
-                $dry = Confirm-Action "Run as DRY-RUN first?"
+                $dry = Confirm-Action "Run as DRY-RUN first (validate + preview, no tenant changes)?"
                 Invoke-BulkGuestRemoval -Path $p.Trim('"').Trim("'") -WhatIf:$dry
                 Pause-ForUser
             }

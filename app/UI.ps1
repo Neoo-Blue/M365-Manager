@@ -92,7 +92,7 @@ function Write-InfoMsg  { param([string]$Msg) Write-Host "  [i] $Msg" -Foregroun
 #  or fail fast -- never block on Read-Host.
 # ============================================================
 
-if ($null -eq (Get-Variable -Name NonInteractive -Scope Script -ErrorAction SilentlyContinue)) {
+if ($null -eq (Get-Variable -Name NonInteractive -Scope Script -ErrorAction Ignore)) {
     $script:NonInteractive = $false
 }
 
