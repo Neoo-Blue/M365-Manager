@@ -1,5 +1,5 @@
 # ============================================================
-#  MFAManager.ps1 — MFA method inspection + management
+#  MFAManager.ps1 -- MFA method inspection + management
 #
 #  Wraps Graph /users/{id}/authentication/methods endpoints.
 #  Required scope: UserAuthenticationMethod.ReadWrite.All
@@ -236,7 +236,7 @@ function Reset-UserMFA {
 }
 
 # ============================================================
-#  Compliance views — slow when run against the whole tenant.
+#  Compliance views -- slow when run against the whole tenant.
 #  Each prompts the operator for a scan cap so they can iterate.
 # ============================================================
 

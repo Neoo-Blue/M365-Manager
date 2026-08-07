@@ -19,7 +19,10 @@ function Get-MSPDashboardDir {
     return $d
 }
 
-function ConvertTo-HtmlSafe { param([string]$Text); if ($null -eq $Text) { return '' }; return ([System.Web.HttpUtility]::HtmlEncode([string]$Text)) }
+# System.Web ships only with .NET Framework, so [System.Web.HttpUtility]
+# resolves under Windows PowerShell 5.1 and throws under PowerShell 7.
+# System.Net.WebUtility exists on both and encodes the same characters.
+function ConvertTo-HtmlSafe { param([string]$Text); if ($null -eq $Text) { return '' }; return ([System.Net.WebUtility]::HtmlEncode([string]$Text)) }
 
 function Get-PostureDotColor {
     param([string]$Status)
@@ -237,7 +240,6 @@ function Update-MSPDashboard {
     $weightedMfa = if ($totalUsers -gt 0) { [math]::Round($weightedNumerator / $totalUsers, 2) } else { 0.0 }
     $totals = @{ TotalUsers = $totalUsers; TotalMonthlyUsd = $totalSpend; WeightedMfaPct = $weightedMfa }
 
-    Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
     $html = Build-MSPDashboardHtml -TenantSummaries $summaries -PortfolioTotals $totals
 
     $dir   = Get-MSPDashboardDir

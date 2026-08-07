@@ -1,5 +1,5 @@
 # ============================================================
-#  AuditViewer.ps1 — read, filter, paginate, export audit logs
+#  AuditViewer.ps1 -- read, filter, paginate, export audit logs
 #
 #  Two log streams on disk:
 #    %LOCALAPPDATA%\M365Manager\audit\session-*.log  (general)

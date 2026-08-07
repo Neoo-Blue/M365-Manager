@@ -1,5 +1,5 @@
 # ============================================================
-#  Undo.ps1 — per-operation undo for reversible audit entries
+#  Undo.ps1 -- per-operation undo for reversible audit entries
 #
 #  Phase 2: every call site that wraps a reversible cmdlet through
 #  Invoke-Action passes -ActionType / -Target / -ReverseType, which
@@ -150,7 +150,7 @@ $script:UndoHandlers = @{
 }
 
 # ============================================================
-#  Sidecar state — track which entryIds have been reversed so
+#  Sidecar state -- track which entryIds have been reversed so
 #  Show-RecentUndoable can mark them and Invoke-Undo can refuse
 #  double-reversals.
 # ============================================================

@@ -1,5 +1,5 @@
 # ============================================================
-#  BulkOnboard.ps1 — CSV-driven onboarding
+#  BulkOnboard.ps1 -- CSV-driven onboarding
 #
 #  Public surface:
 #    Start-BulkOnboard            interactive wrapper (menu entry)

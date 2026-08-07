@@ -1,5 +1,5 @@
 # ============================================================
-#  BulkOffboard.ps1 — CSV-driven offboarding
+#  BulkOffboard.ps1 -- CSV-driven offboarding
 #
 #  Public surface:
 #    Start-BulkOffboard            interactive wrapper (menu entry)

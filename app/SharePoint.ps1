@@ -1,5 +1,5 @@
 # ============================================================
-#  SharePoint.ps1 — SPO site, sharing, and lightweight
+#  SharePoint.ps1 -- SPO site, sharing, and lightweight
 #  provisioning operations.
 #
 #  Builds on the SPO connection set up in Auth.ps1's Connect-SPO

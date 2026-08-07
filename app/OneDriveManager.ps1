@@ -1,5 +1,5 @@
 # ============================================================
-#  OneDriveManager.ps1 — leaver's OneDrive handoff orchestration
+#  OneDriveManager.ps1 -- leaver's OneDrive handoff orchestration
 #
 #  Required permissions:
 #    - SharePoint Administrator (for SPO cmdlets)

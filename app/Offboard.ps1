@@ -1,5 +1,5 @@
 # ============================================================
-#  Offboard.ps1 — User offboarding (canonical 12-step flow)
+#  Offboard.ps1 -- User offboarding (canonical 12-step flow)
 #
 #  Order (matches Phase 3 spec):
 #     0  Revoke MFA methods

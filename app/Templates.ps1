@@ -1,5 +1,5 @@
 # ============================================================
-#  Templates.ps1 — Onboarding role-template loader
+#  Templates.ps1 -- Onboarding role-template loader
 #
 #  Scans templates/role-*.json, validates the schema, and merges
 #  template defaults into operator-supplied user data. Tenant-side
@@ -135,7 +135,7 @@ function Get-OnboardTemplates {
                 if (-not ($raw.PSObject.Properties.Name -contains $req)) { $missing += $req }
             }
             if ($missing.Count -gt 0) {
-                Write-Warn "Skipping template '$($f.Name)' — missing required field(s): $($missing -join ', ')"
+                Write-Warn "Skipping template '$($f.Name)' -- missing required field(s): $($missing -join ', ')"
                 continue
             }
             $key = [System.IO.Path]::GetFileNameWithoutExtension($f.Name).Substring(5)  # strip "role-"
@@ -235,7 +235,7 @@ function Get-OnboardTemplate {
 function Resolve-OnboardTemplate {
     <#
         Merge a template into operator-supplied $UserData. Operator
-        values always win — template only fills gaps. Returns a new
+        values always win -- template only fills gaps. Returns a new
         hashtable; neither input is mutated. The returned hashtable
         carries the template under the __Template key so downstream
         onboarding steps (license/group/SM assignment) can read it.

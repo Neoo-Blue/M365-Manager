@@ -1,5 +1,5 @@
 # ============================================================
-#  GuestUsers.ps1 — guest lifecycle
+#  GuestUsers.ps1 -- guest lifecycle
 #
 #  Discovery via Graph /users?$filter=userType eq 'Guest', joined
 #  with /auditLogs/signIns activity. Recertification campaigns are

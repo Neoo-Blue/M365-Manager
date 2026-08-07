@@ -1,5 +1,5 @@
 # ============================================================
-#  SignInLookup.ps1 — Microsoft Graph sign-in log lookup
+#  SignInLookup.ps1 -- Microsoft Graph sign-in log lookup
 #
 #  Wraps GET /v1.0/auditLogs/signIns. Requires the connected
 #  Graph context to hold AuditLog.Read.All and Directory.Read.All

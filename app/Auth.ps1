@@ -330,6 +330,79 @@ function Repair-MgGraphSiblings {
     }
 }
 
+function Test-IsGraphAssemblyConflict {
+    <#
+        True when an error message is the "two modules loaded different
+        copies of the same dependency" failure, rather than anything to do
+        with credentials, scopes, licences, or the tenant.
+
+        The signature case is:
+            The type initializer for 'Azure.Identity.AuthenticationRecord'
+            threw an exception.
+
+        Azure.Identity builds static fields with JsonEncodedText.Encode(),
+        so the very first touch of that type runs a static constructor that
+        reaches into System.Text.Json. Windows PowerShell 5.1 has no
+        assembly isolation, so if ExchangeOnlineManagement or the
+        SharePoint Online module already loaded a different System.Text.Json
+        into this process, that constructor throws and Graph is unusable
+        for the remaining life of the window.
+
+        Distinct from Write-MgGraphAssemblyMismatchHelp, which covers
+        Microsoft.Graph siblings disagreeing with EACH OTHER on disk. That
+        one is curable by option 98; this one is not.
+    #>
+    param([string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
+    return [bool](
+        ($Message -match 'type initializer for .*Azure\.Identity') -or
+        ($Message -match 'TypeInitializationException') -or
+        ($Message -match 'Could not load file or assembly.*System\.Text\.Json') -or
+        ($Message -match 'Could not load file or assembly.*Azure\.(Core|Identity)')
+    )
+}
+
+function Write-GraphAssemblyConflictHelp {
+    <#
+        Explain a dependency collision in operator language. Deliberately
+        does NOT offer option 98: reinstalling Microsoft.Graph cannot fix
+        a conflict with a DIFFERENT module's assemblies, and sending the
+        operator through an elevated repair that changes nothing is worse
+        than telling them the truth.
+    #>
+    param([string]$Message)
+    Write-Host ""
+    Write-ErrorMsg "Microsoft Graph could not initialize its authentication stack."
+    Write-Host ""
+    Write-Host "  This is NOT a password, licence, or permission problem." -ForegroundColor Yellow
+    Write-Host "  Azure.Identity (inside Microsoft.Graph.Authentication) could not" -ForegroundColor Yellow
+    Write-Host "  start because another module had already loaded a different version" -ForegroundColor Yellow
+    Write-Host "  of a shared assembly into this window, almost always Exchange Online" -ForegroundColor Yellow
+    Write-Host "  or SharePoint Online loading its own copy of System.Text.Json." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  It cannot be undone inside this window. Once the wrong assembly is" -ForegroundColor Yellow
+    Write-Host "  loaded it stays loaded until PowerShell exits, so retrying, device" -ForegroundColor Yellow
+    Write-Host "  code login, and reinstalling Microsoft.Graph all hit the same wall." -ForegroundColor Yellow
+    Write-Host ""
+    # Literal colors, not $script:Colors.*, on purpose. This block runs when
+    # the session is already broken, and a null palette would make Write-Host
+    # throw "Cannot convert null to type System.ConsoleColor" on top of the
+    # error we are trying to explain.
+    Write-Host "  Durable fix: install PowerShell 7, then run Launch.bat again." -ForegroundColor Cyan
+    Write-Host "    winget install --id Microsoft.PowerShell --source winget" -ForegroundColor Cyan
+    Write-Host "  Launch.bat picks up pwsh automatically once it exists. PowerShell 7" -ForegroundColor White
+    Write-Host "  gives the Graph SDK its own AssemblyLoadContext, so it stops" -ForegroundColor White
+    Write-Host "  competing with Exchange Online for shared assemblies." -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Meanwhile on Windows PowerShell 5.1: close this window and relaunch." -ForegroundColor Cyan
+    Write-Host "  The tool now connects Graph before Exchange, which wins the race in" -ForegroundColor White
+    Write-Host "  most tenants. Do not connect Exchange Online in this window first." -ForegroundColor White
+    Write-Host ""
+    Write-Host "  To capture detail for a bug report:" -ForegroundColor Gray
+    Write-Host "    `$Error[0].Exception.InnerException | Format-List * -Force" -ForegroundColor Cyan
+    Write-Host ""
+}
+
 function Write-MgGraphAssemblyMismatchHelp {
     <#
         If $Message looks like a "Could not load file or assembly
@@ -339,6 +412,16 @@ function Write-MgGraphAssemblyMismatchHelp {
         chatter; $false when the message doesn't match.
     #>
     param([Parameter(Mandatory)][string]$Message)
+
+    # A cross-module dependency collision is a different disease with a
+    # different cure, so hand it off before the sibling-version regex gets
+    # a look at it. Every existing caller of this function inherits the
+    # better message for free.
+    if (Test-IsGraphAssemblyConflict -Message $Message) {
+        Write-GraphAssemblyConflictHelp -Message $Message
+        return $true
+    }
+
     if ($Message -notmatch 'Could not load file or assembly.*Microsoft\.Graph') { return $false }
     $version = ''
     if ($Message -match 'Version=([\d\.]+)') { $version = $Matches[1] }
@@ -482,6 +565,11 @@ function Assert-ModulesInstalled {
     # IMPORTANT: ExchangeOnlineManagement MUST be first.
     # It loads its MSAL assemblies first, preventing version conflicts
     # when Graph modules try to load a different MSAL version later.
+    #
+    # Do NOT read this as "Exchange should also connect first". Import order
+    # settles MSAL; connect order settles Azure.Identity and System.Text.Json,
+    # which are only touched on the first token request. Graph has to win
+    # THAT race, which is what Get-ServiceConnectOrder handles.
     $requiredModules = @(
         @{ Name = "ExchangeOnlineManagement";                    TestCmd = "Connect-ExchangeOnline" },
         @{ Name = "Microsoft.Graph.Authentication";              TestCmd = "Get-MgContext" },
@@ -653,15 +741,25 @@ function Assert-ModulesInstalled {
         # ---- Step 2: Import into session ----
         $loaded = Get-Module -Name $modName
         if (-not $loaded) {
+            # Microsoft.Online.SharePoint.PowerShell is a .NET Framework only
+            # module with no PowerShell 7 build. PowerShell 7 can still drive
+            # it, but only through the Windows PowerShell compatibility proxy
+            # that -UseWindowsPowerShell sets up. Without this the import
+            # fails outright under pwsh and SPO features silently vanish.
+            $importArgs = @{ Name = $modName; Force = $true; ErrorAction = 'Stop' }
+            if ($modName -eq 'Microsoft.Online.SharePoint.PowerShell' -and $PSVersionTable.PSEdition -eq 'Core') {
+                $importArgs['UseWindowsPowerShell'] = $true
+                Write-InfoMsg "$modName has no PowerShell 7 build; importing via the Windows PowerShell compatibility session."
+            }
             try {
-                Import-Module $modName -ErrorAction Stop -Force
+                Import-Module @importArgs
                 Write-Success "$modName v$($installed.Version) loaded."
             } catch {
                 Write-Warn "Could not import $modName : $_"
                 # Try removing and reimporting
                 try {
                     Remove-Module $modName -Force -ErrorAction SilentlyContinue
-                    Import-Module $modName -ErrorAction Stop -Force
+                    Import-Module @importArgs
                     Write-Success "$modName v$($installed.Version) loaded (retry)."
                 } catch {
                     $emsg = "$_"
@@ -1006,11 +1104,11 @@ function Clear-StartupSession {
         Runs at every launch to defeat two scenarios:
           1. User launched inside a PowerShell host that already had an
              active Connect-MgGraph / Connect-ExchangeOnline / Connect-IPPSSession
-             — those sessions would otherwise silently leak into this tool.
+             -- those sessions would otherwise silently leak into this tool.
           2. A stale on-disk token cache from a previous run causes a
              surprise auto-login to the wrong tenant/account.
         Does NOT touch the shared MSAL cache under
-        $env:LOCALAPPDATA\.IdentityService — that is used by other Microsoft
+        $env:LOCALAPPDATA\.IdentityService -- that is used by other Microsoft
         apps on this machine and clearing it would sign the user out of them.
     #>
     Write-SectionHeader "Clearing Previous Session"
@@ -1056,7 +1154,7 @@ function Clear-StartupSession {
         }
     }
 
-    # ---- Reset in-memory state (defensive — module-load already initialized it) ----
+    # ---- Reset in-memory state (defensive -- module-load already initialized it) ----
     $script:SessionState.MgGraph            = $false
     $script:SessionState.ExchangeOnline     = $false
     $script:SessionState.ComplianceCenter   = $false
@@ -1128,7 +1226,16 @@ function Connect-Graph {
         Verify-GraphScopes
         return $true
     } catch {
-        Write-Warn "Browser login failed: $_"
+        $emsg = "$_"
+        # A failed type initializer is permanent for the life of this
+        # process. The device code attempt loads the identical assemblies
+        # and dies identically, so retrying only prints the same alarming
+        # wall of text a second time and buries the real explanation.
+        if (Test-IsGraphAssemblyConflict -Message $emsg) {
+            Write-GraphAssemblyConflictHelp -Message $emsg
+            return $false
+        }
+        Write-Warn "Browser login failed: $emsg"
     }
 
     # Attempt 2: Device code
@@ -1142,7 +1249,12 @@ function Connect-Graph {
         Verify-GraphScopes
         return $true
     } catch {
-        Write-ErrorMsg "All Graph connection methods failed: $_"
+        $emsg = "$_"
+        if (Test-IsGraphAssemblyConflict -Message $emsg) {
+            Write-GraphAssemblyConflictHelp -Message $emsg
+            return $false
+        }
+        Write-ErrorMsg "All Graph connection methods failed: $emsg"
         return $false
     }
 }
@@ -1543,6 +1655,37 @@ function Connect-SPO {
 #  Per-task connection sets
 # ============================================================
 
+# Windows PowerShell 5.1 has no assembly isolation, so within one process
+# the first module to load a shared dependency wins for every module that
+# follows. Azure.Identity, buried inside Microsoft.Graph.Authentication, is
+# the fussiest consumer of System.Text.Json in this stack: when Exchange
+# Online or SharePoint Online loads its own copy first, the static
+# constructor of Azure.Identity.AuthenticationRecord throws and Graph can
+# never connect in that window.
+#
+# Connecting Graph first lets Azure.Identity bind the versions it was built
+# against before anything else gets a vote. Note this is CONNECT order, not
+# IMPORT order: Assert-ModulesInstalled still imports ExchangeOnlineManagement
+# first on purpose (see the comment there), because the MSAL collision it
+# guards against happens at import time while this one happens on the first
+# token request.
+#
+# Flip to $false to restore the literal per-task order if a tenant ever
+# turns out to need Exchange to win the race instead.
+$script:ConnectGraphFirst = $true
+
+function Get-ServiceConnectOrder {
+    <#
+        Return $Services with Graph hoisted to the front. Order-preserving
+        for everything else, and a no-op when Graph isn't in the list or
+        the preference is off.
+    #>
+    param([string[]]$Services)
+    if (-not $script:ConnectGraphFirst) { return $Services }
+    if ($Services -notcontains 'Graph')  { return $Services }
+    return @('Graph') + @($Services | Where-Object { $_ -ne 'Graph' })
+}
+
 function Connect-ForTask {
     param(
         [ValidateSet(
@@ -1573,7 +1716,7 @@ function Connect-ForTask {
         GuestUsers       = @("Graph","SPO")
     }
 
-    $services = $map[$Task]
+    $services = Get-ServiceConnectOrder -Services $map[$Task]
     $needed = @()
     foreach ($svc in $services) {
         switch ($svc) {

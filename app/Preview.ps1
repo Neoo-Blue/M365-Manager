@@ -1,5 +1,5 @@
 # ============================================================
-#  Preview.ps1 — Dry-run / preview-mode wrapper
+#  Preview.ps1 -- Dry-run / preview-mode wrapper
 #
 #  Invoke-Action is the single point of execution for every
 #  state-mutating Graph / EXO / AzureAD call. In LIVE mode it runs

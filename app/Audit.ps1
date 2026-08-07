@@ -1,5 +1,5 @@
 # ============================================================
-#  Audit.ps1 — General audit log for state-mutating operations
+#  Audit.ps1 -- General audit log for state-mutating operations
 #
 #  Distinct from the AI assistant's per-session log (mark-*.log).
 #  Every Invoke-Action call (Preview.ps1), every Bulk* operation,

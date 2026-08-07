@@ -83,12 +83,12 @@ Set manager: Set-MgUserManagerByRef -UserId "UID" -BodyParameter @{"@odata.id"="
 "@
 
 # ============================================================
-#  Config — API key is DPAPI-encrypted at rest (per-user, per-machine).
+#  Config -- API key is DPAPI-encrypted at rest (per-user, per-machine).
 #  Stored values are prefixed:
-#     DPAPI:<hex>  → Windows DPAPI ciphertext (preferred)
-#     B64:<base64> → base64 fallback on non-Windows (NOT real encryption,
-#                    just obfuscation — flagged with a warning at save time)
-#     <anything else> → legacy plaintext, migrated on load
+#     DPAPI:<hex>  -> Windows DPAPI ciphertext (preferred)
+#     B64:<base64> -> base64 fallback on non-Windows (NOT real encryption,
+#                    just obfuscation -- flagged with a warning at save time)
+#     <anything else> -> legacy plaintext, migrated on load
 # ============================================================
 
 function Protect-ApiKey {
@@ -114,7 +114,7 @@ function Unprotect-ApiKey {
             $secure = ConvertTo-SecureString $StoredKey.Substring(6)
             return [System.Net.NetworkCredential]::new("", $secure).Password
         } catch {
-            throw "Failed to decrypt API key. Likely cause: config was encrypted by a different user account or on a different machine. Re-run AI setup (option 99 → /config)."
+            throw "Failed to decrypt API key. Likely cause: config was encrypted by a different user account or on a different machine. Re-run AI setup (option 99 -> /config)."
         }
     }
     if ($StoredKey -like "B64:*") {
@@ -122,7 +122,7 @@ function Unprotect-ApiKey {
             return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($StoredKey.Substring(4)))
         } catch { throw "Failed to decode API key (corrupt base64). Re-run AI setup." }
     }
-    return $StoredKey  # legacy plaintext — caller is expected to re-save through Save-AIConfig to migrate
+    return $StoredKey  # legacy plaintext -- caller is expected to re-save through Save-AIConfig to migrate
 }
 
 function Get-AIConfig {
@@ -164,7 +164,7 @@ function Get-AIConfig {
         if ($p -is [hashtable]) {
             foreach ($k in $p.Keys) { if ($k -notlike '_comment*') { $privacyHt[$k] = $p[$k] } }
         } else {
-            # PSCustomObject from JSON — normalize and drop _comment_* documentation keys
+            # PSCustomObject from JSON -- normalize and drop _comment_* documentation keys
             foreach ($prop in $p.PSObject.Properties) {
                 if ($prop.Name -like '_comment*') { continue }
                 $privacyHt[$prop.Name] = $prop.Value
@@ -179,7 +179,7 @@ function Get-AIConfig {
             $wroteDefaults = $true
         }
     }
-    # TrustedProviders may come back as a typed array — normalize to plain array of lowercase strings
+    # TrustedProviders may come back as a typed array -- normalize to plain array of lowercase strings
     if ($privacyHt['TrustedProviders']) {
         $privacyHt['TrustedProviders'] = @($privacyHt['TrustedProviders'] | ForEach-Object { ([string]$_).ToLowerInvariant() })
     } else {
@@ -538,14 +538,14 @@ function Limit-ResultsForAI {
 #  on assistant exit.
 #
 #  Secrets (JWT, sk-*, sk-ant-*, cert thumbprints) are ALWAYS
-#  tokenized regardless of provider — that rule is hardcoded, not
+#  tokenized regardless of provider -- that rule is hardcoded, not
 #  controlled by config.
 # ============================================================
 
 $script:PrivacyPatterns = @(
-    # Order matters — higher-specificity patterns first.
+    # Order matters -- higher-specificity patterns first.
     # SecretsOnly=$true means these run even when ExternalRedaction is
-    # Disabled and even for local providers — secrets must never leak.
+    # Disabled and even for local providers -- secrets must never leak.
     @{ Type='JWT';    Regex='(?<![\w.-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'; SecretsOnly=$true  },
     @{ Type='SECRET'; Regex='sk-ant-[A-Za-z0-9_\-]{20,}';                                    SecretsOnly=$true  },
     @{ Type='SECRET'; Regex='sk-[A-Za-z0-9]{20,}';                                            SecretsOnly=$true  },
@@ -677,7 +677,7 @@ function Convert-ToSafePayload {
 
     if (-not $SecretsOnly) {
         # Display-name capture from common cmdlet idioms. Three forms,
-        # tried in order — quoted always wins over bareword so we don't
+        # tried in order -- quoted always wins over bareword so we don't
         # half-tokenize values that are already inside quotes:
         #   (1)  displayName : "Name"  or  displayName : 'Name'
         #   (2)  -DisplayName / -MailNickname / -SamAccountName "Name"
@@ -776,7 +776,7 @@ $script:AICmdAllowList = @(
     '*-Mg*',
     'Invoke-MgGraphRequest',
 
-    # Exchange Online — specific cmdlets the AI prompt teaches
+    # Exchange Online -- specific cmdlets the AI prompt teaches
     'Get-Mailbox', 'Set-Mailbox',
     'Get-EXOMailbox*', 'Get-MailboxStatistics',
     'Get-MailboxPermission', 'Add-MailboxPermission', 'Remove-MailboxPermission',
@@ -793,7 +793,7 @@ $script:AICmdAllowList = @(
     'Get-ComplianceSearch', 'New-ComplianceSearch', 'Start-ComplianceSearch',
     'Remove-ComplianceSearch', 'Get-ComplianceSearchAction',
 
-    # Pure pipeline / formatting — no side effects
+    # Pure pipeline / formatting -- no side effects
     'Select-Object', 'Where-Object', 'ForEach-Object', 'Sort-Object',
     'Group-Object', 'Measure-Object',
     'Format-Table', 'Format-List', 'Format-Wide', 'Out-String', 'Out-Default'
@@ -1269,7 +1269,7 @@ function Start-AIAssistant {
             $cleared = Reset-PrivacyMap
             $chatHistory = @()
             Write-AIAuditEntry -EventType "CLEAR" -Detail ("chat history + privacy map ({0} tokens) cleared" -f $cleared)
-            Write-Host "  [cleared — $cleared privacy token(s) dropped]" -ForegroundColor "DarkGray"; Write-Host ""; continue
+            Write-Host "  [cleared -- $cleared privacy token(s) dropped]" -ForegroundColor "DarkGray"; Write-Host ""; continue
         }
         if ($cmd -eq '/context') { Write-Host ""; Write-StatusLine "Tenant" "$($script:SessionState.TenantMode) $(if($script:SessionState.TenantName){"($($script:SessionState.TenantName))"})" "White"; Write-StatusLine "Graph" $(if($script:SessionState.MgGraph){"Connected"}else{"Auto"}) $(if($script:SessionState.MgGraph){"Green"}else{"Yellow"}); Write-StatusLine "EXO" $(if($script:SessionState.ExchangeOnline){"Connected"}else{"Auto"}) $(if($script:SessionState.ExchangeOnline){"Green"}else{"Yellow"}); Write-StatusLine "SCC" $(if($script:SessionState.ComplianceCenter){"Connected"}else{"Auto"}) $(if($script:SessionState.ComplianceCenter){"Green"}else{"Yellow"}); Write-StatusLine "AI" "$($config['Provider'])/$($config['Model'])" "Cyan"; Write-Host ""; continue }
         if ($cmd -eq '/tools') {

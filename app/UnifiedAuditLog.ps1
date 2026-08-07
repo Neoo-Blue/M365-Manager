@@ -1,5 +1,5 @@
 # ============================================================
-#  UnifiedAuditLog.ps1 — Search-UnifiedAuditLog wrapper
+#  UnifiedAuditLog.ps1 -- Search-UnifiedAuditLog wrapper
 #
 #  Different surface than SignInLookup.ps1:
 #    - Sign-ins are on Microsoft Graph (Invoke-MgGraphRequest)

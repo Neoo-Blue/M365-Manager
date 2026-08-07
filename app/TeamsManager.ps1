@@ -1,5 +1,5 @@
 # ============================================================
-#  TeamsManager.ps1 — Teams membership / ownership management
+#  TeamsManager.ps1 -- Teams membership / ownership management
 #
 #  Microsoft Graph endpoints used:
 #    GET  /users/{id}/joinedTeams                  -- list teams

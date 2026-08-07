@@ -203,7 +203,7 @@ function Start-M365Admin {
     Write-Host ""
 
     # Wipe any leftover in-memory connections and on-disk token cache from a
-    # prior run before showing tenant selection — guarantees a clean start.
+    # prior run before showing tenant selection -- guarantees a clean start.
     Clear-StartupSession
     Write-Host ""
 

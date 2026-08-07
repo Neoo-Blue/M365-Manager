@@ -396,7 +396,7 @@ function Search-AndAssignGroups {
 }
 
 # ============================================================
-#  Apply-Template* — consume a Resolve-OnboardTemplate result to
+#  Apply-Template* -- consume a Resolve-OnboardTemplate result to
 #  apply each piece of the role bundle. Each helper continues on
 #  per-item failure and logs a warning; the overall onboard does
 #  not abort. Unknown SKUs / groups / DLs / mailboxes are skipped
