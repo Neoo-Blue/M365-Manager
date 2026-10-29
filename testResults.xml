@@ -1,0 +1,716 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<test-results xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="nunit_schema_2.5.xsd" name="Pester" total="235" errors="0" failures="0" not-run="0" inconclusive="0" ignored="0" skipped="0" invalid="0" date="2026-08-07" time="15:18:04">
+  <environment platform="Darwin" machine-name="aerkin.local" user-domain="" clr-version="10.0.7" cwd="/Users/arafaterkin/m365-manager" os-version="24.3.0" nunit-version="2.5.8.0" user="arafaterkin" />
+  <culture-info current-culture="en-US" current-uiculture="en-US" />
+  <test-suite type="TestFixture" name="Pester" executed="True" result="Success" success="True" time="16.102" asserts="0" description="Pester">
+    <results>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/AICostTracker.Tests.ps1" executed="True" result="Success" success="True" time="1.4773" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/AICostTracker.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Get-AIModelPrice" executed="True" result="Success" success="True" time="0.1631" asserts="0" description="Get-AIModelPrice">
+            <results>
+              <test-case description="returns exact match for a known Anthropic model" name="Get-AIModelPrice.returns exact match for a known Anthropic model" time="0.1142" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="falls back to a family wildcard for an unrecognized opus variant" name="Get-AIModelPrice.falls back to a family wildcard for an unrecognized opus variant" time="0.0186" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns unknown / zero for a totally novel provider" name="Get-AIModelPrice.returns unknown / zero for a totally novel provider" time="0.0049" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="prices Ollama at zero via the catch-all" name="Get-AIModelPrice.prices Ollama at zero via the catch-all" time="0.0053" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Add-AICostEvent" executed="True" result="Success" success="True" time="0.9299" asserts="0" description="Add-AICostEvent">
+            <results>
+              <test-case description="computes USD = (in/1M)*inputPrice + (out/1M)*outputPrice" name="Add-AICostEvent.computes USD = (in/1M)*inputPrice + (out/1M)*outputPrice" time="0.3998" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="accumulates the running session total" name="Add-AICostEvent.accumulates the running session total" time="0.2132" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="records zero cost for Ollama without alerting" name="Add-AICostEvent.records zero cost for Ollama without alerting" time="0.0613" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="fires a budget alert when crossing 50% / 80% / 100%" name="Add-AICostEvent.fires a budget alert when crossing 50% / 80% / 100%" time="0.0885" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Show-AICostSummary" executed="True" result="Success" success="True" time="0.9808" asserts="0" description="Show-AICostSummary">
+            <results>
+              <test-case description="runs without throwing on a fresh state" name="Show-AICostSummary.runs without throwing on a fresh state" time="0.0461" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/AIPlanner.Tests.ps1" executed="True" result="Success" success="True" time="0.2808" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/AIPlanner.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="ConvertTo-PlanHashtable" executed="True" result="Success" success="True" time="0.0528" asserts="0" description="ConvertTo-PlanHashtable">
+            <results>
+              <test-case description="normalizes a PSCustomObject plan into a hashtable graph" name="ConvertTo-PlanHashtable.normalizes a PSCustomObject plan into a hashtable graph" time="0.0389" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="defaults missing dependsOn to an empty array" name="ConvertTo-PlanHashtable.defaults missing dependsOn to an empty array" time="0.0109" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Test-PlanShape" executed="True" result="Success" success="True" time="0.1337" asserts="0" description="Test-PlanShape">
+            <results>
+              <test-case description="rejects an empty plan" name="Test-PlanShape.rejects an empty plan" time="0.0114" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects an unknown tool name" name="Test-PlanShape.rejects an unknown tool name" time="0.0117" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects a forward dependency (step depends on later id)" name="Test-PlanShape.rejects a forward dependency (step depends on later id)" time="0.0094" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects a duplicate step id" name="Test-PlanShape.rejects a duplicate step id" time="0.005" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects meta tools used as plan steps" name="Test-PlanShape.rejects meta tools used as plan steps" time="0.0074" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="accepts a valid two-step plan with one dependency" name="Test-PlanShape.accepts a valid two-step plan with one dependency" time="0.007" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-TopologicalStepOrder" executed="True" result="Success" success="True" time="0.1543" asserts="0" description="Get-TopologicalStepOrder">
+            <results>
+              <test-case description="returns steps in dependency-respecting order" name="Get-TopologicalStepOrder.returns steps in dependency-respecting order" time="0.0181" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Set-AIPlanMode" executed="True" result="Success" success="True" time="0.1617" asserts="0" description="Set-AIPlanMode">
+            <results>
+              <test-case description="round-trips through Get-AIPlanMode" name="Set-AIPlanMode.round-trips through Get-AIPlanMode" time="0.005" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-AIPlanApprovalFlow (rejection path)" executed="True" result="Success" success="True" time="0.1967" asserts="0" description="Invoke-AIPlanApprovalFlow (rejection path)">
+            <results>
+              <test-case description="returns Status='rejected' under non-interactive default" name="Invoke-AIPlanApprovalFlow (rejection path).returns Status='rejected' under non-interactive default" time="0.0319" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/AISessionStore.Tests.ps1" executed="True" result="Success" success="True" time="0.8088" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/AISessionStore.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Save-AISession / Load-AISession round-trip" executed="True" result="Success" success="True" time="0.5697" asserts="0" description="Save-AISession / Load-AISession round-trip">
+            <results>
+              <test-case description="persists and reloads a one-message chat" name="Save-AISession / Load-AISession round-trip.persists and reloads a one-message chat" time="0.4172" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="resolves by title prefix when id is unknown" name="Save-AISession / Load-AISession round-trip.resolves by title prefix when id is unknown" time="0.0685" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="preserves the privacy map across save/load" name="Save-AISession / Load-AISession round-trip.preserves the privacy map across save/load" time="0.0778" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Show-AISessionList" executed="True" result="Success" success="True" time="0.6005" asserts="0" description="Show-AISessionList">
+            <results>
+              <test-case description="doesn't throw on an empty index" name="Show-AISessionList.doesn't throw on an empty index" time="0.0268" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Remove-AISession" executed="True" result="Success" success="True" time="0.6238" asserts="0" description="Remove-AISession">
+            <results>
+              <test-case description="returns false on missing id" name="Remove-AISession.returns false on missing id" time="0.0146" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Set-AISessionEphemeral" executed="True" result="Success" success="True" time="0.6297" asserts="0" description="Set-AISessionEphemeral">
+            <results>
+              <test-case description="suppresses auto-save unless -Force is passed" name="Set-AISessionEphemeral.suppresses auto-save unless -Force is passed" time="0.0035" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Export-AISession (redacted)" executed="True" result="Success" success="True" time="0.6925" asserts="0" description="Export-AISession (redacted)">
+            <results>
+              <test-case description="writes a file with redacted UPNs (no real values)" name="Export-AISession (redacted).writes a file with redacted UPNs (no real values)" time="0.0607" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/AIToolDispatch.Tests.ps1" executed="True" result="Success" success="True" time="0.7844" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/AIToolDispatch.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Get-AIToolCatalog" executed="True" result="Success" success="True" time="0.0271" asserts="0" description="Get-AIToolCatalog">
+            <results>
+              <test-case description="loads at least one tool from every ai-tools/*.json file" name="Get-AIToolCatalog.loads at least one tool from every ai-tools/*.json file" time="0.004" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="loads the submit_plan meta-tool" name="Get-AIToolCatalog.loads the submit_plan meta-tool" time="0.0078" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="marks Remove-Guest as destructive" name="Get-AIToolCatalog.marks Remove-Guest as destructive" time="0.0063" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="is case-insensitive on tool name lookup (PowerShell convention)" name="Get-AIToolCatalog.is case-insensitive on tool name lookup (PowerShell convention)" time="0.0052" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Test-AIToolInput (JSON Schema validation)" executed="True" result="Success" success="True" time="0.0759" asserts="0" description="Test-AIToolInput (JSON Schema validation)">
+            <results>
+              <test-case description="rejects missing required fields" name="Test-AIToolInput (JSON Schema validation).rejects missing required fields" time="0.0131" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="accepts a valid submit_plan input" name="Test-AIToolInput (JSON Schema validation).accepts a valid submit_plan input" time="0.0068" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects wrong parameter type" name="Test-AIToolInput (JSON Schema validation).rejects wrong parameter type" time="0.0262" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Build-AnthropicToolsPayload" executed="True" result="Success" success="True" time="0.2359" asserts="0" description="Build-AnthropicToolsPayload">
+            <results>
+              <test-case description="emits one tool entry per catalog item including meta tools" name="Build-AnthropicToolsPayload.emits one tool entry per catalog item including meta tools" time="0.0132" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="shapes each entry with name / description / input_schema" name="Build-AnthropicToolsPayload.shapes each entry with name / description / input_schema" time="0.143" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Build-OpenAIToolsPayload" executed="True" result="Success" success="True" time="0.6574" asserts="0" description="Build-OpenAIToolsPayload">
+            <results>
+              <test-case description="wraps each tool in { type=function, function={...} }" name="Build-OpenAIToolsPayload.wraps each tool in { type=function, function={...} }" time="0.4145" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Build-ToolResultMessage" executed="True" result="Success" success="True" time="0.6802" asserts="0" description="Build-ToolResultMessage">
+            <results>
+              <test-case description="shapes Anthropic tool_result blocks" name="Build-ToolResultMessage.shapes Anthropic tool_result blocks" time="0.0131" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="shapes OpenAI tool messages (one per result)" name="Build-ToolResultMessage.shapes OpenAI tool messages (one per result)" time="0.0063" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/AuditViewer.Tests.ps1" executed="True" result="Success" success="True" time="0.2945" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/AuditViewer.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="ConvertFrom-AuditLine" executed="True" result="Success" success="True" time="0.0634" asserts="0" description="ConvertFrom-AuditLine">
+            <results>
+              <test-case description="parses a JSONL line into a normalized record" name="ConvertFrom-AuditLine.parses a JSONL line into a normalized record" time="0.0276" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="parses a legacy session line with MODE= tag" name="ConvertFrom-AuditLine.parses a legacy session line with MODE= tag" time="0.0091" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="parses an AI mark log line (no MODE= tag)" name="ConvertFrom-AuditLine.parses an AI mark log line (no MODE= tag)" time="0.0069" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns null on garbage input" name="ConvertFrom-AuditLine.returns null on garbage input" time="0.0163" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Read-AuditEntries (mixed fixture)" executed="True" result="Success" success="True" time="0.0898" asserts="0" description="Read-AuditEntries (mixed fixture)">
+            <results>
+              <test-case description="reads JSONL + legacy lines + sorts by timestamp ascending" name="Read-AuditEntries (mixed fixture).reads JSONL + legacy lines + sorts by timestamp ascending" time="0.0238" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Filter-AuditEntries" executed="True" result="Success" success="True" time="0.1559" asserts="0" description="Filter-AuditEntries">
+            <results>
+              <test-case description="filters by UPN (target match)" name="Filter-AuditEntries.filters by UPN (target match)" time="0.0214" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="filters by ActionType" name="Filter-AuditEntries.filters by ActionType" time="0.0079" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="filters by Result" name="Filter-AuditEntries.filters by Result" time="0.0064" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="filters by date range" name="Filter-AuditEntries.filters by date range" time="0.0178" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Target substring matches both description and structured target values" name="Filter-AuditEntries.Target substring matches both description and structured target values" time="0.007" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Export-AuditEntriesCsv / Export-AuditEntriesHtml" executed="True" result="Success" success="True" time="0.2568" asserts="0" description="Export-AuditEntriesCsv / Export-AuditEntriesHtml">
+            <results>
+              <test-case description="CSV export round-trips through Import-Csv" name="Export-AuditEntriesCsv / Export-AuditEntriesHtml.CSV export round-trips through Import-Csv" time="0.0158" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="HTML export contains the expected table and a row per entry" name="Export-AuditEntriesCsv / Export-AuditEntriesHtml.HTML export contains the expected table and a row per entry" time="0.0175" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/BreakGlass.Tests.ps1" executed="True" result="Success" success="True" time="0.7003" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/BreakGlass.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Registry round-trip" executed="True" result="Success" success="True" time="0.6471" asserts="0" description="Registry round-trip">
+            <results>
+              <test-case description="Register, list, unregister" name="Registry round-trip.Register, list, unregister" time="0.5084" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Register is idempotent on UPN (updates instead of duplicates)" name="Registry round-trip.Register is idempotent on UPN (updates instead of duplicates)" time="0.0453" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Posture predicates (logic, no Graph)" executed="True" result="Success" success="True" time="0.6697" asserts="0" description="Posture predicates (logic, no Graph)">
+            <results>
+              <test-case description="passwordAge warns when older than threshold" name="Posture predicates (logic, no Graph).passwordAge warns when older than threshold" time="0.0066" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="passwordAge does NOT warn at 30 days" name="Posture predicates (logic, no Graph).passwordAge does NOT warn at 30 days" time="0.0034" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="recentSignIn warns inside 30-day window" name="Posture predicates (logic, no Graph).recentSignIn warns inside 30-day window" time="0.0034" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="recentSignIn does NOT warn outside 30-day window" name="Posture predicates (logic, no Graph).recentSignIn does NOT warn outside 30-day window" time="0.003" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/GuestUsers.Tests.ps1" executed="True" result="Success" success="True" time="0.3461" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/GuestUsers.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Stale-guest filter math" executed="True" result="Success" success="True" time="0.0201" asserts="0" description="Stale-guest filter math">
+            <results>
+              <test-case description="DaysSinceSignIn &gt;= threshold == stale" name="Stale-guest filter math.DaysSinceSignIn &gt;= threshold == stale" time="0.0133" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Treats 'no sign-in ever' (sentinel 9999) as stale at any threshold" name="Stale-guest filter math.Treats 'no sign-in ever' (sentinel 9999) as stale at any threshold" time="0.0035" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Recert state transitions" executed="True" result="Success" success="True" time="0.0828" asserts="0" description="Recert state transitions">
+            <results>
+              <test-case description="round-trips an empty array" name="Recert state transitions.round-trips an empty array" time="0.0168" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="queues a pending record and reads it back" name="Recert state transitions.queues a pending record and reads it back" time="0.0114" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="applies a Keep decision" name="Recert state transitions.applies a Keep decision" time="0.0162" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Domain pivot logic" executed="True" result="Success" success="True" time="0.0965" asserts="0" description="Domain pivot logic">
+            <results>
+              <test-case description="buckets guests by domain extracted from mail" name="Domain pivot logic.buckets guests by domain extracted from mail" time="0.0111" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Bulk guest removal CSV validation" executed="True" result="Success" success="True" time="0.1269" asserts="0" description="Bulk guest removal CSV validation">
+            <results>
+              <test-case description="keeps a valid row and applies the default reason when none is given" name="Bulk guest removal CSV validation.keeps a valid row and applies the default reason when none is given" time="0.0117" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="accepts a UserPrincipalName column as an alias for UPN" name="Bulk guest removal CSV validation.accepts a UserPrincipalName column as an alias for UPN" time="0.0075" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="accepts a bare object GUID as an identifier" name="Bulk guest removal CSV validation.accepts a bare object GUID as an identifier" time="0.0042" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="flags a missing UPN, non-identifier junk, and a duplicate" name="Bulk guest removal CSV validation.flags a missing UPN, non-identifier junk, and a duplicate" time="0.0042" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Remove-Guest safety guard" executed="True" result="Success" success="True" time="0.2596" asserts="0" description="Remove-Guest safety guard">
+            <results>
+              <test-case description="refuses to delete a Member account (returns NotAGuest)" name="Remove-Guest safety guard.refuses to delete a Member account (returns NotAGuest)" time="0.0257" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="reports NotFound when the user does not resolve" name="Remove-Guest safety guard.reports NotFound when the user does not resolve" time="0.0085" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="removes a genuine Guest and reports Removed" name="Remove-Guest safety guard.removes a genuine Guest and reports Removed" time="0.0503" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="honours -AllowNonGuest to delete a non-guest when explicitly forced" name="Remove-Guest safety guard.honours -AllowNonGuest to delete a non-guest when explicitly forced" time="0.0455" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Remove-Guest bulk fast path" executed="True" result="Success" success="True" time="0.272" asserts="0" description="Remove-Guest bulk fast path">
+            <results>
+              <test-case description="with -SkipConnect it never connects and skips ancillary teardown" name="Remove-Guest bulk fast path.with -SkipConnect it never connects and skips ancillary teardown" time="0.0099" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Graph throttling retry" executed="True" result="Success" success="True" time="0.2966" asserts="0" description="Graph throttling retry">
+            <results>
+              <test-case description="retries after a 429 and then succeeds" name="Graph throttling retry.retries after a 429 and then succeeds" time="0.0109" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="re-throws a non-throttle error without retrying" name="Graph throttling retry.re-throws a non-throttle error without retrying" time="0.0107" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/IncidentRegistry.Tests.ps1" executed="True" result="Success" success="True" time="3.034" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/IncidentRegistry.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Registry append + Get-Incident folding" executed="True" result="Success" success="True" time="0.16" asserts="0" description="Registry append + Get-Incident folding">
+            <results>
+              <test-case description="Get-Incident returns null on a miss" name="Registry append + Get-Incident folding.Get-Incident returns null on a miss" time="0.0185" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Get-Incident folds running + completed records into one view, newest fields winning" name="Registry append + Get-Incident folding.Get-Incident folds running + completed records into one view, newest fields winning" time="0.1387" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-Incidents filters" executed="True" result="Success" success="True" time="1.9214" asserts="0" description="Get-Incidents filters">
+            <results>
+              <test-case description="Status=Open excludes closed" name="Get-Incidents filters.Status=Open excludes closed" time="0.4993" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Status=Closed includes only closed / false-positive" name="Get-Incidents filters.Status=Closed includes only closed / false-positive" time="0.2635" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Days filter is inclusive of the window" name="Get-Incidents filters.Days filter is inclusive of the window" time="0.607" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Severity filter narrows correctly" name="Get-Incidents filters.Severity filter narrows correctly" time="0.3022" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Tenant scoping" executed="True" result="Success" success="True" time="2.0742" asserts="0" description="Tenant scoping">
+            <results>
+              <test-case description="incidents written under tenant A are not visible from tenant B" name="Tenant scoping.incidents written under tenant A are not visible from tenant B" time="0.1491" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Close-Incident" executed="True" result="Success" success="True" time="2.8367" asserts="0" description="Close-Incident">
+            <results>
+              <test-case description="appends a closed record + sets resolution" name="Close-Incident.appends a closed record + sets resolution" time="0.4548" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="false-positive sets status='false-positive'" name="Close-Incident.false-positive sets status='false-positive'" time="0.2769" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns false for unknown id" name="Close-Incident.returns false for unknown id" time="0.0275" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-IncidentList AI tool wrapper" executed="True" result="Success" success="True" time="2.8663" asserts="0" description="Get-IncidentList AI tool wrapper">
+            <results>
+              <test-case description="returns the {ok, result} shape" name="Get-IncidentList AI tool wrapper.returns the {ok, result} shape" time="0.0274" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Summarize-AuditEvents gating" executed="True" result="Success" success="True" time="2.8812" asserts="0" description="Summarize-AuditEvents gating">
+            <results>
+              <test-case description="refuses to run with default (UseAIForNarrative=Disabled)" name="Summarize-AuditEvents gating.refuses to run with default (UseAIForNarrative=Disabled)" time="0.0112" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/IncidentResponse.Tests.ps1" executed="True" result="Success" success="True" time="0.7497" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/IncidentResponse.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Get-IncidentSteps -- severity gating" executed="True" result="Success" success="True" time="0.078" asserts="0" description="Get-IncidentSteps -- severity gating">
+            <results>
+              <test-case description="Low: only forensic + report steps (1, 8, 9, 10, 13)" name="Get-IncidentSteps -- severity gating.Low: only forensic + report steps (1, 8, 9, 10, 13)" time="0.0166" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Medium: adds containment (2, 3, 4, 5)" name="Get-IncidentSteps -- severity gating.Medium: adds containment (2, 3, 4, 5)" time="0.0046" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="High (default): adds cleanup + notify (6, 7, 12)" name="Get-IncidentSteps -- severity gating.High (default): adds cleanup + notify (6, 7, 12)" time="0.0075" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Critical: same as High when -QuarantineSentMail is omitted (step 11 is opt-in)" name="Get-IncidentSteps -- severity gating.Critical: same as High when -QuarantineSentMail is omitted (step 11 is opt-in)" time="0.0134" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Critical + QuarantineSentMail: adds step 11 between 10 and 12" name="Get-IncidentSteps -- severity gating.Critical + QuarantineSentMail: adds step 11 between 10 and 12" time="0.0085" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="step order invariant: snapshot (1) is always first regardless of severity" name="Get-IncidentSteps -- severity gating.step order invariant: snapshot (1) is always first regardless of severity" time="0.0071" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="step order invariant: report (13) is always last regardless of severity" name="Get-IncidentSteps -- severity gating.step order invariant: report (13) is always last regardless of severity" time="0.0156" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Snapshot-before-mutation invariant" executed="True" result="Success" success="True" time="0.1062" asserts="0" description="Snapshot-before-mutation invariant">
+            <results>
+              <test-case description="snapshot step appears before any state-mutating step in every severity" name="Snapshot-before-mutation invariant.snapshot step appears before any state-mutating step in every severity" time="0.0261" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="New-IncidentId" executed="True" result="Success" success="True" time="0.1241" asserts="0" description="New-IncidentId">
+            <results>
+              <test-case description="produces INC-YYYY-MM-DD-xxxx with a 4-char suffix" name="New-IncidentId.produces INC-YYYY-MM-DD-xxxx with a 4-char suffix" time="0.0089" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="successive calls return different ids" name="New-IncidentId.successive calls return different ids" time="0.005" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="New-IncidentPassword" executed="True" result="Success" success="True" time="0.1748" asserts="0" description="New-IncidentPassword">
+            <results>
+              <test-case description="produces a &gt;=20-char string with at least one of each class M365 requires" name="New-IncidentPassword.produces a &gt;=20-char string with at least one of each class M365 requires" time="0.0478" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-IncidentTenantSlug" executed="True" result="Success" success="True" time="0.2021" asserts="0" description="Get-IncidentTenantSlug">
+            <results>
+              <test-case description="returns 'default' when no tenant is set" name="Get-IncidentTenantSlug.returns 'default' when no tenant is set" time="0.0143" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="slugifies a tenant name to lower-snake_case" name="Get-IncidentTenantSlug.slugifies a tenant name to lower-snake_case" time="0.0053" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-IncidentsDirectory / Get-IncidentDirectory" executed="True" result="Success" success="True" time="0.3649" asserts="0" description="Get-IncidentsDirectory / Get-IncidentDirectory">
+            <results>
+              <test-case description="tenant-scopes the incidents dir under //incidents" name="Get-IncidentsDirectory / Get-IncidentDirectory.tenant-scopes the incidents dir under //incidents" time="0.0448" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Get-IncidentDirectory creates a per-id subdir under the tenant root" name="Get-IncidentsDirectory / Get-IncidentDirectory.Get-IncidentDirectory creates a per-id subdir under the tenant root" time="0.1088" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Write-IncidentArtifact" executed="True" result="Success" success="True" time="0.6261" asserts="0" description="Write-IncidentArtifact">
+            <results>
+              <test-case description="writes string content verbatim" name="Write-IncidentArtifact.writes string content verbatim" time="0.1668" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="writes JSON for hashtable content" name="Write-IncidentArtifact.writes JSON for hashtable content" time="0.0865" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/IncidentTriggers.Tests.ps1" executed="True" result="Success" success="True" time="2.6335" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/IncidentTriggers.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Get-IncidentTriggerConfig defaults" executed="True" result="Success" success="True" time="0.2904" asserts="0" description="Get-IncidentTriggerConfig defaults">
+            <results>
+              <test-case description="supplies sensible defaults when no config is set" name="Get-IncidentTriggerConfig defaults.supplies sensible defaults when no config is set" time="0.2882" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-CountryDistanceKm" executed="True" result="Success" success="True" time="0.3076" asserts="0" description="Get-CountryDistanceKm">
+            <results>
+              <test-case description="returns 0 for identical countries" name="Get-CountryDistanceKm.returns 0 for identical countries" time="0.0066" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns the haversine distance for known anchors" name="Get-CountryDistanceKm.returns the haversine distance for known anchors" time="0.0072" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns null when an anchor is missing" name="Get-CountryDistanceKm.returns null when an anchor is missing" time="0.0016" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="New-IncidentFinding" executed="True" result="Success" success="True" time="0.3223" asserts="0" description="New-IncidentFinding">
+            <results>
+              <test-case description="shapes findings with the documented fields" name="New-IncidentFinding.shapes findings with the documented fields" time="0.013" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Detect-AnomalousLocationSignIn" executed="True" result="Success" success="True" time="1.4333" asserts="0" description="Detect-AnomalousLocationSignIn">
+            <results>
+              <test-case description="returns null when there is only one sign-in" name="Detect-AnomalousLocationSignIn.returns null when there is only one sign-in" time="0.4621" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="fires when the latest country is not in the baseline set" name="Detect-AnomalousLocationSignIn.fires when the latest country is not in the baseline set" time="0.3923" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="does NOT fire when the latest country is already in baseline" name="Detect-AnomalousLocationSignIn.does NOT fire when the latest country is already in baseline" time="0.2544" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Detect-ImpossibleTravel" executed="True" result="Success" success="True" time="2.4848" asserts="0" description="Detect-ImpossibleTravel">
+            <results>
+              <test-case description="fires on Nigeria -&gt; Brazil in 1 hour (~7000 km, 7000 km/h implied)" name="Detect-ImpossibleTravel.fires on Nigeria -&gt; Brazil in 1 hour (~7000 km, 7000 km/h implied)" time="0.5193" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="does NOT fire on US -&gt; Canada in 4h (~2000 km, 500 km/h ok)" name="Detect-ImpossibleTravel.does NOT fire on US -&gt; Canada in 4h (~2000 km, 500 km/h ok)" time="0.2611" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="does NOT fire when both sign-ins are in the same country" name="Detect-ImpossibleTravel.does NOT fire when both sign-ins are in the same country" time="0.2682" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Detect-HighRiskSignIn" executed="True" result="Success" success="True" time="2.5263" asserts="0" description="Detect-HighRiskSignIn">
+            <results>
+              <test-case description="fires on a risk='high' sign-in" name="Detect-HighRiskSignIn.fires on a risk='high' sign-in" time="0.0284" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="does NOT fire on risk='none' sign-ins only" name="Detect-HighRiskSignIn.does NOT fire on risk='none' sign-ins only" time="0.0056" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Tuning via config overrides" executed="True" result="Success" success="True" time="2.5663" asserts="0" description="Tuning via config overrides">
+            <results>
+              <test-case description="honors a raised ImpossibleTravelMaxKmPerHour threshold (Nigeria-&gt;Brazil in 3h now OK)" name="Tuning via config overrides.honors a raised ImpossibleTravelMaxKmPerHour threshold (Nigeria-&gt;Brazil in 3h now OK)" time="0.035" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/InvokeAcrossTenants.Tests.ps1" executed="True" result="Success" success="True" time="1.5288" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/InvokeAcrossTenants.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Invoke-AcrossTenants -- happy path" executed="True" result="Success" success="True" time="0.5133" asserts="0" description="Invoke-AcrossTenants -- happy path">
+            <results>
+              <test-case description="runs the scriptblock once per tenant" name="Invoke-AcrossTenants -- happy path.runs the scriptblock once per tenant" time="0.1672" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="honors @all" name="Invoke-AcrossTenants -- happy path.honors @all" time="0.2198" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="skips unknown tenant names with a warning" name="Invoke-AcrossTenants -- happy path.skips unknown tenant names with a warning" time="0.1243" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-AcrossTenants -- result shape contract" executed="True" result="Success" success="True" time="0.7376" asserts="0" description="Invoke-AcrossTenants -- result shape contract">
+            <results>
+              <test-case description="returns the documented PSCustomObject shape with all required fields" name="Invoke-AcrossTenants -- result shape contract.returns the documented PSCustomObject shape with all required fields" time="0.2204" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-AcrossTenants -- error handling" executed="True" result="Success" success="True" time="0.983" asserts="0" description="Invoke-AcrossTenants -- error handling">
+            <results>
+              <test-case description="captures scriptblock exceptions per tenant without aborting the run" name="Invoke-AcrossTenants -- error handling.captures scriptblock exceptions per tenant without aborting the run" time="0.2421" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Invoke-AcrossTenants -- tenant restore (try/finally)" executed="True" result="Success" success="True" time="1.1506" asserts="0" description="Invoke-AcrossTenants -- tenant restore (try/finally)">
+            <results>
+              <test-case description="restores the prior tenant even when the scriptblock throws" name="Invoke-AcrossTenants -- tenant restore (try/finally).restores the prior tenant even when the scriptblock throws" time="0.1657" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/LicenseOptimizer.Tests.ps1" executed="True" result="Success" success="True" time="0.0696" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/LicenseOptimizer.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Anonymized-username detection" executed="True" result="Success" success="True" time="0.0085" asserts="0" description="Anonymized-username detection">
+            <results>
+              <test-case description="Matches Graph's de-identified hash shape" name="Anonymized-username detection.Matches Graph's de-identified hash shape" time="0.0058" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Does NOT trip on a real UPN" name="Anonymized-username detection.Does NOT trip on a real UPN" time="0.0011" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="License-family overlap detection" executed="True" result="Success" success="True" time="0.0139" asserts="0" description="License-family overlap detection">
+            <results>
+              <test-case description="Flags SPE_E3 + ENTERPRISEPACK in the same family" name="License-family overlap detection.Flags SPE_E3 + ENTERPRISEPACK in the same family" time="0.0026" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Does NOT flag SPE_E3 + POWER_BI_PRO (different families)" name="License-family overlap detection.Does NOT flag SPE_E3 + POWER_BI_PRO (different families)" time="0.0015" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Savings math" executed="True" result="Success" success="True" time="0.039" asserts="0" description="Savings math">
+            <results>
+              <test-case description="Sums per-SKU list prices for a user's bundle" name="Savings math.Sums per-SKU list prices for a user's bundle" time="0.016" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Returns null for an unknown SKU" name="Savings math.Returns null for an unknown SKU" time="0.0072" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Downgrade savings calculation" executed="True" result="Success" success="True" time="0.0496" asserts="0" description="Downgrade savings calculation">
+            <results>
+              <test-case description="E5 -&gt; E3 difference is positive" name="Downgrade savings calculation.E5 -&gt; E3 difference is positive" time="0.0089" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/MFAManager.Tests.ps1" executed="True" result="Success" success="True" time="0.1107" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/MFAManager.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Get-MfaMethodInfo (classification)" executed="True" result="Success" success="True" time="0.0362" asserts="0" description="Get-MfaMethodInfo (classification)">
+            <results>
+              <test-case description="classifies Microsoft Authenticator" name="Get-MfaMethodInfo (classification).classifies Microsoft Authenticator" time="0.0188" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="classifies Phone" name="Get-MfaMethodInfo (classification).classifies Phone" time="0.0047" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="classifies FIDO2" name="Get-MfaMethodInfo (classification).classifies FIDO2" time="0.0023" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="classifies TAP" name="Get-MfaMethodInfo (classification).classifies TAP" time="0.0029" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Password method has no UrlSegment (cannot be deleted)" name="Get-MfaMethodInfo (classification).Password method has no UrlSegment (cannot be deleted)" time="0.0025" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Unknown odata type still produces a row (graceful fallback)" name="Get-MfaMethodInfo (classification).Unknown odata type still produces a row (graceful fallback)" time="0.0015" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Compliance-view predicate logic" executed="True" result="Success" success="True" time="0.0722" asserts="0" description="Compliance-view predicate logic">
+            <results>
+              <test-case description="OnlyPhone predicate matches bob, not alice/carol/dave" name="Compliance-view predicate logic.OnlyPhone predicate matches bob, not alice/carol/dave" time="0.0097" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="NoMfa predicate matches carol, not the others" name="Compliance-view predicate logic.NoMfa predicate matches carol, not the others" time="0.0045" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="ActiveTAP predicate matches dave" name="Compliance-view predicate logic.ActiveTAP predicate matches dave" time="0.0049" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="FIDO2 predicate matches alice" name="Compliance-view predicate logic.FIDO2 predicate matches alice" time="0.0051" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Format-MfaMethodDetail" executed="True" result="Success" success="True" time="0.084" asserts="0" description="Format-MfaMethodDetail">
+            <results>
+              <test-case description="formats phone with number + type" name="Format-MfaMethodDetail.formats phone with number + type" time="0.0042" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="formats FIDO2 with model + aaguid" name="Format-MfaMethodDetail.formats FIDO2 with model + aaguid" time="0.0047" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/Notifications.Tests.ps1" executed="True" result="Success" success="True" time="0.1531" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/Notifications.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Protect-Secret / Unprotect-Secret round trip" executed="True" result="Success" success="True" time="0.0324" asserts="0" description="Protect-Secret / Unprotect-Secret round trip">
+            <results>
+              <test-case description="delegates to Protect-ApiKey when available" name="Protect-Secret / Unprotect-Secret round trip.delegates to Protect-ApiKey when available" time="0.0271" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="treats an already-encrypted value as a passthrough on protect" name="Protect-Secret / Unprotect-Secret round trip.treats an already-encrypted value as a passthrough on protect" time="0.0031" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Severity -&gt; theme + importance" executed="True" result="Success" success="True" time="0.0388" asserts="0" description="Severity -&gt; theme + importance">
+            <results>
+              <test-case description="Critical -&gt; red theme + High importance (smoke check the mapping)" name="Severity -&gt; theme + importance.Critical -&gt; red theme + High importance (smoke check the mapping)" time="0.0023" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="DryRunNotifications" executed="True" result="Success" success="True" time="0.0812" asserts="0" description="DryRunNotifications">
+            <results>
+              <test-case description="Send-Email returns true and does NOT actually call Graph when DryRunNotifications=true" name="DryRunNotifications.Send-Email returns true and does NOT actually call Graph when DryRunNotifications=true" time="0.0186" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Send-TeamsWebhook returns true and does NOT call REST when DryRunNotifications=true" name="DryRunNotifications.Send-TeamsWebhook returns true and does NOT call REST when DryRunNotifications=true" time="0.0181" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Recipient resolution in Send-Notification" executed="True" result="Success" success="True" time="0.1294" asserts="0" description="Recipient resolution in Send-Notification">
+            <results>
+              <test-case description="Critical routes to SecurityTeamRecipients" name="Recipient resolution in Send-Notification.Critical routes to SecurityTeamRecipients" time="0.0178" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Info routes to OperationsTeamRecipients" name="Recipient resolution in Send-Notification.Info routes to OperationsTeamRecipients" time="0.0089" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/OneDriveManager.Tests.ps1" executed="True" result="Success" success="True" time="0.0465" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/OneDriveManager.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Recent-files filter math" executed="True" result="Success" success="True" time="0.0096" asserts="0" description="Recent-files filter math">
+            <results>
+              <test-case description="respects the Days cutoff" name="Recent-files filter math.respects the Days cutoff" time="0.0082" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="OneDrive URL parsing" executed="True" result="Success" success="True" time="0.0138" asserts="0" description="OneDrive URL parsing">
+            <results>
+              <test-case description="extracts host + personal path from a canonical OneDrive URL" name="OneDrive URL parsing.extracts host + personal path from a canonical OneDrive URL" time="0.002" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects a non-OneDrive site URL" name="OneDrive URL parsing.rejects a non-OneDrive site URL" time="0.001" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Retention end-date math" executed="True" result="Success" success="True" time="0.0199" asserts="0" description="Retention end-date math">
+            <results>
+              <test-case description="60-day default lands 60 days in the future" name="Retention end-date math.60-day default lands 60 days in the future" time="0.0049" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/Privacy.Tests.ps1" executed="True" result="Success" success="True" time="0.5195" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/Privacy.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Convert-ToSafePayload" executed="True" result="Success" success="True" time="0.381" asserts="0" description="Convert-ToSafePayload">
+            <results>
+              <test-case description="tokenizes a UPN as " name="Convert-ToSafePayload.tokenizes a UPN as " time="0.0653" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tokenizes a GUID as " name="Convert-ToSafePayload.tokenizes a GUID as " time="0.0191" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tokenizes a JWT as " name="Convert-ToSafePayload.tokenizes a JWT as " time="0.019" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tokenizes an Anthropic sk-ant- key as " name="Convert-ToSafePayload.tokenizes an Anthropic sk-ant- key as " time="0.019" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tokenizes an OpenAI sk- key as " name="Convert-ToSafePayload.tokenizes an OpenAI sk- key as " time="0.0335" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tokenizes a 40-hex cert thumbprint as " name="Convert-ToSafePayload.tokenizes a 40-hex cert thumbprint as " time="0.0147" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="reuses the same token for repeated values (round-trip stability)" name="Convert-ToSafePayload.reuses the same token for repeated values (round-trip stability)" time="0.04" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="issues different tokens for different values" name="Convert-ToSafePayload.issues different tokens for different values" time="0.0556" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="deduplicates: same UPN reused in one payload shares one token" name="Convert-ToSafePayload.deduplicates: same UPN reused in one payload shares one token" time="0.0401" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="in SecretsOnly mode leaves UPN and GUID raw but still scrubs JWT and sk- keys" name="Convert-ToSafePayload.in SecretsOnly mode leaves UPN and GUID raw but still scrubs JWT and sk- keys" time="0.0068" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="overlap: UPN whose local-part contains a GUID-shaped substring tokenizes whole, not split" name="Convert-ToSafePayload.overlap: UPN whose local-part contains a GUID-shaped substring tokenizes whole, not split" time="0.0085" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tenant ID is tagged separately as  (and reused for repeats)" name="Convert-ToSafePayload.tenant ID is tagged separately as  (and reused for repeats)" time="0.0223" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="counts hashtable accumulates tokenization tallies" name="Convert-ToSafePayload.counts hashtable accumulates tokenization tallies" time="0.0139" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tokenizes display name captured from Search displayName: idiom" name="Convert-ToSafePayload.tokenizes display name captured from Search displayName: idiom" time="0.0111" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tokenizes display name captured from -DisplayName idiom" name="Convert-ToSafePayload.tokenizes display name captured from -DisplayName idiom" time="0.0081" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Restore-FromSafePayload" executed="True" result="Success" success="True" time="0.403" asserts="0" description="Restore-FromSafePayload">
+            <results>
+              <test-case description="round-trips a single-token payload back to the original string" name="Restore-FromSafePayload.round-trips a single-token payload back to the original string" time="0.0109" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="round-trips a multi-token payload (UPN + GUID)" name="Restore-FromSafePayload.round-trips a multi-token payload (UPN + GUID)" time="0.0058" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="leaves placeholders that were not minted in this session untouched" name="Restore-FromSafePayload.leaves placeholders that were not minted in this session untouched" time="0.0012" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="is a no-op when the map is empty (no tokens minted)" name="Restore-FromSafePayload.is a no-op when the map is empty (no tokens minted)" time="0.0011" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Reset-PrivacyMap" executed="True" result="Success" success="True" time="0.4118" asserts="0" description="Reset-PrivacyMap">
+            <results>
+              <test-case description="returns the count of dropped tokens and zeroes the maps" name="Reset-PrivacyMap.returns the count of dropped tokens and zeroes the maps" time="0.0063" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Test-IsLocalEndpoint / Test-IsExternalProvider" executed="True" result="Success" success="True" time="0.434" asserts="0" description="Test-IsLocalEndpoint / Test-IsExternalProvider">
+            <results>
+              <test-case description="Ollama at 127.0.0.1 is local" name="Test-IsLocalEndpoint / Test-IsExternalProvider.Ollama at 127.0.0.1 is local" time="0.0071" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Ollama at localhost is local" name="Test-IsLocalEndpoint / Test-IsExternalProvider.Ollama at localhost is local" time="0.0015" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Ollama at a remote hostname is external" name="Test-IsLocalEndpoint / Test-IsExternalProvider.Ollama at a remote hostname is external" time="0.0053" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Anthropic is always external (by default)" name="Test-IsLocalEndpoint / Test-IsExternalProvider.Anthropic is always external (by default)" time="0.0011" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="OpenAI is always external (by default)" name="Test-IsLocalEndpoint / Test-IsExternalProvider.OpenAI is always external (by default)" time="0.001" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="AzureOpenAI listed in TrustedProviders is treated as local" name="Test-IsLocalEndpoint / Test-IsExternalProvider.AzureOpenAI listed in TrustedProviders is treated as local" time="0.0015" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Custom endpoint at localhost is local" name="Test-IsLocalEndpoint / Test-IsExternalProvider.Custom endpoint at localhost is local" time="0.001" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Custom endpoint at remote URL is external" name="Test-IsLocalEndpoint / Test-IsExternalProvider.Custom endpoint at remote URL is external" time="0.0023" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Format-DetailForAudit (RedactInAuditLog toggle)" executed="True" result="Success" success="True" time="0.4506" asserts="0" description="Format-DetailForAudit (RedactInAuditLog toggle)">
+            <results>
+              <test-case description="Disabled: keeps UPN raw but still scrubs -Password value" name="Format-DetailForAudit (RedactInAuditLog toggle).Disabled: keeps UPN raw but still scrubs -Password value" time="0.0048" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Enabled: tokenizes UPN AND scrubs -Password value" name="Format-DetailForAudit (RedactInAuditLog toggle).Enabled: tokenizes UPN AND scrubs -Password value" time="0.0075" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tolerates a null Config (no Privacy section)" name="Format-DetailForAudit (RedactInAuditLog toggle).tolerates a null Config (no Privacy section)" time="0.0032" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Fixture: real-looking error trace emits zero recognizable PII" executed="True" result="Success" success="True" time="0.4647" asserts="0" description="Fixture: real-looking error trace emits zero recognizable PII">
+            <results>
+              <test-case description="no email, no GUID, no JWT, no sk- key, no 40-hex thumbprint, no quoted display name" name="Fixture: real-looking error trace emits zero recognizable PII.no email, no GUID, no JWT, no sk- key, no 40-hex thumbprint, no quoted display name" time="0.0107" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/Scheduler.Tests.ps1" executed="True" result="Success" success="True" time="0.1402" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/Scheduler.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="ConvertTo-ScheduleSpec parsing" executed="True" result="Success" success="True" time="0.0286" asserts="0" description="ConvertTo-ScheduleSpec parsing">
+            <results>
+              <test-case description="parses Daily HH:MM" name="ConvertTo-ScheduleSpec parsing.parses Daily HH:MM" time="0.0087" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="parses Weekly Day HH:MM" name="ConvertTo-ScheduleSpec parsing.parses Weekly Day HH:MM" time="0.0025" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="parses Monthly day HH:MM" name="ConvertTo-ScheduleSpec parsing.parses Monthly day HH:MM" time="0.0056" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="parses Hourly" name="ConvertTo-ScheduleSpec parsing.parses Hourly" time="0.0017" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="parses raw cron" name="ConvertTo-ScheduleSpec parsing.parses raw cron" time="0.0057" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns null on garbage" name="ConvertTo-ScheduleSpec parsing.returns null on garbage" time="0.0022" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="ConvertTo-CronExpression" executed="True" result="Success" success="True" time="0.0531" asserts="0" description="ConvertTo-CronExpression">
+            <results>
+              <test-case description="Daily 09:30 -&gt; 30 9 * * *" name="ConvertTo-CronExpression.Daily 09:30 -&gt; 30 9 * * *" time="0.0063" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Weekly Wed 14:00 -&gt; 0 14 * * 3" name="ConvertTo-CronExpression.Weekly Wed 14:00 -&gt; 0 14 * * 3" time="0.0037" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Monthly 15 06:00 -&gt; 0 6 15 * *" name="ConvertTo-CronExpression.Monthly 15 06:00 -&gt; 0 6 15 * *" time="0.011" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Hourly -&gt; 0 * * * *" name="ConvertTo-CronExpression.Hourly -&gt; 0 * * * *" time="0.0018" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Non-interactive flag propagation" executed="True" result="Success" success="True" time="0.0751" asserts="0" description="Non-interactive flag propagation">
+            <results>
+              <test-case description="Get-NonInteractiveMode reports true" name="Non-interactive flag propagation.Get-NonInteractiveMode reports true" time="0.0016" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Read-UserInput returns empty string" name="Non-interactive flag propagation.Read-UserInput returns empty string" time="0.0022" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Confirm-Action returns false (decline)" name="Non-interactive flag propagation.Confirm-Action returns false (decline)" time="0.0097" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Show-Menu returns -1 (back)" name="Non-interactive flag propagation.Show-Menu returns -1 (back)" time="0.0059" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Credential storage shape" executed="True" result="Success" success="True" time="0.1072" asserts="0" description="Credential storage shape">
+            <results>
+              <test-case description="writes + reads + decrypts a stored secret" name="Credential storage shape.writes + reads + decrypts a stored secret" time="0.0164" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/SharePoint.Tests.ps1" executed="True" result="Success" success="True" time="0.071" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/SharePoint.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Stale-sites filter" executed="True" result="Success" success="True" time="0.0046" asserts="0" description="Stale-sites filter">
+            <results>
+              <test-case description="drops sites with LastContentModifiedDate inside the window" name="Stale-sites filter.drops sites with LastContentModifiedDate inside the window" time="0.0033" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="System-account filter on Get-SiteOwners (predicate)" executed="True" result="Success" success="True" time="0.0124" asserts="0" description="System-account filter on Get-SiteOwners (predicate)">
+            <results>
+              <test-case description="filters out the well-known service-principal shapes" name="System-account filter on Get-SiteOwners (predicate).filters out the well-known service-principal shapes" time="0.0066" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Site template JSON shapes" executed="True" result="Success" success="True" time="0.033" asserts="0" description="Site template JSON shapes">
+            <results>
+              <test-case description="site-project.json + site-team.json parse" name="Site template JSON shapes.site-project.json + site-team.json parse" time="0.0194" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Owner add/remove reverse-recipe pair" executed="True" result="Success" success="True" time="0.037" asserts="0" description="Owner add/remove reverse-recipe pair">
+            <results>
+              <test-case description="AddSiteOwner has a matching RemoveSiteOwner inverse target shape" name="Owner add/remove reverse-recipe pair.AddSiteOwner has a matching RemoveSiteOwner inverse target shape" time="0.0027" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/TeamsManager.Tests.ps1" executed="True" result="Success" success="True" time="0.0509" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/TeamsManager.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="ConvertTo-TeamRecord" executed="True" result="Success" success="True" time="0.0053" asserts="0" description="ConvertTo-TeamRecord">
+            <results>
+              <test-case description="produces the expected shape" name="ConvertTo-TeamRecord.produces the expected shape" time="0.004" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Orphan + single-owner classification (mocked)" executed="True" result="Success" success="True" time="0.0127" asserts="0" description="Orphan + single-owner classification (mocked)">
+            <results>
+              <test-case description="Predicate: zero-owner teams are orphans" name="Orphan + single-owner classification (mocked).Predicate: zero-owner teams are orphans" time="0.0017" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Predicate: single-owner teams are SPOF" name="Orphan + single-owner classification (mocked).Predicate: single-owner teams are SPOF" time="0.0041" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Resolve-TeamIdentifier GUID short-circuit" executed="True" result="Success" success="True" time="0.0159" asserts="0" description="Resolve-TeamIdentifier GUID short-circuit">
+            <results>
+              <test-case description="returns the input unchanged when it is already a GUID" name="Resolve-TeamIdentifier GUID short-circuit.returns the input unchanged when it is already a GUID" time="0.0021" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/TenantOverrides.Tests.ps1" executed="True" result="Success" success="True" time="0.6862" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/TenantOverrides.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Get-EffectiveConfig -- resolution order" executed="True" result="Success" success="True" time="0.3598" asserts="0" description="Get-EffectiveConfig -- resolution order">
+            <results>
+              <test-case description="returns the global value when no other source supplies the key" name="Get-EffectiveConfig -- resolution order.returns the global value when no other source supplies the key" time="0.0234" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="tenant file overrides global" name="Get-EffectiveConfig -- resolution order.tenant file overrides global" time="0.0881" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="env var overrides tenant file" name="Get-EffectiveConfig -- resolution order.env var overrides tenant file" time="0.0823" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="CLI value wins over everything" name="Get-EffectiveConfig -- resolution order.CLI value wins over everything" time="0.0866" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns $null when no source supplies the key" name="Get-EffectiveConfig -- resolution order.returns $null when no source supplies the key" time="0.0297" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="treats empty-string CLI value as absent (doesn't clobber)" name="Get-EffectiveConfig -- resolution order.treats empty-string CLI value as absent (doesn't clobber)" time="0.0434" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Save-TenantOverrides / Get-TenantOverrides round-trip" executed="True" result="Success" success="True" time="0.5068" asserts="0" description="Save-TenantOverrides / Get-TenantOverrides round-trip">
+            <results>
+              <test-case description="preserves nested types via JSON round-trip" name="Save-TenantOverrides / Get-TenantOverrides round-trip.preserves nested types via JSON round-trip" time="0.124" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-TenantOverridableKeys" executed="True" result="Success" success="True" time="0.5422" asserts="0" description="Get-TenantOverridableKeys">
+            <results>
+              <test-case description="exposes at least the documented core set" name="Get-TenantOverridableKeys.exposes at least the documented core set" time="0.02" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/TenantRegistry.Tests.ps1" executed="True" result="Success" success="True" time="1.4369" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/TenantRegistry.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="Register-Tenant / Get-Tenant / Remove-Tenant" executed="True" result="Success" success="True" time="1.0035" asserts="0" description="Register-Tenant / Get-Tenant / Remove-Tenant">
+            <results>
+              <test-case description="starts with an empty registry" name="Register-Tenant / Get-Tenant / Remove-Tenant.starts with an empty registry" time="0.0739" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="registers a new tenant with Interactive auth (no secret file)" name="Register-Tenant / Get-Tenant / Remove-Tenant.registers a new tenant with Interactive auth (no secret file)" time="0.1152" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="rejects a duplicate registration" name="Register-Tenant / Get-Tenant / Remove-Tenant.rejects a duplicate registration" time="0.1097" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="writes an encrypted manifest for ClientSecret auth" name="Register-Tenant / Get-Tenant / Remove-Tenant.writes an encrypted manifest for ClientSecret auth" time="0.2138" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="removes a tenant + its secret manifest" name="Register-Tenant / Get-Tenant / Remove-Tenant.removes a tenant + its secret manifest" time="0.2898" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="Remove-Tenant returns false on a miss" name="Register-Tenant / Get-Tenant / Remove-Tenant.Remove-Tenant returns false on a miss" time="0.1955" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Set-CurrentTenant / Get-CurrentTenant" executed="True" result="Success" success="True" time="1.2458" asserts="0" description="Set-CurrentTenant / Get-CurrentTenant">
+            <results>
+              <test-case description="mirrors fields into SessionState" name="Set-CurrentTenant / Get-CurrentTenant.mirrors fields into SessionState" time="0.1041" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="throws on an unregistered name" name="Set-CurrentTenant / Get-CurrentTenant.throws on an unregistered name" time="0.0266" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="stamps lastUsed" name="Set-CurrentTenant / Get-CurrentTenant.stamps lastUsed" time="0.1075" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Update-Tenant" executed="True" result="Success" success="True" time="1.3508" asserts="0" description="Update-Tenant">
+            <results>
+              <test-case description="applies a partial update without touching other fields" name="Update-Tenant.applies a partial update without touching other fields" time="0.1037" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+      <test-suite type="TestFixture" name="/Users/arafaterkin/m365-manager/app/tests/Undo.Tests.ps1" executed="True" result="Success" success="True" time="0.1791" asserts="0" description="/Users/arafaterkin/m365-manager/app/tests/Undo.Tests.ps1">
+        <results>
+          <test-suite type="TestFixture" name="UndoHandlers dispatch table" executed="True" result="Success" success="True" time="0.0417" asserts="0" description="UndoHandlers dispatch table">
+            <results>
+              <test-case description="exposes inverse pairs for the curated set" name="UndoHandlers dispatch table.exposes inverse pairs for the curated set" time="0.0091" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="each handler is a scriptblock that accepts a Target" name="UndoHandlers dispatch table.each handler is a scriptblock that accepts a Target" time="0.031" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="ConvertTo-UndoTargetHashtable" executed="True" result="Success" success="True" time="0.0532" asserts="0" description="ConvertTo-UndoTargetHashtable">
+            <results>
+              <test-case description="passes hashtables through unchanged" name="ConvertTo-UndoTargetHashtable.passes hashtables through unchanged" time="0.0056" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="converts a PSCustomObject (ConvertFrom-Json shape) to hashtable" name="ConvertTo-UndoTargetHashtable.converts a PSCustomObject (ConvertFrom-Json shape) to hashtable" time="0.0033" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="returns empty hashtable for null input" name="ConvertTo-UndoTargetHashtable.returns empty hashtable for null input" time="0.0013" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Get-UndoableEntries (using mixed fixture)" executed="True" result="Success" success="True" time="0.1363" asserts="0" description="Get-UndoableEntries (using mixed fixture)">
+            <results>
+              <test-case description="returns only success+reverse entries (skips preview, failure, no-reverse)" name="Get-UndoableEntries (using mixed fixture).returns only success+reverse entries (skips preview, failure, no-reverse)" time="0.0395" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="skips entries flagged as already-reversed in the sidecar" name="Get-UndoableEntries (using mixed fixture).skips entries flagged as already-reversed in the sidecar" time="0.0134" asserts="0" success="True" result="Success" executed="True" />
+              <test-case description="filters by user UPN" name="Get-UndoableEntries (using mixed fixture).filters by user UPN" time="0.0155" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+          <test-suite type="TestFixture" name="Round-trip semantics on a handler (no Graph call)" executed="True" result="Success" success="True" time="0.1443" asserts="0" description="Round-trip semantics on a handler (no Graph call)">
+            <results>
+              <test-case description="AddToGroup -&gt; RemoveFromGroup target round-trip preserves group/user ids" name="Round-trip semantics on a handler (no Graph call).AddToGroup -&gt; RemoveFromGroup target round-trip preserves group/user ids" time="0.0067" asserts="0" success="True" result="Success" executed="True" />
+            </results>
+          </test-suite>
+        </results>
+      </test-suite>
+    </results>
+  </test-suite>
+</test-results>
